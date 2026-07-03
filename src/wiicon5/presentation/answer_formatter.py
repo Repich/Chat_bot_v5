@@ -25,10 +25,26 @@ def single_row_summary(*, question: str, row: Dict[str, Any], columns: List[str]
     if document_summary:
         return document_summary
 
+    count_summary = count_row_summary(question=question, row=row, columns=columns)
+    if count_summary:
+        return count_summary
+
     top_summary = top_metric_row_summary(question=question, row=row, columns=columns)
     if top_summary:
         return top_summary
     return ""
+
+
+def count_row_summary(*, question: str, row: Dict[str, Any], columns: List[str]) -> str:
+    if not question_requests_count(question):
+        return ""
+    if len(columns) != 1:
+        return ""
+    column = columns[0]
+    value = row.get(column)
+    if value in (None, ""):
+        return ""
+    return f"{column}: {format_cell(value)}."
 
 
 def document_row_summary(*, question: str, row: Dict[str, Any]) -> str:
@@ -104,6 +120,11 @@ def subject_from_question(question: str) -> str:
 def question_requests_top(question: str) -> bool:
     lowered = question.lower()
     return any(marker in lowered for marker in ["сам", "топ", "top", "крупн", "больш", "максим", "миним", "наибольш"])
+
+
+def question_requests_count(question: str) -> bool:
+    lowered = question.lower()
+    return any(marker in lowered for marker in ["сколько", "количество", "число"])
 
 
 def amount_columns(row: Dict[str, Any]) -> List[str]:

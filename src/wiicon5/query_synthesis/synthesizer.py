@@ -16,6 +16,7 @@ from wiicon5.presentation.answer_formatter import format_user_answer, rows_effec
 from wiicon5.presentation.llm_answer_formatter import LLMAnswerFormatter
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
+from wiicon5.query.reference_value_resolver import ReferenceValueResolver
 
 
 DISCOVERY_PROMPT = (
@@ -44,6 +45,8 @@ QUERY_PROMPT = (
     "по <ТабличнаяЧасть>.Ссылка = <Документ>.Ссылка; для фактов продаж/движений обычно добавь фильтр <Документ>.Проведен. "
     "Если previous_query_review сообщает reference_filter_string_param, не сравнивай ссылочное поле со строкой. "
     "Либо сначала найди/передай ссылку, либо сравнивай реквизит ссылки, например <Алиас>.<Поле>.Наименование = &Параметр. "
+    "Если previous_query_review сообщает enum_value_not_confirmed_by_metadata, не придумывай ЗНАЧЕНИЕ(Перечисление.X.Y); "
+    "сначала получи реальные значения поля или перестрой запрос так, чтобы вернуть группировку по этому полю и его представлению. "
     "Можно использовать виртуальные таблицы регистров накопления, например .Остатки(), если объект является регистром накопления "
     "и в метаданных есть подходящие измерения/ресурсы. Для виртуальной таблицы Остатки ресурс Ресурс обычно читается как РесурсОстаток. "
     "Запрещены любые операции изменения данных. Запрос должен начинаться с ВЫБРАТЬ. "
@@ -208,6 +211,27 @@ class QuerySynthesisEngine:
                 previous_query = query
                 attempt_trace["error"] = previous_error
                 continue
+
+            reference_resolution = ReferenceValueResolver(self.mcp_client).resolve(
+                query=query,
+                params=params,
+                metadata_objects=metadata_objects,
+            )
+            attempt_trace["reference_value_resolution"] = reference_resolution.to_dict()
+            if reference_resolution.changed:
+                query = reference_resolution.query
+                params = reference_resolution.params
+                attempt_trace["query"] = query
+                attempt_trace["params"] = dict(params)
+                validation = validate_read_only_query(query, params)
+                attempt_trace["validation_after_reference_resolution"] = validation.to_dict()
+                if not validation.ok:
+                    previous_error = "Query validation failed after reference value resolution: " + "; ".join(
+                        issue.message for issue in validation.issues
+                    )
+                    previous_query = query
+                    attempt_trace["error"] = previous_error
+                    continue
 
             query_review = self.query_reviewer.review(
                 query=query,

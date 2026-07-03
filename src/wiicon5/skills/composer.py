@@ -65,14 +65,19 @@ class SkillComposer:
             )
         return ComposeResult(plan=plan, gaps=[])
 
-    def _ensure_artifact(self, artifact_type: str, state: "_ComposeState") -> Tuple[str, str]:
-        existing = state.produced_artifact(artifact_type, self.type_system)
+    def _ensure_artifact(
+        self,
+        artifact_type: str,
+        state: "_ComposeState",
+        requirement_override: Optional[ArtifactRequirement] = None,
+    ) -> Tuple[str, str]:
+        existing = None if requirement_override and requirement_override.constraints else state.produced_artifact(artifact_type, self.type_system)
         if existing is not None:
             return existing
 
-        requirement = state.goal.requirement_for_type(artifact_type)
+        requirement = requirement_override or state.goal.requirement_for_type(artifact_type)
         gap = self.gap_detector.detect_for_requirement(requirement, goal=state.goal)
-        if gap is not None:
+        if gap is not None and not self._count_transform_applicable(requirement, state):
             raise _CompositionGap(gap)
 
         producer = self._choose_producer(requirement, state)
@@ -111,6 +116,16 @@ class SkillComposer:
             if goal_has_assignable_requirement(state.goal, input_port.type, self.type_system):
                 dependency_type = concrete_dependency_type_for_input(input_port.type, state, self.type_system)
                 dependency_node, dependency_output = self._ensure_artifact(dependency_type, state)
+                dependencies.append(dependency_node)
+                dependency_edges.append((dependency_node, dependency_output, input_port.name))
+                continue
+            implicit_requirement = self._implicit_dependency_requirement(input_port.type, requirement, state)
+            if implicit_requirement is not None:
+                dependency_node, dependency_output = self._ensure_artifact(
+                    implicit_requirement.type,
+                    state,
+                    requirement_override=implicit_requirement,
+                )
                 dependencies.append(dependency_node)
                 dependency_edges.append((dependency_node, dependency_output, input_port.name))
                 continue
@@ -176,6 +191,7 @@ class SkillComposer:
             skill
             for skill in candidates
             if all(_skill_accepts_constraint(skill, constraint) for constraint in requirement.constraints)
+            or (skill.skill_id == "count_entities" and self._count_transform_applicable(requirement, state))
         ]
         candidates = [skill for skill in candidates if skill_domain_compatible(skill, requirement, state.goal)]
         if not candidates:
@@ -183,6 +199,73 @@ class SkillComposer:
         return sorted(
             candidates,
             key=lambda skill: (-producer_score(skill, requirement, state, self.type_system), skill.skill_id),
+        )[0]
+
+    def _count_transform_applicable(self, requirement: ArtifactRequirement, state: "_ComposeState") -> bool:
+        if requirement.type not in {"AggregateTable", "CountResult"}:
+            return False
+        if not text_requests_count(state.goal.business_goal, requirement):
+            return False
+        return self._implicit_dependency_requirement("EntityRefList", requirement, state) is not None
+
+    def _implicit_dependency_requirement(
+        self,
+        input_type: str,
+        parent_requirement: ArtifactRequirement,
+        state: "_ComposeState",
+    ) -> Optional[ArtifactRequirement]:
+        if input_type != "EntityRefList":
+            return None
+        if not parent_requirement.constraints:
+            return None
+        producer = self._choose_entity_list_producer(parent_requirement, state)
+        if producer is None:
+            return None
+        output_type = next(
+            (
+                output.type
+                for output in producer.outputs
+                if output.type != input_type and self.type_system.is_assignable(output.type, input_type)
+            ),
+            "",
+        )
+        if not output_type:
+            return None
+        return ArtifactRequirement(
+            name=f"{parent_requirement.name}_items",
+            type=output_type,
+            source="skill",
+            required=True,
+            constraints=list(parent_requirement.constraints),
+        )
+
+    def _choose_entity_list_producer(
+        self,
+        parent_requirement: ArtifactRequirement,
+        state: "_ComposeState",
+    ) -> Optional[SkillContract]:
+        entity_requirement = ArtifactRequirement(
+            name=f"{parent_requirement.name}_items",
+            type="EntityRefList",
+            source="skill",
+            required=True,
+            constraints=list(parent_requirement.constraints),
+        )
+        candidates = [
+            skill
+            for skill in self.registry.active()
+            if any(
+                output.type != "EntityRefList" and self.type_system.is_assignable(output.type, "EntityRefList")
+                for output in skill.outputs
+            )
+            if all(_skill_accepts_constraint(skill, constraint) for constraint in entity_requirement.constraints)
+        ]
+        candidates = [skill for skill in candidates if skill_domain_compatible(skill, entity_requirement, state.goal)]
+        if not candidates:
+            return None
+        return sorted(
+            candidates,
+            key=lambda skill: (-producer_score(skill, entity_requirement, state, self.type_system), skill.skill_id),
         )[0]
 
     def _validation_gap_resolution(self, issue_code: str):
@@ -312,3 +395,11 @@ def producer_score(
 
 def goal_has_assignable_requirement(goal: GoalDecomposition, artifact_type: str, type_system: TypeSystem) -> bool:
     return any(type_system.is_assignable(item.type, artifact_type) for item in goal.required_artifacts)
+
+
+def text_requests_count(goal_text: str, requirement: ArtifactRequirement) -> bool:
+    parts = [goal_text, requirement.name]
+    for constraint in requirement.constraints:
+        parts.extend([str(constraint.value or ""), constraint.raw_user_text])
+    lowered = " ".join(parts).lower()
+    return any(marker in lowered for marker in ["сколько", "количество", "число", "count"])

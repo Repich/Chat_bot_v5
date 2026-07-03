@@ -13,7 +13,8 @@ from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider, metadata_object_from_payload
 from wiicon5.llm.client import ScriptedLLMClient
-from wiicon5.mcp.client import DictMcpClient
+from wiicon5.mcp.client import DictMcpClient, McpClient
+from wiicon5.mcp.contracts import McpMetadataRequest, McpMetadataResponse, McpQueryRequest, McpQueryResponse
 from wiicon5.models import ArtifactRequirement, SemanticFilter
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.query.learned_query_builder import LearnedQueryBuilder
@@ -203,14 +204,71 @@ class QuerySynthesisTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Товар 1", result.message)
-        self.assertEqual(len(mcp.query_calls), 1)
-        self.assertIn("Склад.Наименование", mcp.query_calls[0].query)
+        self.assertGreaterEqual(len(mcp.query_calls), 1)
+        self.assertIn("Склад.Наименование", mcp.query_calls[-1].query)
         self.assertFalse(result.trace["attempts"][0]["query_review"]["ok"])
         self.assertIn(
             "reference_filter_string_param",
             [issue["code"] for issue in result.trace["attempts"][0]["query_review"]["issues"]],
         )
         self.assertTrue(result.trace["attempts"][1]["query_review"]["ok"])
+
+    def test_synthesis_resolves_unconfirmed_enum_literal_before_main_mcp_query(self) -> None:
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["склад", "тип склада"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        КОЛИЧЕСТВО(Склады.Ссылка) КАК Количество
+                    ИЗ
+                        Справочник.Склады КАК Склады
+                    ГДЕ
+                        Склады.ТипСклада = ЗНАЧЕНИЕ(Перечисление.ТипыСкладов.Розничный)
+                    """
+                ),
+            ]
+        )
+        retail_ref = {
+            "_objectRef": True,
+            "УникальныйИдентификатор": "РозничныйМагазин",
+            "ТипОбъекта": "ПеречислениеСсылка.ТипыСкладов",
+            "Представление": "Розничный магазин",
+        }
+        mcp = SequentialMcpClient(
+            [
+                {"success": True, "data": [{"Значение": retail_ref, "Представление": "Розничный магазин"}]},
+                {"success": True, "data": [{"Количество": 4}]},
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=WarehouseMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Сколько в системе розничных складов?",
+            intent=IntentResult(
+                intent_type=IntentType.DATA_QUESTION,
+                business_goal="Узнать количество розничных складов",
+                requires_1c_data=True,
+                expected_output="short_answer",
+                domain_terms=["склад", "розничный склад", "количество"],
+                relevant=True,
+            ),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("4", result.message)
+        self.assertEqual(len(mcp.query_calls), 2)
+        self.assertIn("ПРЕДСТАВЛЕНИЕ(Склады.ТипСклада)", mcp.query_calls[0].query)
+        self.assertIn("Склады.ТипСклада = &ТипСклада_resolved", mcp.query_calls[1].query)
+        self.assertEqual(mcp.query_calls[1].params["ТипСклада_resolved"]["УникальныйИдентификатор"], "РозничныйМагазин")
+        self.assertTrue(result.trace["attempts"][0]["reference_value_resolution"]["changed"])
 
     def test_synthesis_expands_document_table_part_metadata_after_review_error(self) -> None:
         sales_query = """
@@ -660,6 +718,30 @@ class StockMetadataProvider(MetadataProvider):
         return self.object
 
 
+class WarehouseMetadataProvider(MetadataProvider):
+    def __init__(self) -> None:
+        self.object = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "Справочник.Склады",
+                "Синоним": "Склады",
+                "Реквизиты": [
+                    {"Имя": "Ссылка", "Тип": "СправочникСсылка.Склады"},
+                    {"Имя": "Наименование", "Тип": "Строка(50)"},
+                    {"Имя": "ТипСклада", "Тип": "ПеречислениеСсылка.ТипыСкладов"},
+                ],
+            }
+        )
+        self.last_requests: List[Dict[str, object]] = []
+
+    def search_objects(self, term: str) -> List[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        return [self.object]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        return self.object
+
+
 class TablePartMetadataProvider(MetadataProvider):
     def __init__(self) -> None:
         self.parent = metadata_object_from_payload(
@@ -697,6 +779,21 @@ class TablePartMetadataProvider(MetadataProvider):
         if full_name == "Документ.РеализацияТоваровУслуг.Товары":
             return self.table_part
         return self.parent
+
+
+class SequentialMcpClient(McpClient):
+    def __init__(self, query_responses: List[Dict[str, object]]) -> None:
+        self.query_responses = list(query_responses)
+        self.query_calls: List[McpQueryRequest] = []
+
+    def execute_query(self, request: McpQueryRequest) -> McpQueryResponse:
+        self.query_calls.append(request)
+        if not self.query_responses:
+            return McpQueryResponse(success=False, error="No scripted MCP query response.")
+        return McpQueryResponse.from_dict(self.query_responses.pop(0))
+
+    def get_metadata(self, request: McpMetadataRequest) -> McpMetadataResponse:
+        return McpMetadataResponse(success=False, error="Metadata is not scripted for this test.")
 
 
 def discovery_response(terms: List[str]) -> Dict[str, object]:

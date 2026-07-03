@@ -4,7 +4,9 @@ import unittest
 
 from wiicon5.knowledge.metadata import metadata_object_from_payload
 from wiicon5.knowledge.one_c_wiki import EmbeddedOneCWiki
+from wiicon5.mcp.client import DictMcpClient
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
+from wiicon5.query.reference_value_resolver import ReferenceValueResolver
 
 
 class EmbeddedOneCWikiTests(unittest.TestCase):
@@ -168,6 +170,105 @@ class OneCQueryReviewerTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("document_table_part_without_document_ref", [issue.code for issue in result.issues])
 
+    def test_rejects_unconfirmed_enum_literal(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                КОЛИЧЕСТВО(Склады.Ссылка) КАК Количество
+            ИЗ
+                Справочник.Склады КАК Склады
+            ГДЕ
+                Склады.ТипСклада = ЗНАЧЕНИЕ(Перечисление.ТипыСкладов.Розничный)
+            """,
+            params={},
+            metadata_objects=[warehouse_metadata()],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("enum_value_not_confirmed_by_metadata", [issue.code for issue in result.issues])
+
+    def test_reference_value_resolver_replaces_string_enum_filter_with_object_ref(self) -> None:
+        mcp = DictMcpClient(
+            {
+                "success": True,
+                "data": [
+                    {
+                        "Значение": {
+                            "_objectRef": True,
+                            "УникальныйИдентификатор": "РозничныйМагазин",
+                            "ТипОбъекта": "ПеречислениеСсылка.ТипыСкладов",
+                            "Представление": "Розничный магазин",
+                        },
+                        "Представление": "Розничный магазин",
+                    },
+                    {
+                        "Значение": {
+                            "_objectRef": True,
+                            "УникальныйИдентификатор": "ОптовыйСклад",
+                            "ТипОбъекта": "ПеречислениеСсылка.ТипыСкладов",
+                            "Представление": "Оптовый склад",
+                        },
+                        "Представление": "Оптовый склад",
+                    },
+                ],
+            }
+        )
+
+        result = ReferenceValueResolver(mcp).resolve(
+            query="""
+            ВЫБРАТЬ
+                Склады.Ссылка КАК Ссылка
+            ИЗ
+                Справочник.Склады КАК Склады
+            ГДЕ
+                Склады.ТипСклада = &warehouse_type
+            """,
+            params={"warehouse_type": "розничный"},
+            metadata_objects=[warehouse_metadata()],
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(result.params["warehouse_type"]["УникальныйИдентификатор"], "РозничныйМагазин")
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertIn("ПРЕДСТАВЛЕНИЕ(Склады.ТипСклада)", mcp.query_calls[0].query)
+
+    def test_reference_value_resolver_replaces_unconfirmed_enum_literal_with_object_param(self) -> None:
+        mcp = DictMcpClient(
+            {
+                "success": True,
+                "data": [
+                    {
+                        "Значение": {
+                            "_objectRef": True,
+                            "УникальныйИдентификатор": "РозничныйМагазин",
+                            "ТипОбъекта": "ПеречислениеСсылка.ТипыСкладов",
+                            "Представление": "Розничный магазин",
+                        },
+                        "Представление": "Розничный магазин",
+                    }
+                ],
+            }
+        )
+
+        result = ReferenceValueResolver(mcp).resolve(
+            query="""
+            ВЫБРАТЬ
+                КОЛИЧЕСТВО(Склады.Ссылка) КАК Количество
+            ИЗ
+                Справочник.Склады КАК Склады
+            ГДЕ
+                Склады.ТипСклада = ЗНАЧЕНИЕ(Перечисление.ТипыСкладов.Розничный)
+            """,
+            params={},
+            metadata_objects=[warehouse_metadata()],
+        )
+
+        self.assertTrue(result.changed)
+        self.assertIn("Склады.ТипСклада = &ТипСклада_resolved", result.query)
+        self.assertEqual(result.params["ТипСклада_resolved"]["УникальныйИдентификатор"], "РозничныйМагазин")
+
 
 def money_register_metadata():
     return metadata_object_from_payload(
@@ -176,6 +277,20 @@ def money_register_metadata():
             "Синоним": "Денежные средства",
             "Измерения": [{"Имя": "Касса", "Тип": "СправочникСсылка.Кассы"}],
             "Ресурсы": [{"Имя": "Сумма", "Тип": "Число(15, 2)"}],
+        }
+    )
+
+
+def warehouse_metadata():
+    return metadata_object_from_payload(
+        {
+            "ПолноеИмя": "Справочник.Склады",
+            "Синоним": "Склады",
+            "Реквизиты": [
+                {"Имя": "Ссылка", "Тип": "СправочникСсылка.Склады"},
+                {"Имя": "Наименование", "Тип": "Строка(50)"},
+                {"Имя": "ТипСклада", "Тип": "ПеречислениеСсылка.ТипыСкладов"},
+            ],
         }
     )
 

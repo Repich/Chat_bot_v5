@@ -13,6 +13,8 @@ from wiicon5.models import SkillContract
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.query_builder import QueryBuildError, QueryBuilder
+from wiicon5.query.query_draft import QueryDraft
+from wiicon5.query.reference_value_resolver import ReferenceValueResolver
 
 
 class DataSkillRunner(SkillRunner):
@@ -48,11 +50,41 @@ class DataSkillRunner(SkillRunner):
                 trace={"query_draft": draft.to_dict(), "validation": validation.to_dict()},
             )
         query_review_payload = None
+        reference_resolution_payload = None
+        metadata_dependencies = self._metadata_dependencies(draft.metadata_dependencies)
+        if metadata_dependencies:
+            reference_resolution = ReferenceValueResolver(self.mcp_client).resolve(
+                query=draft.query,
+                params=draft.params,
+                metadata_objects=metadata_dependencies,
+            )
+            reference_resolution_payload = reference_resolution.to_dict()
+            if reference_resolution.changed:
+                draft = QueryDraft(
+                    query=reference_resolution.query,
+                    params=reference_resolution.params,
+                    limit=draft.limit,
+                    include_schema=draft.include_schema,
+                    metadata_dependencies=draft.metadata_dependencies,
+                    reasoning=draft.reasoning,
+                )
+                validation = validate_read_only_query(draft.query, draft.params)
+                if not validation.ok:
+                    return SkillRunResult(
+                        ok=False,
+                        skill_id=skill.skill_id,
+                        error="Query safety validation failed after reference value resolution.",
+                        trace={
+                            "query_draft": draft.to_dict(),
+                            "reference_value_resolution": reference_resolution_payload,
+                            "validation": validation.to_dict(),
+                        },
+                    )
         if self.query_reviewer is not None:
             query_review = self.query_reviewer.review(
                 query=draft.query,
                 params=draft.params,
-                metadata_objects=self._metadata_dependencies(draft.metadata_dependencies),
+                metadata_objects=metadata_dependencies,
             )
             query_review_payload = query_review.to_dict()
             if not query_review.ok:
@@ -60,7 +92,11 @@ class DataSkillRunner(SkillRunner):
                     ok=False,
                     skill_id=skill.skill_id,
                     error="Query review failed: " + query_review.error_text(),
-                    trace={"query_draft": draft.to_dict(), "query_review": query_review.to_dict()},
+                    trace={
+                        "query_draft": draft.to_dict(),
+                        "reference_value_resolution": reference_resolution_payload,
+                        "query_review": query_review.to_dict(),
+                    },
                 )
         response = self.mcp_client.execute_query(
             McpQueryRequest(
@@ -76,7 +112,11 @@ class DataSkillRunner(SkillRunner):
                 ok=False,
                 skill_id=skill.skill_id,
                 error=response.error or "MCP query failed.",
-                trace={"query_draft": draft.to_dict(), "mcp_response": response.raw},
+                trace={
+                    "query_draft": draft.to_dict(),
+                    "reference_value_resolution": reference_resolution_payload,
+                    "mcp_response": response.raw,
+                },
             )
         return SkillRunResult(
             ok=True,
@@ -84,6 +124,7 @@ class DataSkillRunner(SkillRunner):
             artifacts=_artifacts_from_rows(skill, rows, draft.metadata_dependencies),
             trace={
                 "query_draft": draft.to_dict(),
+                "reference_value_resolution": reference_resolution_payload,
                 "query_review": query_review_payload,
                 "row_count": len(rows),
                 "mcp_response": response.raw,

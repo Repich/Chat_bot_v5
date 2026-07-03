@@ -1,0 +1,35 @@
+{
+  "skill_id": "count_entities",
+  "version": "0.1.0",
+  "kind": "transform",
+  "status": "verified",
+  "description": "Count any retrieved entity/reference list without creating a domain-specific aggregate query.",
+  "capabilities": [
+    "count_entities",
+    "count_rows",
+    "количество",
+    "сколько",
+    "produce:CountResult"
+  ],
+  "inputs": [
+    {
+      "name": "items",
+      "type": "EntityRefList",
+      "required": true,
+      "description": "Any concrete entity list to count"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "count_result",
+      "type": "CountResult",
+      "required": true,
+      "description": "One-row aggregate table with entity count"
+    }
+  ],
+  "tags": [
+    "transform",
+    "count"
+  ],
+  "implementation_strategy": "deterministic_count_entities"
+}

@@ -104,8 +104,10 @@ class SkillRuntimeTests(unittest.TestCase):
         runners = default_runners()
         runners["semantic_binding_query"] = scripted_data_runner
         executor = SkillPlanExecutor(registry, runners)
+        context = ConversationContext(session_id="s1")
+        context.append_message("user", "Показать склады")
 
-        result = executor.execute(compose_result.plan, ConversationContext(session_id="s1"))
+        result = executor.execute(compose_result.plan, context)
 
         self.assertTrue(result.ok)
         assert result.final_artifact is not None
@@ -146,13 +148,59 @@ class SkillRuntimeTests(unittest.TestCase):
         runners = default_runners()
         runners["semantic_binding_query"] = scripted_data_runner
         executor = SkillPlanExecutor(registry, runners)
+        context = ConversationContext(session_id="s1")
+        context.append_message("user", "Показать склады")
 
-        result = executor.execute(compose_result.plan, ConversationContext(session_id="s1"))
+        result = executor.execute(compose_result.plan, context)
 
         self.assertTrue(result.ok)
         assert result.final_artifact is not None
         self.assertIn("Основной склад", result.final_artifact.value)
         self.assertNotIn("_objectRef", result.final_artifact.value)
+
+    def test_executor_counts_filtered_entity_list_with_generic_transform(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        goal = GoalDecomposition(
+            business_goal="Сколько в системе розничных складов?",
+            final_artifact_type="UserAnswer",
+            expected_answer_type="short_answer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="warehouse_count",
+                    type="AggregateTable",
+                    constraints=[SemanticFilter(semantic_field="warehouse_type", operator="equals", value="розничный")],
+                )
+            ],
+        )
+        compose_result = SkillComposer(registry).compose(goal)
+        assert compose_result.plan is not None
+        scripted_data_runner = StaticSkillRunner(
+            {
+                "get_warehouses": [
+                    Artifact(
+                        name="warehouses",
+                        type="WarehouseRefList",
+                        value=[
+                            {"Ссылка": "wh-1", "Наименование": "Магазин 1"},
+                            {"Ссылка": "wh-2", "Наименование": "Магазин 2"},
+                        ],
+                        provenance=["mock_mcp"],
+                    )
+                ]
+            }
+        )
+        runners = default_runners()
+        runners["semantic_binding_query"] = scripted_data_runner
+        executor = SkillPlanExecutor(registry, runners)
+        context = ConversationContext(session_id="s1")
+        context.append_message("user", "Сколько в системе розничных складов?")
+
+        result = executor.execute(compose_result.plan, context)
+
+        self.assertTrue(result.ok)
+        assert result.final_artifact is not None
+        self.assertEqual(result.final_artifact.type, "UserAnswer")
+        self.assertIn("Количество: 2", result.final_artifact.value)
 
 
 def build_stock_plan(registry: SkillRegistry):

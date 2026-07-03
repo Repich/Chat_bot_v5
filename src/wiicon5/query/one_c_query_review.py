@@ -127,6 +127,7 @@ class OneCQueryReviewer:
             if metadata is not None:
                 review_confirmed_fields(source, refs, metadata, issues)
                 review_reference_string_params(source, query, params, metadata, issues)
+                review_unconfirmed_enum_literals(source, query, metadata, issues)
 
         return QueryReviewResult(
             ok=not issues,
@@ -265,6 +266,40 @@ def review_reference_string_params(
         )
 
 
+def review_unconfirmed_enum_literals(
+    source: QuerySourceRef,
+    query: str,
+    metadata: MetadataObject,
+    issues: List[QueryReviewIssue],
+) -> None:
+    escaped_alias = re.escape(source.alias)
+    pattern = re.compile(
+        rf"\b{escaped_alias}\.(?P<field>[A-Za-zА-Яа-яЁё0-9_]+)\s*=\s*"
+        rf"ЗНАЧЕНИЕ\(\s*Перечисление\.(?P<enum>[A-Za-zА-Яа-яЁё0-9_]+)\."
+        rf"(?P<value>[A-Za-zА-Яа-яЁё0-9_]+)\s*\)",
+        flags=re.IGNORECASE,
+    )
+    for match in pattern.finditer(query):
+        field_name = match.group("field")
+        if not is_reference_field(metadata, field_name):
+            continue
+        enum_name = match.group("enum")
+        field_type = field_type_text(metadata, field_name)
+        if enum_name and enum_name not in field_type:
+            continue
+        issues.append(
+            QueryReviewIssue(
+                code="enum_value_not_confirmed_by_metadata",
+                message=(
+                    f"Значение Перечисление.{enum_name}.{match.group('value')} для поля "
+                    f"{source.alias}.{field_name} не подтверждено метаданными или данными. "
+                    "Сначала получи реальные значения поля через MCP и передай найденную ссылку параметром."
+                ),
+                evidence=["metadata_objects", "query_literal"],
+            )
+        )
+
+
 def expected_fields_for_source(source: QuerySourceRef, metadata: MetadataObject) -> Set[str]:
     base_fields = set(metadata.fields)
     if source.object_type == "Документ" and source.table_part:
@@ -369,6 +404,13 @@ def is_reference_field(metadata: MetadataObject, field_name: str) -> bool:
             "планвидоврасчетовссылка.",
         )
     )
+
+
+def field_type_text(metadata: MetadataObject, field_name: str) -> str:
+    details = metadata.field_details.get(field_name)
+    if not details:
+        return ""
+    return str(details.get("Тип") or details.get("type") or "")
 
 
 def is_plain_string_param(value: Any) -> bool:

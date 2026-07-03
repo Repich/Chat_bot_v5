@@ -14,6 +14,7 @@ DEFAULT_TYPE_PARENTS: Dict[str, List[str]] = {
     "StockBalanceTable": ["TypedTable"],
     "DebtBalanceTable": ["TypedTable"],
     "AggregateTable": ["TypedTable"],
+    "CountResult": ["AggregateTable"],
     "DocumentCountByPeriodTable": ["TypedTable"],
     "DocumentLineTable": ["TypedTable"],
     "DocumentListTable": ["TypedTable"],

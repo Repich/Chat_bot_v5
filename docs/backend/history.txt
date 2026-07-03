@@ -1,3 +1,11 @@
+5.0.0-alpha.3
+- Added generic CountResult and count_entities transform for questions that can be answered as "retrieve entities, then count them".
+- Taught the composer to build plans like EntityRefList producer -> count_entities -> render_table_answer for count requests with semantic filters.
+- Added ReferenceValueResolver that resolves string filters for reference/enum fields by querying real field values through MCP and passing the matched _objectRef as a parameter.
+- Added deterministic repair for LLM-generated enum literals such as ЗНАЧЕНИЕ(Перечисление.X.Y) when the actual value name is different.
+- Strengthened query review to reject unconfirmed enum literals before MCP execution.
+- Added tests for generic filtered entity counting, reference/enum resolution, and query synthesis repair.
+
 5.0.0-alpha.2
 - Added backend version endpoint /api/version.
 - Added conversation history endpoint /api/conversation?session_id=...

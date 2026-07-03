@@ -201,6 +201,33 @@ class EntityListAnswerRunner(SkillRunner):
         )
 
 
+class CountEntitiesRunner(SkillRunner):
+    def run(self, skill: SkillContract, inputs: Dict[str, Any], context: ConversationContext) -> SkillRunResult:
+        items = inputs.get("items")
+        if not isinstance(items, list):
+            return SkillRunResult(
+                ok=False,
+                skill_id=skill.skill_id,
+                error="Count input 'items' must be a list.",
+            )
+        return SkillRunResult(
+            ok=True,
+            skill_id=skill.skill_id,
+            artifacts=[
+                Artifact(
+                    name="count_result",
+                    type="CountResult",
+                    value={
+                        "columns": ["Количество"],
+                        "rows": [{"Количество": len(items)}],
+                    },
+                    provenance=[skill.skill_id],
+                )
+            ],
+            trace={"count": len(items)},
+        )
+
+
 class StaticSkillRunner(SkillRunner):
     def __init__(self, artifacts_by_skill_id: Mapping[str, List[Artifact]]) -> None:
         self.artifacts_by_skill_id = {key: list(value) for key, value in artifacts_by_skill_id.items()}
@@ -216,6 +243,7 @@ class StaticSkillRunner(SkillRunner):
 def default_runners() -> Dict[str, SkillRunner]:
     return {
         "context_artifact_lookup": ContextArtifactRunner(),
+        "deterministic_count_entities": CountEntitiesRunner(),
         "deterministic_table_renderer": TableAnswerRunner(),
         "deterministic_entity_list_renderer": EntityListAnswerRunner(),
     }

@@ -146,6 +146,43 @@ class SkillComposerTests(unittest.TestCase):
         assert result.plan is not None
         self.assertEqual([node.skill_id for node in result.plan.nodes], ["get_warehouses", "render_entity_list_answer"])
 
+    def test_composer_counts_filtered_entities_with_generic_transform(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        composer = SkillComposer(registry)
+        goal = GoalDecomposition(
+            business_goal="Сколько в системе розничных складов?",
+            final_artifact_type="UserAnswer",
+            expected_answer_type="short_answer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="warehouse_count",
+                    type="AggregateTable",
+                    constraints=[
+                        SemanticFilter(
+                            semantic_field="warehouse_type",
+                            operator="equals",
+                            value="розничный",
+                            raw_user_text="розничных складов",
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        result = composer.compose(goal)
+
+        self.assertEqual(result.gaps, [])
+        self.assertIsNotNone(result.plan)
+        assert result.plan is not None
+        self.assertEqual(
+            [node.skill_id for node in result.plan.nodes],
+            ["get_warehouses", "count_entities", "render_table_answer"],
+        )
+        warehouse_node = result.plan.nodes[0]
+        self.assertEqual(warehouse_node.inputs["filters"][0]["semantic_field"], "warehouse_type")
+        count_node = result.plan.nodes[1]
+        self.assertEqual(count_node.inputs["items"], "${inv_001.warehouses}")
+
     def test_composer_builds_document_count_by_period_plan(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         composer = SkillComposer(registry)
