@@ -1,0 +1,643 @@
+from __future__ import annotations
+
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from typing import Any, Dict, Type
+from urllib.parse import parse_qs, urlparse
+
+from wiicon5.agent.orchestrator import AgentOrchestrator
+from wiicon5.conversation.context import ResolvedEntity
+from wiicon5.execution.artifacts import Artifact
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+VERSION_FILE = PROJECT_ROOT / "VERSION"
+BACKEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "backend" / "history.txt"
+FRONTEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "frontend" / "history.txt"
+
+
+def make_handler(agent: AgentOrchestrator) -> Type[BaseHTTPRequestHandler]:
+    class Wiicon5Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
+            if path == "/health":
+                self._send_json(200, {"ok": True, "service": "wiicon5"})
+                return
+            if path == "/api/version":
+                self._send_json(200, {"ok": True, "service": "wiicon5", "version": current_version()})
+                return
+            if path == "/api/conversation":
+                session_id = first_query_value(query, "session_id") or "default"
+                context = agent.memory.get_or_create(session_id)
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "session_id": context.session_id,
+                        "messages": [message.to_dict() for message in context.messages],
+                    },
+                )
+                return
+            if path == "/history/backend":
+                self._send_text(200, read_text_file(BACKEND_HISTORY_FILE))
+                return
+            if path == "/history/frontend":
+                self._send_text(200, read_text_file(FRONTEND_HISTORY_FILE))
+                return
+            if path in {"/", "/chat"}:
+                self._send_html(200, CHAT_HTML)
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path != "/chat":
+                self._send_json(404, {"ok": False, "error": "not_found"})
+                return
+            try:
+                payload = self._read_json()
+                message = str(payload.get("message") or "").strip()
+                if not message:
+                    self._send_json(400, {"ok": False, "error": "message is required"})
+                    return
+                session_id = str(payload.get("session_id") or "default")
+                seed_context_from_payload(agent, session_id, payload)
+                result = agent.handle(message, session_id=session_id)
+                self._send_json(200, {"ok": True, "result": result.to_dict()})
+            except Exception as exc:  # Keep HTTP layer diagnostic rather than crashing the server.
+                self._send_json(500, {"ok": False, "error": str(exc)})
+
+        def _read_json(self) -> Dict[str, Any]:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
+            data = json.loads(raw or "{}")
+            if not isinstance(data, dict):
+                raise ValueError("JSON body must be an object.")
+            return data
+
+        def _send_json(self, status_code: int, payload: Dict[str, Any]) -> None:
+            raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _send_text(self, status_code: int, text: str) -> None:
+            raw = text.encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _send_html(self, status_code: int, html: str) -> None:
+            raw = html.encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return None
+
+    return Wiicon5Handler
+
+
+def current_version() -> str:
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "unknown"
+
+
+def read_text_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip() + "\n"
+    except OSError:
+        return "История изменений пока не найдена.\n"
+
+
+def first_query_value(query: Dict[str, list[str]], name: str) -> str:
+    values = query.get(name) or []
+    return values[0].strip() if values else ""
+
+
+def seed_context_from_payload(agent: AgentOrchestrator, session_id: str, payload: Dict[str, Any]) -> None:
+    product_ref = payload.get("product_ref")
+    if not product_ref:
+        return
+    context = agent.memory.get_or_create(session_id)
+    value = {"ref": product_ref} if isinstance(product_ref, str) else product_ref
+    context.add_artifact(Artifact(name="product", type="ProductRef", value=value, provenance=["http_payload"]))
+    context.add_resolved_entity(
+        ResolvedEntity(role="product", artifact_type="ProductRef", value=value, source="http_payload", confidence=1.0)
+    )
+
+
+def run_http_server(agent: AgentOrchestrator, *, host: str, port: int) -> None:
+    server = HTTPServer((host, port), make_handler(agent))
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+
+
+CHAT_HTML = """<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WIICON ChatBot 5</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f8;
+      --panel: #ffffff;
+      --line: #d7dce0;
+      --text: #1b1f23;
+      --muted: #5b6670;
+      --accent: #0f766e;
+      --accent-strong: #0b5f59;
+      --danger: #b42318;
+      --code: #111827;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    .app {
+      height: 100vh;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+    .title {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      min-width: 0;
+    }
+    .version {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+    main {
+      width: min(1120px, 100%);
+      margin: 0 auto;
+      padding: 18px;
+      min-height: 0;
+      height: 100%;
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      gap: 18px;
+    }
+    aside, .dialog {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    aside {
+      padding: 14px;
+      align-self: start;
+      max-height: 100%;
+      overflow: auto;
+      display: grid;
+      gap: 12px;
+    }
+    .tools {
+      display: grid;
+      gap: 8px;
+    }
+    .tool-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      line-height: 1.35;
+      padding: 9px 10px;
+    }
+    textarea {
+      min-height: 94px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .dialog {
+      min-height: 0;
+      height: 100%;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      overflow: hidden;
+    }
+    .messages {
+      padding: 18px;
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 12px;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 12px 0;
+    }
+    .message {
+      max-width: 88%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fff;
+    }
+    .message.user {
+      justify-self: end;
+      border-color: #b8d7d3;
+      background: #eef8f6;
+    }
+    .message.error {
+      border-color: #f0b5ae;
+      background: #fff4f2;
+    }
+    .meta {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .content {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    details {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    pre {
+      margin: 8px 0 0;
+      max-height: 260px;
+      overflow: auto;
+      padding: 10px;
+      border-radius: 6px;
+      background: var(--code);
+      color: #f9fafb;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    form {
+      border-top: 1px solid var(--line);
+      padding: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      background: #fbfbfc;
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+    }
+    form textarea {
+      min-height: 48px;
+      max-height: 170px;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    button {
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      padding: 0 18px;
+      min-width: 110px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-strong); }
+    button.secondary {
+      min-width: 0;
+      min-height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      font-weight: 550;
+    }
+    button.secondary:hover { background: #f2f5f5; }
+    button:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+    .history-panel {
+      display: none;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+    .history-panel.visible { display: block; }
+    .history-title {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 650;
+    }
+    .history-panel pre {
+      max-height: 280px;
+      white-space: pre-wrap;
+      background: #f8fafc;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+    .danger { color: var(--danger); }
+    @media (max-width: 760px) {
+      body { overflow: hidden; }
+      header { align-items: flex-start; flex-direction: column; }
+      main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr);
+        padding: 12px;
+        overflow: hidden;
+      }
+      form { grid-template-columns: 1fr; }
+      button { min-height: 42px; }
+      .message { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="title">
+        <h1>WIICON ChatBot 5</h1>
+        <span class="version">v<span id="appVersion">...</span></span>
+      </div>
+      <div class="status"><span class="dot"></span><span id="status">готов</span></div>
+    </header>
+    <main>
+      <aside>
+        <label>Session ID
+          <input id="sessionId" value="web-test" autocomplete="off">
+        </label>
+        <div class="tools">
+          <button id="reloadHistoryButton" class="secondary" type="button">Обновить диалог</button>
+          <div class="tool-row">
+            <button id="backendHistoryButton" class="secondary" type="button">Backend</button>
+            <button id="frontendHistoryButton" class="secondary" type="button">Frontend</button>
+          </div>
+        </div>
+        <div id="historyPanel" class="history-panel">
+          <p id="historyTitle" class="history-title"></p>
+          <pre id="historyText"></pre>
+        </div>
+        <label>ProductRef JSON
+          <textarea id="productRef" spellcheck="false"></textarea>
+        </label>
+      </aside>
+      <section class="dialog" aria-label="chat">
+        <div id="messages" class="messages">
+          <div class="empty">Добрый день. Задайте вопрос по WIICON или WIIC.</div>
+        </div>
+        <form id="chatForm">
+          <textarea id="messageInput" placeholder="Введите сообщение" required autofocus></textarea>
+          <button id="sendButton" type="submit">Отправить</button>
+        </form>
+      </section>
+    </main>
+  </div>
+  <script>
+    const SESSION_STORAGE_KEY = "wiicon5.sessionId";
+    const form = document.getElementById("chatForm");
+    const input = document.getElementById("messageInput");
+    const sendButton = document.getElementById("sendButton");
+    const messages = document.getElementById("messages");
+    const statusText = document.getElementById("status");
+    const sessionId = document.getElementById("sessionId");
+    const productRef = document.getElementById("productRef");
+    const appVersion = document.getElementById("appVersion");
+    const reloadHistoryButton = document.getElementById("reloadHistoryButton");
+    const backendHistoryButton = document.getElementById("backendHistoryButton");
+    const frontendHistoryButton = document.getElementById("frontendHistoryButton");
+    const historyPanel = document.getElementById("historyPanel");
+    const historyTitle = document.getElementById("historyTitle");
+    const historyText = document.getElementById("historyText");
+    let pending = false;
+
+    const savedSessionId = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (savedSessionId) sessionId.value = savedSessionId;
+
+    function clearEmpty() {
+      const empty = messages.querySelector(".empty");
+      if (empty) empty.remove();
+    }
+
+    function setStatus(text) {
+      statusText.textContent = text;
+    }
+
+    function appendMessage(kind, title, text, raw, scroll = true) {
+      clearEmpty();
+      const node = document.createElement("article");
+      node.className = "message " + kind;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = title;
+      const content = document.createElement("div");
+      content.className = "content";
+      content.textContent = text || "";
+      node.append(meta, content);
+      if (raw) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "details";
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(raw, null, 2);
+        details.append(summary, pre);
+        node.append(details);
+      }
+      messages.append(node);
+      if (scroll) messages.scrollTop = messages.scrollHeight;
+    }
+
+    function showEmpty(text) {
+      messages.replaceChildren();
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = text;
+      messages.append(empty);
+    }
+
+    async function loadVersion() {
+      try {
+        const response = await fetch("/api/version", {cache: "no-store"});
+        const data = await response.json();
+        appVersion.textContent = data.version || "unknown";
+      } catch (error) {
+        appVersion.textContent = "unknown";
+      }
+    }
+
+    async function loadConversation() {
+      const effectiveSessionId = sessionId.value.trim() || "web-test";
+      localStorage.setItem(SESSION_STORAGE_KEY, effectiveSessionId);
+      setStatus("загрузка истории");
+      try {
+        const response = await fetch("/api/conversation?session_id=" + encodeURIComponent(effectiveSessionId), {
+          cache: "no-store"
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          showEmpty("Историю сессии не удалось загрузить.");
+          return;
+        }
+        messages.replaceChildren();
+        const items = Array.isArray(data.messages) ? data.messages : [];
+        if (!items.length) {
+          showEmpty("Добрый день. Задайте вопрос по WIICON или WIIC.");
+          return;
+        }
+        for (const item of items) {
+          const role = item.role || "assistant";
+          appendMessage(
+            role === "user" ? "user" : "assistant",
+            role === "user" ? "Вы" : "Агент",
+            item.content || "",
+            null,
+            false
+          );
+        }
+        messages.scrollTop = messages.scrollHeight;
+      } catch (error) {
+        showEmpty("Историю сессии не удалось загрузить.");
+      } finally {
+        setStatus("готов");
+      }
+    }
+
+    async function showHistory(kind) {
+      const title = kind === "backend" ? "Backend history.txt" : "Frontend history.txt";
+      const url = kind === "backend" ? "/history/backend" : "/history/frontend";
+      historyPanel.classList.add("visible");
+      historyTitle.textContent = title;
+      historyText.textContent = "Загрузка...";
+      try {
+        const response = await fetch(url, {cache: "no-store"});
+        historyText.textContent = await response.text();
+      } catch (error) {
+        historyText.textContent = "Не удалось загрузить историю изменений.";
+      }
+    }
+
+    function payloadProductRef() {
+      const value = productRef.value.trim();
+      if (!value) return undefined;
+      if (value.startsWith("{")) return JSON.parse(value);
+      return value;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (pending) return;
+      const message = input.value.trim();
+      if (!message) return;
+      appendMessage("user", "Вы", message);
+      input.value = "";
+      pending = true;
+      sendButton.disabled = true;
+      setStatus("выполняется");
+      try {
+        const payload = {
+          session_id: sessionId.value.trim() || "web-test",
+          message
+        };
+        const ref = payloadProductRef();
+        if (ref !== undefined) payload.product_ref = ref;
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          appendMessage("error", "Ошибка", data.error || "HTTP " + response.status, data);
+        } else {
+          appendMessage("assistant", data.result.source || "agent", data.result.message, data.result);
+        }
+      } catch (error) {
+        appendMessage("error", "Ошибка", String(error && error.message ? error.message : error));
+      } finally {
+        pending = false;
+        sendButton.disabled = false;
+        setStatus("готов");
+        input.focus();
+      }
+    });
+
+    reloadHistoryButton.addEventListener("click", () => loadConversation());
+    backendHistoryButton.addEventListener("click", () => showHistory("backend"));
+    frontendHistoryButton.addEventListener("click", () => showHistory("frontend"));
+    sessionId.addEventListener("change", () => loadConversation());
+    sessionId.addEventListener("blur", () => {
+      localStorage.setItem(SESSION_STORAGE_KEY, sessionId.value.trim() || "web-test");
+    });
+
+    loadVersion();
+    loadConversation();
+  </script>
+</body>
+</html>
+"""

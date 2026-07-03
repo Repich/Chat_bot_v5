@@ -1,0 +1,11 @@
+5.0.0-alpha.2
+- Kept the message composer visible while long dialogs scroll.
+- Added visible bot version in the header.
+- Added browser-side session id persistence.
+- Added automatic conversation history loading after browser reload.
+- Added manual dialog refresh action.
+- Added backend and frontend history viewers in the web client.
+- Improved empty/error states for history loading.
+
+5.0.0-alpha.1
+- Added first embedded web chat client for local testing.

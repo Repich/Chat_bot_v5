@@ -1,0 +1,53 @@
+{
+  "skill_id": "count_transfer_documents_by_day",
+  "version": "0.1.0",
+  "kind": "data_acquisition",
+  "status": "verified",
+  "description": "Count transfer/movement documents by day / количество перемещений по дням using configuration metadata and MCP query execution.",
+  "capabilities": [
+    "retrieve_document_counts",
+    "count_documents_by_period",
+    "count_transfer_documents",
+    "количество",
+    "документы",
+    "перемещения",
+    "перемещений",
+    "перемещение_товаров",
+    "по_дням",
+    "produce:DocumentCountByPeriodTable"
+  ],
+  "inputs": [
+    {
+      "name": "filters",
+      "type": "SemanticFilterList",
+      "required": false,
+      "description": "Semantic filters for document attributes"
+    },
+    {
+      "name": "period_granularity",
+      "type": "String",
+      "required": false,
+      "description": "Grouping period: day, month, year",
+      "default": "day"
+    },
+    {
+      "name": "limit",
+      "type": "Integer",
+      "required": false,
+      "description": "Maximum rows to return",
+      "default": 1000
+    }
+  ],
+  "outputs": [
+    {
+      "name": "document_counts",
+      "type": "DocumentCountByPeriodTable",
+      "required": true,
+      "description": "Document counts grouped by period"
+    }
+  ],
+  "tags": ["data", "documents", "transfer", "aggregation"],
+  "semantic_role": "transfer_document_count",
+  "supported_filter_roles": ["date", "posted"],
+  "implementation_strategy": "semantic_document_count_query"
+}

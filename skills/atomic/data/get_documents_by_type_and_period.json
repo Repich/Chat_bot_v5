@@ -1,0 +1,43 @@
+{
+  "skill_id": "get_documents_by_type_and_period",
+  "version": "0.1.0",
+  "kind": "data_acquisition",
+  "status": "verified",
+  "description": "Retrieve a list of 1C documents by semantic document type/name and period using MCP metadata discovery.",
+  "capabilities": [
+    "retrieve_documents",
+    "retrieve_document_list",
+    "документы",
+    "список_документов",
+    "поиск_документов",
+    "по_периоду",
+    "produce:DocumentListTable"
+  ],
+  "inputs": [
+    {
+      "name": "filters",
+      "type": "SemanticFilterList",
+      "required": true,
+      "description": "Semantic filters. Requires document_type; supports date/year/period, posted, number."
+    },
+    {
+      "name": "limit",
+      "type": "Integer",
+      "required": false,
+      "description": "Maximum rows to return",
+      "default": 100
+    }
+  ],
+  "outputs": [
+    {
+      "name": "documents",
+      "type": "DocumentListTable",
+      "required": true,
+      "description": "Document list table"
+    }
+  ],
+  "tags": ["data", "documents", "metadata_discovery"],
+  "semantic_role": "document_list",
+  "supported_filter_roles": ["document_type", "document_kind", "object_type", "object_name", "date", "period", "year", "posted", "number"],
+  "implementation_strategy": "semantic_document_list_query"
+}

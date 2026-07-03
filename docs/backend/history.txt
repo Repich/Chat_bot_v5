@@ -1,0 +1,13 @@
+5.0.0-alpha.2
+- Added backend version endpoint /api/version.
+- Added conversation history endpoint /api/conversation?session_id=...
+- Added backend/frontend history endpoints for web-client viewing.
+- Stored assistant answers in ConversationContext so the dialog is complete after browser reload.
+- Made get_stock_balances product and warehouse inputs optional filters instead of mandatory dependencies.
+- Prevented the composer from inventing missing entity dependencies unless the goal explicitly requires them.
+- Added query review for reference fields compared to plain string parameters.
+- Added query synthesis repair guidance for reference string filter errors.
+
+5.0.0-alpha.1
+- Initial runnable WIICON ChatBot 5 architecture.
+- Added skill contracts, binding discovery, semantic query execution through MCP, trace writing, and tests.

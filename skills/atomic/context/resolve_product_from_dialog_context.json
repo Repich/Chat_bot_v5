@@ -1,0 +1,21 @@
+{
+  "skill_id": "resolve_product_from_dialog_context",
+  "version": "0.1.0",
+  "kind": "data_acquisition",
+  "status": "stable",
+  "description": "Return a product reference already resolved in the dialog context.",
+  "capabilities": ["resolve_entity_from_context", "produce:ProductRef"],
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "product",
+      "type": "ProductRef",
+      "required": true,
+      "description": "Resolved product reference"
+    }
+  ],
+  "tags": ["context", "product"],
+  "semantic_role": "product",
+  "supported_filter_roles": [],
+  "implementation_strategy": "context_artifact_lookup"
+}

@@ -1,0 +1,314 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
+from wiicon5.models import ArtifactRequirement, GapResolution, SemanticFilter, SkillContract, SkillGap, SkillInvocation, SkillPlan
+from wiicon5.planner.aggregate_intent import AGGREGATE_TABLE_TYPE, document_list_misused_for_aggregation
+from wiicon5.planner.domain_compatibility import (
+    constraint_selects_skill_domain,
+    skill_domain_compatible,
+)
+from wiicon5.planner.gap_detector import GapDetector
+from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.planner.placeholders import is_unresolved_placeholder_value
+from wiicon5.planner.validator import SkillPlanValidator
+from wiicon5.skills.registry import SkillRegistry
+from wiicon5.types import TypeSystem
+
+
+@dataclass(frozen=True)
+class ComposeResult:
+    plan: Optional[SkillPlan]
+    gaps: List[SkillGap] = field(default_factory=list)
+
+
+class SkillComposer:
+    def __init__(self, registry: SkillRegistry, type_system: Optional[TypeSystem] = None) -> None:
+        self.registry = registry
+        self.type_system = type_system or TypeSystem()
+        self.gap_detector = GapDetector(registry, self.type_system)
+        self.validator = SkillPlanValidator(registry)
+
+    def compose(self, goal: GoalDecomposition) -> ComposeResult:
+        aggregate_gap = self._aggregate_document_list_gap(goal)
+        if aggregate_gap is not None:
+            return ComposeResult(plan=None, gaps=[aggregate_gap])
+
+        state = _ComposeState(goal=goal)
+        try:
+            self._ensure_artifact(goal.final_artifact_type, state)
+        except _CompositionGap as exc:
+            return ComposeResult(plan=None, gaps=[exc.gap])
+
+        plan = SkillPlan(
+            plan_id="plan_001",
+            business_goal=goal.business_goal,
+            expected_answer_type=goal.expected_answer_type,
+            nodes=state.nodes,
+            edges=state.edges,
+        )
+        validation = self.validator.validate(plan)
+        if not validation.ok:
+            return ComposeResult(
+                plan=None,
+                gaps=[
+                    SkillGap(
+                        required_capability="valid_skill_plan",
+                        required_output=goal.final_artifact_type,
+                        reason="Generated skill plan failed deterministic validation.",
+                        nearest_skill_ids=[node.skill_id for node in state.nodes],
+                        recommended_resolution=self._validation_gap_resolution(validation.issues[0].code),
+                        missing=[issue.code for issue in validation.issues],
+                    )
+                ],
+            )
+        return ComposeResult(plan=plan, gaps=[])
+
+    def _ensure_artifact(self, artifact_type: str, state: "_ComposeState") -> Tuple[str, str]:
+        existing = state.produced_artifact(artifact_type, self.type_system)
+        if existing is not None:
+            return existing
+
+        requirement = state.goal.requirement_for_type(artifact_type)
+        gap = self.gap_detector.detect_for_requirement(requirement, goal=state.goal)
+        if gap is not None:
+            raise _CompositionGap(gap)
+
+        producer = self._choose_producer(requirement, state)
+        if producer is None:
+            raise _CompositionGap(
+                SkillGap(
+                    required_capability=f"produce:{artifact_type}",
+                    required_output=artifact_type,
+                    reason="No compatible producer was found.",
+                    nearest_skill_ids=[],
+                    recommended_resolution=self.gap_detector.detect_for_requirement(requirement, goal=state.goal).recommended_resolution
+                    if self.gap_detector.detect_for_requirement(requirement, goal=state.goal)
+                    else self._default_gap_resolution(),
+                    missing=[artifact_type],
+                )
+            )
+
+        inputs: Dict[str, Any] = {}
+        dependencies: List[str] = []
+        dependency_edges: List[Tuple[str, str, str]] = []
+        for input_port in producer.inputs:
+            matching_constraint = first_constraint_for_input(requirement.constraints, input_port.name)
+            if matching_constraint is not None and input_port.type != "SemanticFilterList":
+                if is_unresolved_placeholder_value(matching_constraint.value):
+                    matching_constraint = None
+                else:
+                    inputs[input_port.name] = matching_constraint.value
+                    continue
+            if input_port.type == "SemanticFilterList":
+                filter_constraints = semantic_filter_constraints_for_skill(requirement.constraints, producer)
+                if filter_constraints:
+                    inputs[input_port.name] = [item.to_dict() for item in filter_constraints]
+                elif input_port.required and input_port.default is None:
+                    inputs[input_port.name] = []
+                continue
+            if goal_has_assignable_requirement(state.goal, input_port.type, self.type_system):
+                dependency_type = concrete_dependency_type_for_input(input_port.type, state, self.type_system)
+                dependency_node, dependency_output = self._ensure_artifact(dependency_type, state)
+                dependencies.append(dependency_node)
+                dependency_edges.append((dependency_node, dependency_output, input_port.name))
+                continue
+            if input_port.required and input_port.default is None:
+                if self.type_system.is_technical_port_type(input_port.type):
+                    raise _CompositionGap(
+                        SkillGap(
+                            required_capability=f"input:{producer.skill_id}.{input_port.name}",
+                            required_output=requirement.type,
+                            reason=f"Required technical input {input_port.name} is missing.",
+                            nearest_skill_ids=[producer.skill_id],
+                            recommended_resolution=GapResolution.CLARIFY,
+                            missing=[f"input:{input_port.name}"],
+                        )
+                    )
+                raise _CompositionGap(
+                    SkillGap(
+                        required_capability=f"produce:{input_port.type}",
+                        required_output=input_port.type,
+                        reason=(
+                            f"Skill {producer.skill_id} requires input artifact {input_port.type}, "
+                            "but the user goal did not request or provide it."
+                        ),
+                        nearest_skill_ids=[producer.skill_id],
+                        recommended_resolution=GapResolution.CLARIFY,
+                        missing=[input_port.type],
+                    )
+                )
+            elif input_port.default is not None:
+                inputs[input_port.name] = input_port.default
+
+        invocation_id = state.next_invocation_id()
+        edges: List[List[str]] = []
+        for dependency_node, dependency_output, input_name in dependency_edges:
+            inputs[input_name] = f"${{{dependency_node}.{dependency_output}}}"
+            edges.append([f"{dependency_node}.{dependency_output}", f"{invocation_id}.{input_name}"])
+
+        expected_outputs = {output.name: output.type for output in producer.outputs}
+        invocation = SkillInvocation(
+            invocation_id=invocation_id,
+            skill_id=producer.skill_id,
+            inputs=inputs,
+            expected_outputs=expected_outputs,
+            depends_on=dependencies,
+        )
+        state.add_node(invocation)
+        state.edges.extend(edges)
+        output_names = producer.output_names_for_type(artifact_type)
+        if output_names:
+            return invocation_id, output_names[0]
+        for output in producer.outputs:
+            if self.type_system.is_assignable(output.type, artifact_type):
+                return invocation_id, output.name
+        raise RuntimeError(f"Producer {producer.skill_id} does not produce {artifact_type}.")
+
+    def _choose_producer(self, requirement: ArtifactRequirement, state: "_ComposeState") -> Optional[SkillContract]:
+        candidates = [
+            skill
+            for skill in self.registry.active()
+            if any(self.type_system.is_assignable(output.type, requirement.type) for output in skill.outputs)
+        ]
+        candidates = [
+            skill
+            for skill in candidates
+            if all(_skill_accepts_constraint(skill, constraint) for constraint in requirement.constraints)
+        ]
+        candidates = [skill for skill in candidates if skill_domain_compatible(skill, requirement, state.goal)]
+        if not candidates:
+            return None
+        return sorted(
+            candidates,
+            key=lambda skill: (-producer_score(skill, requirement, state, self.type_system), skill.skill_id),
+        )[0]
+
+    def _validation_gap_resolution(self, issue_code: str):
+        from wiicon5.models import GapResolution
+
+        if issue_code == "missing_required_input":
+            return GapResolution.CLARIFY
+        return GapResolution.CANNOT_SOLVE
+
+    def _default_gap_resolution(self):
+        from wiicon5.models import GapResolution
+
+        return GapResolution.CREATE_NEW
+
+    def _aggregate_document_list_gap(self, goal: GoalDecomposition) -> Optional[SkillGap]:
+        if not document_list_misused_for_aggregation(goal):
+            return None
+        return SkillGap(
+            required_capability="produce:aggregate_table",
+            required_output=AGGREGATE_TABLE_TYPE,
+            reason=(
+                "The goal asks for aggregation/ranking, but the decomposed artifact is a raw document list. "
+                "A document list cannot safely answer aggregate questions."
+            ),
+            nearest_skill_ids=[],
+            recommended_resolution=GapResolution.CREATE_NEW,
+            missing=["aggregate_query", "not_document_list"],
+        )
+
+
+@dataclass
+class _ComposeState:
+    goal: GoalDecomposition
+    nodes: List[SkillInvocation] = field(default_factory=list)
+    edges: List[List[str]] = field(default_factory=list)
+    _counter: int = 0
+
+    def next_invocation_id(self) -> str:
+        self._counter += 1
+        return f"inv_{self._counter:03d}"
+
+    def add_node(self, invocation: SkillInvocation) -> None:
+        self.nodes.append(invocation)
+
+    def produced_artifact(self, artifact_type: str, type_system: TypeSystem) -> Optional[Tuple[str, str]]:
+        for node in self.nodes:
+            for output_name, output_type in node.expected_outputs.items():
+                if type_system.is_assignable(output_type, artifact_type):
+                    return node.invocation_id, output_name
+        return None
+
+
+class _CompositionGap(Exception):
+    def __init__(self, gap: SkillGap) -> None:
+        super().__init__(gap.reason)
+        self.gap = gap
+
+
+def _skill_accepts_constraint(skill: SkillContract, constraint: SemanticFilter) -> bool:
+    return (
+        _constraint_targets_input(skill, constraint)
+        or constraint.semantic_field in skill.supported_filter_roles
+        or constraint_selects_skill_domain(skill, constraint)
+    )
+
+
+def _constraint_targets_input(skill: SkillContract, constraint: SemanticFilter) -> bool:
+    return any(input_port.name == constraint.semantic_field for input_port in skill.inputs)
+
+
+def first_constraint_for_input(constraints: List[SemanticFilter], input_name: str) -> Optional[SemanticFilter]:
+    for constraint in constraints:
+        if constraint.semantic_field == input_name:
+            return constraint
+    return None
+
+
+def semantic_filter_constraints_for_skill(
+    constraints: List[SemanticFilter],
+    skill: SkillContract,
+) -> List[SemanticFilter]:
+    return [
+        constraint
+        for constraint in constraints
+        if not _constraint_targets_input(skill, constraint) and not constraint_selects_skill_domain(skill, constraint)
+    ]
+
+
+def concrete_dependency_type_for_input(input_type: str, state: _ComposeState, type_system: TypeSystem) -> str:
+    if not type_system.is_abstract_artifact_type(input_type):
+        return input_type
+    for requirement in state.goal.required_artifacts:
+        if requirement.type != input_type and type_system.is_assignable(requirement.type, input_type):
+            return requirement.type
+    return input_type
+
+
+def producer_score(
+    skill: SkillContract,
+    requirement: ArtifactRequirement,
+    state: _ComposeState,
+    type_system: TypeSystem,
+) -> int:
+    score = 0
+    goal_required_types = {item.type for item in state.goal.required_artifacts}
+    for output in skill.outputs:
+        if output.type == requirement.type:
+            score += 3
+        elif type_system.is_assignable(output.type, requirement.type):
+            score += 2
+        if output.type in goal_required_types:
+            score += 20
+
+    if requirement.type == "UserAnswer":
+        has_table_requirement = any(
+            type_system.is_assignable(item.type, "TypedTable") for item in state.goal.required_artifacts
+        )
+        for input_port in skill.inputs:
+            if input_port.required and goal_has_assignable_requirement(state.goal, input_port.type, type_system):
+                score += 5
+            if input_port.type == "TypedTable" and has_table_requirement:
+                score += 10
+            if input_port.type == "EntityRefList" and not has_table_requirement:
+                score += 10
+    return score
+
+
+def goal_has_assignable_requirement(goal: GoalDecomposition, artifact_type: str, type_system: TypeSystem) -> bool:
+    return any(type_system.is_assignable(item.type, artifact_type) for item in goal.required_artifacts)

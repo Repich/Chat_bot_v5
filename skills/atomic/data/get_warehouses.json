@@ -1,0 +1,35 @@
+{
+  "skill_id": "get_warehouses",
+  "version": "0.1.0",
+  "kind": "data_acquisition",
+  "status": "verified",
+  "description": "Retrieve warehouses / склады by semantic filters using current configuration binding or discovery.",
+  "capabilities": ["retrieve_entities", "retrieve_warehouses", "склады", "склад", "места_хранения", "produce:WarehouseRefList"],
+  "inputs": [
+    {
+      "name": "filters",
+      "type": "SemanticFilterList",
+      "required": false,
+      "description": "Semantic filters such as city or warehouse_type"
+    },
+    {
+      "name": "limit",
+      "type": "Integer",
+      "required": false,
+      "description": "Maximum rows to return",
+      "default": 100
+    }
+  ],
+  "outputs": [
+    {
+      "name": "warehouses",
+      "type": "WarehouseRefList",
+      "required": true,
+      "description": "Warehouse references"
+    }
+  ],
+  "tags": ["data", "warehouse"],
+  "semantic_role": "warehouse",
+  "supported_filter_roles": ["city", "warehouse_type", "name"],
+  "implementation_strategy": "semantic_binding_query"
+}

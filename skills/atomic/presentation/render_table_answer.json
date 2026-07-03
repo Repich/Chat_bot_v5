@@ -1,0 +1,27 @@
+{
+  "skill_id": "render_table_answer",
+  "version": "0.1.0",
+  "kind": "presentation",
+  "status": "stable",
+  "description": "Render a typed table artifact into a user-facing answer without changing facts.",
+  "capabilities": ["render_answer", "produce:UserAnswer"],
+  "inputs": [
+    {
+      "name": "table",
+      "type": "TypedTable",
+      "required": true,
+      "description": "Typed table to render"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "answer",
+      "type": "UserAnswer",
+      "required": true,
+      "description": "Final user answer"
+    }
+  ],
+  "tags": ["presentation"],
+  "supported_filter_roles": [],
+  "implementation_strategy": "deterministic_table_renderer"
+}

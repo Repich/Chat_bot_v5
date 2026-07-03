@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from wiicon5.app.config import Settings
+from wiicon5.app.factory import build_agent
+from wiicon5.web.server import run_http_server
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run WIICON ChatBot 5 HTTP server.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=7785)
+    parser.add_argument("--root", default=".")
+    args = parser.parse_args()
+
+    root = Path(args.root).resolve()
+    settings = Settings.from_env(root=root)
+    agent = build_agent(settings)
+    print(f"WIICON5 listening on http://{args.host}:{args.port}/chat")
+    run_http_server(agent, host=args.host, port=args.port)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

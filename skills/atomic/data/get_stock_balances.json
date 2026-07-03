@@ -1,0 +1,41 @@
+{
+  "skill_id": "get_stock_balances",
+  "version": "0.1.0",
+  "kind": "data_acquisition",
+  "status": "verified",
+  "description": "Retrieve stock balances / остатки товаров for a product and optional warehouse set using binding/discovery.",
+  "capabilities": ["retrieve_measure", "retrieve_stock_balances", "остатки", "остатки_товаров", "складские_остатки", "товары", "produce:StockBalanceTable"],
+  "inputs": [
+    {
+      "name": "product",
+      "type": "ProductRef",
+      "required": false,
+      "description": "Optional product reference. Omit to return balances for all products matching the other filters."
+    },
+    {
+      "name": "warehouses",
+      "type": "WarehouseRefList",
+      "required": false,
+      "description": "Optional warehouse references. Omit to return balances across all warehouses."
+    },
+    {
+      "name": "limit",
+      "type": "Integer",
+      "required": false,
+      "description": "Maximum rows to return",
+      "default": 100
+    }
+  ],
+  "outputs": [
+    {
+      "name": "stock_table",
+      "type": "StockBalanceTable",
+      "required": true,
+      "description": "Stock balance table"
+    }
+  ],
+  "tags": ["data", "stock"],
+  "semantic_role": "stock_balance",
+  "supported_filter_roles": ["product", "warehouse"],
+  "implementation_strategy": "semantic_measure_query"
+}
