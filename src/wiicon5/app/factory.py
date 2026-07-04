@@ -18,6 +18,7 @@ from wiicon5.query.learned_query_builder import LearnedQueryBuilder
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
 from wiicon5.query.semantic_query_builder import SemanticQueryBuilder
 from wiicon5.query_synthesis import QuerySynthesisEngine
+from wiicon5.query_synthesis.sufficiency import ResultSufficiencyReviewer
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
 from wiicon5.skills.learned import LearnedSkillStore
 from wiicon5.skills.registry import SkillRegistry
@@ -72,6 +73,7 @@ def build_agent(
             mcp_client=effective_mcp,
             query_reviewer=query_reviewer,
             answer_formatter=LLMAnswerFormatter(effective_llm),
+            result_reviewer=ResultSufficiencyReviewer(effective_llm),
         ),
         learned_skill_store=learned_skill_store,
         trace_root=settings.runs_dir,

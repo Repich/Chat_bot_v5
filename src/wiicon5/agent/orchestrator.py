@@ -29,6 +29,7 @@ class AgentRunResult:
     goal: Optional[GoalDecomposition] = None
     plan: Optional[SkillPlan] = None
     final_artifact: Optional[Artifact] = None
+    context_artifacts: List[Artifact] = field(default_factory=list)
     gaps: List[SkillGap] = field(default_factory=list)
     evolution_decisions: List[SkillEvolutionDecision] = field(default_factory=list)
     trace_path: Optional[str] = None
@@ -41,6 +42,7 @@ class AgentRunResult:
             "goal": self.goal_to_dict(),
             "plan": self.plan.to_dict() if self.plan else None,
             "final_artifact": self.final_artifact.to_dict() if self.final_artifact else None,
+            "context_artifacts": [artifact.to_dict() for artifact in self.context_artifacts],
             "gaps": [gap.to_dict() for gap in self.gaps],
             "evolution_decisions": [decision.to_dict() for decision in self.evolution_decisions],
             "trace_path": self.trace_path,
@@ -180,6 +182,7 @@ class AgentOrchestrator:
                         goal=decomposition.goal,
                         plan=compose_result.plan,
                         final_artifact=synthesis_result.final_artifact,
+                        context_artifacts=synthesis_result.context_artifacts,
                         trace_path=str(run_trace.path),
                     )
                     run_trace.write_json("result/result.json", result.to_dict())
@@ -233,6 +236,7 @@ class AgentOrchestrator:
                 intent=decomposition.intent,
                 goal=decomposition.goal,
                 final_artifact=synthesis_result.final_artifact,
+                context_artifacts=synthesis_result.context_artifacts,
                 gaps=compose_result.gaps,
                 evolution_decisions=decisions,
                 trace_path=str(run_trace.path),
@@ -259,6 +263,10 @@ class AgentOrchestrator:
 
     def _record_assistant_and_save(self, context: ConversationContext, result: AgentRunResult) -> None:
         context.append_message("assistant", result.message)
+        if result.final_artifact is not None:
+            context.add_artifact(result.final_artifact)
+        for artifact in result.context_artifacts:
+            context.add_artifact(artifact)
         self.memory.save(context)
 
     def _try_query_synthesis(

@@ -17,6 +17,11 @@ from wiicon5.presentation.llm_answer_formatter import LLMAnswerFormatter
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
 from wiicon5.query.reference_value_resolver import ReferenceValueResolver
+from wiicon5.query_synthesis.sufficiency import (
+    ResultSufficiencyReview,
+    ResultSufficiencyReviewer,
+    deterministic_partial_review,
+)
 
 
 DISCOVERY_PROMPT = (
@@ -41,12 +46,26 @@ QUERY_PROMPT = (
     "полного имени Документ.<Имя>.<ТабличнаяЧасть>. "
     "Если previous_query_review сообщает source_not_confirmed_by_metadata, не повторяй этот источник; выбери другой источник "
     "из metadata_objects или перестрой запрос через подтвержденный документ/регистр. "
+    "В типовых УТ/ERP документ поступления товаров часто называется ПриобретениеТоваровУслуг; если ПоступлениеТоваровУслуг "
+    "не подтвержден, а в metadata_objects есть ПриобретениеТоваровУслуг, используй подтвержденный объект. "
     "Если previous_query_review сообщает document_table_part_without_document_ref, соедини табличную часть с шапкой документа "
     "по <ТабличнаяЧасть>.Ссылка = <Документ>.Ссылка; для фактов продаж/движений обычно добавь фильтр <Документ>.Проведен. "
     "Если previous_query_review сообщает reference_filter_string_param, не сравнивай ссылочное поле со строкой. "
     "Либо сначала найди/передай ссылку, либо сравнивай реквизит ссылки, например <Алиас>.<Поле>.Наименование = &Параметр. "
     "Если previous_query_review сообщает enum_value_not_confirmed_by_metadata, не придумывай ЗНАЧЕНИЕ(Перечисление.X.Y); "
     "сначала получи реальные значения поля или перестрой запрос так, чтобы вернуть группировку по этому полю и его представлению. "
+    "Если previous_query_review сообщает accumulation_balance_invalid_parameters, помни: Остатки() принимает только "
+    "Остатки(<Период>, <Условие>), третьего параметра нет. "
+    "Если previous_query_review сообщает virtual_table_filter_field_not_dimension, не фильтруй Остатки() по этому полю; "
+    "используй подтвержденное измерение или таблицу движений регистра с фильтром Активность. "
+    "Если previous_query_review сообщает raw_accumulation_register_inactive_filter, замени НЕ <Алиас>.Активность "
+    "на положительный фильтр <Алиас>.Активность. "
+    "Если previous_successful_steps не пустой, это результаты уже выполненных read-only запросов. "
+    "Используй их как промежуточные артефакты: если там есть значение с _objectRef, передавай его параметром напрямую, "
+    "не преобразуй в строку и не ищи заново по представлению. "
+    "Если previous_result_insufficiency указывает недостающие факты, следующий запрос должен получить именно эти факты, "
+    "а не повторять уже найденный промежуточный объект. "
+    "После промежуточного результата запрещено повторять тот же query: такой запрос снова вернет тот же неполный артефакт. "
     "Можно использовать виртуальные таблицы регистров накопления, например .Остатки(), если объект является регистром накопления "
     "и в метаданных есть подходящие измерения/ресурсы. Для виртуальной таблицы Остатки ресурс Ресурс обычно читается как РесурсОстаток. "
     "Запрещены любые операции изменения данных. Запрос должен начинаться с ВЫБРАТЬ. "
@@ -85,6 +104,7 @@ NON_QUERY_SOURCE_PREFIXES = (
 class QuerySynthesisResult:
     ok: bool
     final_artifact: Optional[Artifact] = None
+    context_artifacts: List[Artifact] = field(default_factory=list)
     message: str = ""
     error: str = ""
     trace: Dict[str, Any] = field(default_factory=dict)
@@ -95,6 +115,7 @@ class QuerySynthesisResult:
             "message": self.message,
             "error": self.error,
             "final_artifact": self.final_artifact.to_dict() if self.final_artifact else None,
+            "context_artifacts": [artifact.to_dict() for artifact in self.context_artifacts],
             "trace": dict(self.trace),
         }
 
@@ -108,16 +129,20 @@ class QuerySynthesisEngine:
         mcp_client: McpClient,
         query_reviewer: Optional[OneCQueryReviewer] = None,
         answer_formatter: Optional[LLMAnswerFormatter] = None,
+        result_reviewer: Optional[ResultSufficiencyReviewer] = None,
         max_metadata_objects: int = 12,
         max_repair_attempts: int = 2,
+        max_successful_steps: int = 3,
     ) -> None:
         self.llm_client = llm_client
         self.metadata_provider = metadata_provider
         self.mcp_client = mcp_client
         self.query_reviewer = query_reviewer or OneCQueryReviewer()
         self.answer_formatter = answer_formatter
+        self.result_reviewer = result_reviewer
         self.max_metadata_objects = max_metadata_objects
         self.max_repair_attempts = max_repair_attempts
+        self.max_successful_steps = max_successful_steps
 
     def run(
         self,
@@ -165,9 +190,13 @@ class QuerySynthesisEngine:
         previous_error = ""
         previous_query = ""
         previous_review: Dict[str, Any] = {}
+        previous_result_insufficiency: Dict[str, Any] = {}
+        successful_steps: List[Dict[str, Any]] = []
         query_review_guidance = self.query_reviewer.guidance()
         trace["query_review_guidance"] = query_review_guidance
-        for attempt in range(1, self.max_repair_attempts + 2):
+        max_total_attempts = self.max_repair_attempts + self.max_successful_steps + 2
+        trace["max_total_attempts"] = max_total_attempts
+        for attempt in range(1, max_total_attempts + 1):
             try:
                 query_response = self.llm_client.complete_json(
                     system_prompt=QUERY_PROMPT,
@@ -182,6 +211,8 @@ class QuerySynthesisEngine:
                         "previous_error": previous_error,
                         "previous_query": previous_query,
                         "previous_query_review": previous_review,
+                        "previous_successful_steps": compact_successful_steps(successful_steps),
+                        "previous_result_insufficiency": previous_result_insufficiency,
                         "query_review_rules": query_review_guidance,
                         "attempt": attempt,
                         "schema": {"query": "1C query text", "params": {}, "limit": 100, "reasoning": "why this query"},
@@ -203,6 +234,16 @@ class QuerySynthesisEngine:
                 "limit": limit,
             }
             trace.setdefault("attempts", []).append(attempt_trace)
+
+            if previous_result_insufficiency and repeats_partial_query(query, successful_steps):
+                previous_error = (
+                    "Repeated previous partial query after result insufficiency. "
+                    "Build a different query that retrieves the missing facts instead of returning the same intermediate rows."
+                )
+                previous_query = query
+                attempt_trace["error"] = previous_error
+                attempt_trace["repeated_partial_query"] = True
+                continue
 
             validation = validate_read_only_query(query, params)
             attempt_trace["validation"] = validation.to_dict()
@@ -307,6 +348,44 @@ class QuerySynthesisEngine:
                 continue
 
             columns = columns_from_rows(rows)
+            sufficiency = self._review_sufficiency(
+                message=message,
+                intent=intent,
+                goal=goal,
+                context=context,
+                query=query,
+                params=params,
+                columns=columns,
+                rows=rows,
+                query_response=query_response,
+                successful_steps=successful_steps,
+            )
+            attempt_trace["result_sufficiency"] = sufficiency.to_dict()
+            current_step = successful_step_payload(
+                step=len(successful_steps) + 1,
+                query=query,
+                params=params,
+                columns=columns,
+                rows=rows,
+                query_response=query_response,
+                sufficiency=sufficiency,
+            )
+            if not sufficiency.sufficient:
+                attempt_trace["partial_result"] = True
+                successful_steps.append(current_step)
+                trace["successful_steps"] = compact_successful_steps(successful_steps, include_rows=True)
+                previous_result_insufficiency = sufficiency.to_dict()
+                previous_error = result_insufficiency_error(sufficiency)
+                previous_query = query
+                previous_review = query_review.to_dict()
+                if len(successful_steps) >= self.max_successful_steps:
+                    return QuerySynthesisResult(
+                        ok=False,
+                        error=previous_error or "Query synthesis produced only partial results.",
+                        trace=trace,
+                    )
+                continue
+
             answer = "Данных не найдено." if rows_effectively_empty(rows) else format_user_answer(
                 question=message,
                 columns=columns,
@@ -330,11 +409,70 @@ class QuerySynthesisEngine:
                 value=answer,
                 provenance=["query_synthesis"],
             )
+            successful_steps.append(current_step)
+            trace["successful_steps"] = compact_successful_steps(successful_steps, include_rows=True)
             trace["final_query"] = {"query": query, "params": dict(params), "limit": limit}
             trace["row_count"] = len(rows)
-            return QuerySynthesisResult(ok=True, final_artifact=artifact, message=answer, trace=trace)
+            return QuerySynthesisResult(
+                ok=True,
+                final_artifact=artifact,
+                context_artifacts=[
+                    Artifact(
+                        name="query_result",
+                        type="QueryResult",
+                        value={
+                            "question": message,
+                            "answer": answer,
+                            "query": query,
+                            "params": dict(params),
+                            "columns": columns,
+                            "rows": rows[:50],
+                            "steps": compact_successful_steps(successful_steps, include_rows=True),
+                        },
+                        provenance=["query_synthesis"],
+                    )
+                ],
+                message=answer,
+                trace=trace,
+            )
 
         return QuerySynthesisResult(ok=False, error=previous_error or "Query synthesis failed.", trace=trace)
+
+    def _review_sufficiency(
+        self,
+        *,
+        message: str,
+        intent: IntentResult,
+        goal: Optional[GoalDecomposition],
+        context: ConversationContext,
+        query: str,
+        params: Dict[str, Any],
+        columns: List[str],
+        rows: List[Dict[str, Any]],
+        query_response: Dict[str, Any],
+        successful_steps: List[Dict[str, Any]],
+    ) -> ResultSufficiencyReview:
+        query_reasoning = str(query_response.get("reasoning") or "")
+        if self.result_reviewer is not None:
+            return self.result_reviewer.review(
+                question=message,
+                intent=intent,
+                goal=goal,
+                context=context,
+                query=query,
+                params=params,
+                columns=columns,
+                rows=rows,
+                query_reasoning=query_reasoning,
+                previous_successful_steps=successful_steps,
+            )
+        deterministic = deterministic_partial_review(
+            question=message,
+            columns=columns,
+            rows=rows,
+            query_reasoning=query_reasoning,
+        )
+        return deterministic or ResultSufficiencyReview(sufficient=True)
 
     def _metadata_repair_terms(
         self,
@@ -513,6 +651,15 @@ def expand_metadata_search_terms(terms: List[str]) -> List[str]:
         add_unique(result, "Документ.РеализацияТоваровУслуг")
         add_unique(result, "ВыручкаИСебестоимостьПродаж")
         add_unique(result, "РегистрНакопления.ВыручкаИСебестоимостьПродаж")
+    if any(marker in text for marker in ["поставка", "поставк", "поступлен", "поставщик", "приобрет"]):
+        add_unique(result, "поступление")
+        add_unique(result, "приобретение")
+        add_unique(result, "Поступление товаров")
+        add_unique(result, "Приобретение товаров")
+        add_unique(result, "ПоступлениеТоваровУслуг")
+        add_unique(result, "ПриобретениеТоваровУслуг")
+        add_unique(result, "Документ.ПриобретениеТоваровУслуг")
+        add_unique(result, "РасчетыСПоставщиками")
     return result
 
 
@@ -575,6 +722,73 @@ def columns_from_rows(rows: List[Dict[str, Any]]) -> List[str]:
             if key not in columns:
                 columns.append(key)
     return columns
+
+
+def successful_step_payload(
+    *,
+    step: int,
+    query: str,
+    params: Dict[str, Any],
+    columns: List[str],
+    rows: List[Dict[str, Any]],
+    query_response: Dict[str, Any],
+    sufficiency: ResultSufficiencyReview,
+) -> Dict[str, Any]:
+    return {
+        "step": step,
+        "query": query,
+        "params": dict(params),
+        "columns": list(columns),
+        "rows": rows[:50],
+        "query_reasoning": str(query_response.get("reasoning") or ""),
+        "sufficiency": sufficiency.to_dict(),
+    }
+
+
+def compact_successful_steps(steps: List[Dict[str, Any]], *, include_rows: bool = False) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    for step in steps[-3:]:
+        item = {
+            "step": step.get("step"),
+            "query": step.get("query"),
+            "params": step.get("params"),
+            "columns": step.get("columns"),
+            "query_reasoning": step.get("query_reasoning"),
+            "sufficiency": step.get("sufficiency"),
+        }
+        rows = list(step.get("rows") or [])
+        item["rows"] = rows[:10] if include_rows else rows[:5]
+        result.append(item)
+    return result
+
+
+def result_insufficiency_error(sufficiency: ResultSufficiencyReview) -> str:
+    parts = ["Result insufficiency."]
+    if sufficiency.missing_facts:
+        parts.append("Missing facts: " + "; ".join(sufficiency.missing_facts))
+    if sufficiency.next_query_goal:
+        parts.append("Next query goal: " + sufficiency.next_query_goal)
+    if sufficiency.reasoning:
+        parts.append("Reasoning: " + sufficiency.reasoning)
+    return " ".join(parts)
+
+
+def repeats_partial_query(query: str, successful_steps: List[Dict[str, Any]]) -> bool:
+    current = normalized_query_for_comparison(query)
+    if not current:
+        return False
+    for step in successful_steps:
+        sufficiency = step.get("sufficiency")
+        if not isinstance(sufficiency, dict) or sufficiency.get("sufficient"):
+            continue
+        previous = normalized_query_for_comparison(str(step.get("query") or ""))
+        if previous and previous == current:
+            return True
+    return False
+
+
+def normalized_query_for_comparison(query: str) -> str:
+    return " ".join(query.lower().split())
 
 
 def limit_from_value(value: Any) -> int:

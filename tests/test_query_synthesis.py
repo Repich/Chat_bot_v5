@@ -18,6 +18,7 @@ from wiicon5.mcp.contracts import McpMetadataRequest, McpMetadataResponse, McpQu
 from wiicon5.models import ArtifactRequirement, SemanticFilter
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.query.learned_query_builder import LearnedQueryBuilder
+from wiicon5.query.reference_value_resolver import best_reference_match
 from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
 from wiicon5.query_synthesis.synthesizer import (
     collect_metadata_objects,
@@ -25,6 +26,7 @@ from wiicon5.query_synthesis.synthesizer import (
     postprocess_1c_query,
     search_terms_from_discovery,
 )
+from wiicon5.query_synthesis.sufficiency import deterministic_partial_review
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
 from wiicon5.skills.learned import LearnedSkillStore
 from wiicon5.skills.registry import SkillRegistry
@@ -76,6 +78,219 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("1250", result.message)
         self.assertIn("metadata_objects", result.trace)
         self.assertEqual(len(llm.calls), 2)
+
+    def test_synthesis_continues_after_partial_document_reference_result(self) -> None:
+        document_ref = document_object_ref(
+            guid="bf22af7c-fbc6-11ee-90c8-90004ef3f886",
+            presentation="Приобретение товаров и услуг 0000-000019 от 16.04.2024 11:03:50",
+        )
+        supplier_ref = {
+            "_objectRef": True,
+            "УникальныйИдентификатор": "307a3bac-1966-11e4-bb59-000d884fd00d",
+            "ТипОбъекта": "СправочникСсылка.Контрагенты",
+            "Представление": "Электротовары",
+        }
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["ПриобретениеТоваровУслуг", "поставка", "контрагент", "сумма"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Поступление.Ссылка КАК СсылкаПоследнегоПоступления
+                    ИЗ
+                        Документ.ПриобретениеТоваровУслуг КАК Поступление
+                    ГДЕ
+                        Поступление.Проведен
+                    УПОРЯДОЧИТЬ ПО
+                        Поступление.Дата УБЫВ
+                    """
+                )
+                | {
+                    "reasoning": (
+                        "Сначала нужно найти последний документ поступления. "
+                        "В текущем запросе только находим последнюю поставку."
+                    )
+                },
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        Поступление.Контрагент КАК Контрагент,
+                        Поступление.Долг КАК Долг
+                    ИЗ
+                        Документ.ПриобретениеТоваровУслуг КАК Поступление
+                    ГДЕ
+                        Поступление.Ссылка = &Ссылка
+                    """,
+                    params={"Ссылка": document_ref},
+                ),
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [
+                {"success": True, "data": [{"СсылкаПоследнегоПоступления": document_ref}]},
+                {"success": True, "data": [{"Контрагент": supplier_ref, "Долг": 43800}]},
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=PurchaseDocumentMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Кому мы должны должны за последнюю поставку и сколько?",
+            intent=IntentResult(
+                intent_type=IntentType.DATA_QUESTION,
+                business_goal="Узнать задолженность перед поставщиком за последнюю поставку",
+                requires_1c_data=True,
+                expected_output="short_answer",
+                domain_terms=["поставщик", "задолженность", "поставка", "долг"],
+                relevant=True,
+            ),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Электротовары", result.message)
+        self.assertIn("43800", result.message)
+        self.assertEqual(len(mcp.query_calls), 2)
+        self.assertEqual(mcp.query_calls[1].params["Ссылка"]["УникальныйИдентификатор"], document_ref["УникальныйИдентификатор"])
+        self.assertFalse(result.trace["attempts"][0]["result_sufficiency"]["sufficient"])
+        self.assertEqual(
+            llm.calls[2]["user_payload"]["previous_successful_steps"][0]["rows"][0]["СсылкаПоследнегоПоступления"][
+                "УникальныйИдентификатор"
+            ],
+            document_ref["УникальныйИдентификатор"],
+        )
+        self.assertTrue(result.context_artifacts)
+        self.assertEqual(result.context_artifacts[0].type, "QueryResult")
+
+    def test_reference_match_does_not_confuse_similar_document_numbers(self) -> None:
+        wanted = "Приобретение товаров и услуг 0000-000019 от 16.04.2024 11:03:50"
+        wrong_ref = document_object_ref(
+            guid="f00b59bd-afa6-11ee-a8ec-90004ef3f886",
+            presentation="Приобретение товаров и услуг 0000-000001 от 08.01.2024 12:00:00",
+        )
+        right_ref = document_object_ref(
+            guid="bf22af7c-fbc6-11ee-90c8-90004ef3f886",
+            presentation=wanted,
+        )
+
+        no_match = best_reference_match(wanted, [{"Значение": wrong_ref, "Представление": wrong_ref["Представление"]}])
+        match = best_reference_match(
+            wanted,
+            [
+                {"Значение": wrong_ref, "Представление": wrong_ref["Представление"]},
+                {"Значение": right_ref, "Представление": right_ref["Представление"]},
+            ],
+        )
+
+        self.assertIsNone(no_match)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.value["УникальныйИдентификатор"], right_ref["УникальныйИдентификатор"])
+
+    def test_sufficiency_accepts_empty_debt_metric_as_found_no_debt_result(self) -> None:
+        review = deterministic_partial_review(
+            question="Кому мы должны за последнюю поставку и сколько?",
+            columns=["Контрагент", "Долг"],
+            rows=[{"Контрагент": "Электротовары", "Долг": ""}],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertTrue(review.sufficient)
+
+    def test_sufficiency_rejects_document_amount_for_debt_question(self) -> None:
+        review = deterministic_partial_review(
+            question="Кому мы должны за последнюю поставку и сколько?",
+            columns=["Поставщик", "СуммаДокумента"],
+            rows=[{"Поставщик": "Электротовары", "СуммаДокумента": 461000}],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertFalse(review.sufficient)
+        self.assertIn("Сумма задолженности", review.missing_facts[0])
+
+    def test_synthesis_rejects_repeated_partial_query_and_asks_for_new_query(self) -> None:
+        document_ref = document_object_ref(
+            guid="bf22af7c-fbc6-11ee-90c8-90004ef3f886",
+            presentation="Приобретение товаров и услуг 0000-000019 от 16.04.2024 11:03:50",
+        )
+        partial_query = """
+            ВЫБРАТЬ ПЕРВЫЕ 1
+                Поступление.Ссылка КАК Документ
+            ИЗ
+                Документ.ПриобретениеТоваровУслуг КАК Поступление
+            ГДЕ
+                Поступление.Проведен
+            УПОРЯДОЧИТЬ ПО
+                Поступление.Дата УБЫВ
+        """
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["ПриобретениеТоваровУслуг", "поставка", "контрагент", "сумма"]),
+                query_response(partial_query)
+                | {"reasoning": "Сначала найдем последний документ. В текущем запросе только находим поставку."},
+                query_response(partial_query)
+                | {"reasoning": "Теперь нужно получить сумму, но query случайно повторен."},
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        Поступление.Контрагент КАК Контрагент,
+                        Поступление.Долг КАК Долг
+                    ИЗ
+                        Документ.ПриобретениеТоваровУслуг КАК Поступление
+                    ГДЕ
+                        Поступление.Ссылка = &Ссылка
+                    """,
+                    params={"Ссылка": document_ref},
+                ),
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [
+                {"success": True, "data": [{"Документ": document_ref}]},
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "Контрагент": {
+                                "_objectRef": True,
+                                "УникальныйИдентификатор": "supplier-1",
+                                "ТипОбъекта": "СправочникСсылка.Контрагенты",
+                                "Представление": "Электротовары",
+                            },
+                            "Долг": 43800,
+                        }
+                    ],
+                },
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=PurchaseDocumentMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Кому мы должны должны за последнюю поставку и сколько?",
+            intent=data_intent("Узнать поставщика и сумму последней поставки"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(mcp.query_calls), 2)
+        self.assertTrue(result.trace["attempts"][1]["repeated_partial_query"])
+        self.assertIn("Repeated previous partial query", llm.calls[3]["user_payload"]["previous_error"])
+        self.assertIn("Электротовары", result.message)
 
     def test_synthesis_treats_empty_aggregate_row_as_no_data(self) -> None:
         llm = ScriptedLLMClient(
@@ -602,6 +817,13 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Документ.РеализацияТоваровУслуг", terms)
         self.assertIn("РегистрНакопления.ВыручкаИСебестоимостьПродаж", terms)
 
+    def test_metadata_search_terms_expand_supply_to_purchase_documents(self) -> None:
+        terms = expand_metadata_search_terms(["последняя поставка", "поступление товаров"])
+
+        self.assertIn("Документ.ПриобретениеТоваровУслуг", terms)
+        self.assertIn("ПриобретениеТоваровУслуг", terms)
+        self.assertIn("РасчетыСПоставщиками", terms)
+
     def test_metadata_collection_prioritizes_queryable_objects_before_modules(self) -> None:
         provider = RankingMetadataProvider()
 
@@ -742,6 +964,37 @@ class WarehouseMetadataProvider(MetadataProvider):
         return self.object
 
 
+class PurchaseDocumentMetadataProvider(MetadataProvider):
+    def __init__(self) -> None:
+        self.object = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "Документ.ПриобретениеТоваровУслуг",
+                "Синоним": "Приобретение товаров и услуг",
+                "Реквизиты": [
+                    {"Имя": "Контрагент", "Тип": "СправочникСсылка.Контрагенты"},
+                    {"Имя": "СуммаДокумента", "Тип": "Число"},
+                    {"Имя": "Долг", "Тип": "Число"},
+                    {"Имя": "Проведен", "Тип": "Булево"},
+                    {"Имя": "ПометкаУдаления", "Тип": "Булево"},
+                    {"Имя": "Дата", "Тип": "Дата"},
+                ],
+                "СтандартныеРеквизиты": [
+                    {"Имя": "Ссылка", "Тип": "ДокументСсылка.ПриобретениеТоваровУслуг"},
+                    {"Имя": "Номер", "Тип": "Строка"},
+                ],
+            }
+        )
+        self.last_requests: List[Dict[str, object]] = []
+
+    def search_objects(self, term: str) -> List[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        return [self.object]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        return self.object
+
+
 class TablePartMetadataProvider(MetadataProvider):
     def __init__(self) -> None:
         self.parent = metadata_object_from_payload(
@@ -806,6 +1059,15 @@ def discovery_response(terms: List[str]) -> Dict[str, object]:
 
 def query_response(query: str, params=None) -> Dict[str, object]:
     return {"query": query.strip(), "params": dict(params or {}), "limit": 10, "reasoning": "read-only balance query"}
+
+
+def document_object_ref(*, guid: str, presentation: str) -> Dict[str, object]:
+    return {
+        "_objectRef": True,
+        "УникальныйИдентификатор": guid,
+        "ТипОбъекта": "ДокументСсылка.ПриобретениеТоваровУслуг",
+        "Представление": presentation,
+    }
 
 
 def data_intent(goal: str) -> IntentResult:

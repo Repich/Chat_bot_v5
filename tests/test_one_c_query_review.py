@@ -57,6 +57,25 @@ class OneCQueryReviewerTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
 
+    def test_rejects_raw_accumulation_register_with_inactive_filter(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                СУММА(Движения.Сумма) КАК Сумма
+            ИЗ
+                РегистрНакопления.ДенежныеСредства КАК Движения
+            ГДЕ
+                НЕ Движения.Активность
+            """,
+            params={},
+            metadata_objects=[money_register_metadata()],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("raw_accumulation_register_inactive_filter", [issue.code for issue in result.issues])
+
     def test_rejects_activity_filter_on_accumulation_virtual_table(self) -> None:
         reviewer = OneCQueryReviewer()
 
@@ -93,6 +112,42 @@ class OneCQueryReviewerTests(unittest.TestCase):
         )
 
         self.assertTrue(result.ok)
+
+    def test_rejects_balance_virtual_table_third_parameter(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Касса КАК Касса,
+                Остатки.СуммаОстаток КАК Остаток
+            ИЗ
+                РегистрНакопления.ДенежныеСредства.Остатки(, , Касса = &Касса) КАК Остатки
+            """,
+            params={"Касса": {"_objectRef": True}},
+            metadata_objects=[money_register_metadata()],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("accumulation_balance_invalid_parameters", [issue.code for issue in result.issues])
+
+    def test_rejects_balance_virtual_table_condition_by_non_dimension(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Касса КАК Касса,
+                Остатки.СуммаОстаток КАК Остаток
+            ИЗ
+                РегистрНакопления.ДенежныеСредства.Остатки(, Регистратор = &Документ) КАК Остатки
+            """,
+            params={"Документ": {"_objectRef": True}},
+            metadata_objects=[money_register_metadata()],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("virtual_table_filter_field_not_dimension", [issue.code for issue in result.issues])
 
     def test_rejects_reference_field_compared_to_plain_string_param(self) -> None:
         reviewer = OneCQueryReviewer()

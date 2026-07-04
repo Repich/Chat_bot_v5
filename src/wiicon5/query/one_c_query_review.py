@@ -83,9 +83,11 @@ class OneCQueryReviewer:
         return {
             "rules": [
                 "Для таблицы движений РегистрНакопления.<Имя> по умолчанию фильтруй активные записи: <Алиас>.Активность.",
+                "Не используй НЕ <Алиас>.Активность или <Алиас>.Активность = ЛОЖЬ для обычной таблицы движений.",
                 "Не добавляй <Алиас>.Активность к алиасам виртуальных таблиц Остатки/Обороты/ОстаткиИОбороты.",
                 "Для Остатки используй ресурсные поля вида <Ресурс>Остаток; для Обороты - <Ресурс>Оборот.",
-                "Отборы по периоду и измерениям виртуальных таблиц по возможности передавай параметрами виртуальной таблицы.",
+                "Для Остатки используй только параметры Остатки(<Период>, <Условие>). Третьего параметра у Остатки нет.",
+                "В условии виртуальной таблицы Остатки фильтруй по измерениям регистра; для Регистратор используй таблицу движений.",
                 "Для табличных частей документов явно учитывай связь строки с документом.",
             ],
             "evidence": evidence,
@@ -148,6 +150,36 @@ def review_accumulation_source(
 ) -> None:
     evidence = ["one_c_wiki/pages/query-language/accumulation-register-query-review.md"]
     if source.virtual_table:
+        if source.virtual_table == "Остатки":
+            args = virtual_table_args(source.source)
+            extra_args = args[2:] if len(args) > 2 else []
+            if any(item.strip() for item in extra_args):
+                issues.append(
+                    QueryReviewIssue(
+                        code="accumulation_balance_invalid_parameters",
+                        message=(
+                            f"Виртуальная таблица {source.object_full_name}.Остатки() принимает только два параметра: "
+                            "период и условие. Убери третий параметр; для отбора используй Остатки(, <Условие>) "
+                            "или таблицу движений регистра с фильтром Активность."
+                        ),
+                        evidence=evidence,
+                    )
+                )
+            condition = args[1] if len(args) > 1 else ""
+            dimension_fields = dimensions_for(metadata)
+            for field_name in virtual_condition_fields(condition):
+                if dimension_fields and field_name not in dimension_fields:
+                    issues.append(
+                        QueryReviewIssue(
+                            code="virtual_table_filter_field_not_dimension",
+                            message=(
+                                f"Поле {field_name} не является измерением регистра {source.object_full_name}; "
+                                "его нельзя использовать как условие виртуальной таблицы Остатки(). "
+                                "Фильтруй Остатки() по измерениям или используй таблицу движений регистра."
+                            ),
+                            evidence=evidence,
+                        )
+                    )
         if "Активность" in refs:
             issues.append(
                 QueryReviewIssue(
@@ -174,6 +206,17 @@ def review_accumulation_source(
             )
         return
 
+    if raw_accumulation_has_inactive_filter(query, source.alias):
+        issues.append(
+            QueryReviewIssue(
+                code="raw_accumulation_register_inactive_filter",
+                message=(
+                    f"Запрос читает неактивные движения {source.object_full_name}. "
+                    f"Для актуальных движений используй фильтр {source.alias}.Активность, а не НЕ {source.alias}.Активность."
+                ),
+                evidence=evidence,
+            )
+        )
     if "Активность" not in refs:
         issues.append(
             QueryReviewIssue(
@@ -483,6 +526,53 @@ def virtual_args_empty(source: str) -> bool:
         return True
     args = match.group("args").strip()
     return not args or all(not item.strip() for item in args.split(","))
+
+
+def virtual_table_args(source: str) -> List[str]:
+    match = re.search(r"\((?P<args>.*)\)\s*$", source)
+    if match is None:
+        return []
+    return split_top_level_commas(match.group("args"))
+
+
+def split_top_level_commas(value: str) -> List[str]:
+    result: List[str] = []
+    current: List[str] = []
+    depth = 0
+    for char in value:
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        if char == "," and depth == 0:
+            result.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    result.append("".join(current).strip())
+    return result
+
+
+def virtual_condition_fields(condition: str) -> Set[str]:
+    result: Set[str] = set()
+    for match in re.finditer(
+        r"(?<![.&])\b(?P<field>[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)\s*(?:=|<>|>=|<=|>|<|\bВ\b|\bПОДОБНО\b)",
+        condition,
+        flags=re.IGNORECASE,
+    ):
+        field = match.group("field")
+        if field.upper() in {"И", "ИЛИ", "НЕ", "В", "ПОДОБНО"}:
+            continue
+        result.add(field)
+    return result
+
+
+def raw_accumulation_has_inactive_filter(query: str, alias: str) -> bool:
+    escaped_alias = re.escape(alias)
+    return bool(
+        re.search(rf"\bНЕ\s+{escaped_alias}\.Активность\b", query, flags=re.IGNORECASE)
+        or re.search(rf"\b{escaped_alias}\.Активность\s*=\s*(?:ЛОЖЬ|FALSE)\b", query, flags=re.IGNORECASE)
+    )
 
 
 def has_document_period_constraint(query: str, alias: str) -> bool:

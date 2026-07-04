@@ -1,3 +1,15 @@
+5.0.0-alpha.4
+- Added result sufficiency review for synthesized 1C queries: a non-empty MCP result is no longer treated as final unless it covers the requested facts.
+- Added debt-specific sufficiency rules: document amount is not accepted as debt, while an empty returned debt metric can be answered as no debt found for the selected subject.
+- Added multi-step query synthesis over successful intermediate results, including passing raw MCP rows and _objectRef values into the next LLM query step.
+- Persisted query synthesis result artifacts in conversation context so follow-up questions can reference real MCP objects instead of only assistant text.
+- Hardened reference matching for structured identifiers such as document numbers, codes, articles, and GUID-like values: fuzzy prefix matches no longer replace exact object references.
+- Added a repeated-partial-query guard so an agent cannot execute the same incomplete query after a partial result.
+- Expanded generic 1C metadata search vocabulary for supply/purchase terminology so "поставка/поступление" can discover "ПриобретениеТоваровУслуг" objects in configurations where that is the actual document name.
+- Strengthened 1C query review for accumulation register Остатки(): invalid third parameters and non-dimension filter fields are rejected before MCP execution.
+- Strengthened raw accumulation register review: inactive movement filters such as НЕ <Алиас>.Активность are rejected before MCP execution.
+- Added regression tests for partial document-reference results, repeated partial queries, and similar document numbers such as 0000-000019 vs 0000-000001.
+
 5.0.0-alpha.3
 - Added generic CountResult and count_entities transform for questions that can be answered as "retrieve entities, then count them".
 - Taught the composer to build plans like EntityRefList producer -> count_entities -> render_table_answer for count requests with semantic filters.

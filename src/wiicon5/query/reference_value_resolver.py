@@ -232,6 +232,12 @@ def reference_match_score(wanted: str, value: Any, presentation: str) -> float:
     candidate_words = normalized_words(candidate_text)
     if not candidate_words:
         return 0.0
+    wanted_structured = structured_tokens(wanted_words)
+    if wanted_structured:
+        candidate_structured = set(structured_tokens(candidate_words))
+        if all(token in candidate_structured for token in wanted_structured):
+            return 1.0
+        return 0.0
     wanted_compact = "".join(wanted_words)
     candidate_compact = "".join(candidate_words)
     if wanted_compact == candidate_compact:
@@ -258,6 +264,20 @@ def presentation_from_value(value: Any) -> str:
 def normalized_words(value: str) -> List[str]:
     compact = re.sub(r"([a-zа-яё])([A-ZА-ЯЁ])", r"\1 \2", value)
     return [item for item in re.split(r"[^0-9A-Za-zА-Яа-яЁё]+", compact.lower()) if item and len(item) >= 3]
+
+
+def structured_tokens(words: List[str]) -> List[str]:
+    result: List[str] = []
+    for word in words:
+        if is_low_signal_numeric_token(word):
+            continue
+        if re.search(r"\d", word) and (len(word) >= 4 or re.search(r"[a-zа-яё]", word, flags=re.IGNORECASE)):
+            result.append(word)
+    return result
+
+
+def is_low_signal_numeric_token(word: str) -> bool:
+    return word.isdigit() and set(word) == {"0"}
 
 
 def words_match(left: str, right: str) -> bool:
