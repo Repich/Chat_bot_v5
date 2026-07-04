@@ -74,6 +74,14 @@ class WebServerTests(unittest.TestCase):
                     .read()
                     .decode("utf-8")
                 )
+                conversations = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/conversations",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
                 backend_history = urllib.request.urlopen(f"http://{host}:{port}/history/backend", timeout=5).read().decode("utf-8")
             finally:
                 server.shutdown()
@@ -86,6 +94,9 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("WIICON ChatBot 5", chat_page)
         self.assertIn("chatForm", chat_page)
         self.assertIn("appVersion", chat_page)
+        self.assertIn("sessionList", chat_page)
+        self.assertIn("newSessionButton", chat_page)
+        self.assertIn("settingsDetails", chat_page)
         self.assertIn("reloadHistoryButton", chat_page)
         self.assertIn("trainingBanner", chat_page)
         self.assertIn("startOnboardingButton", chat_page)
@@ -98,6 +109,9 @@ class WebServerTests(unittest.TestCase):
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")
         self.assertEqual([item["role"] for item in conversation["messages"]], ["user", "assistant"])
+        self.assertTrue(conversations["ok"])
+        self.assertEqual([item["session_id"] for item in conversations["sessions"]], ["s1"])
+        self.assertEqual(conversations["sessions"][0]["message_count"], 2)
         self.assertIn("5.0.0-alpha.2", backend_history)
 
 

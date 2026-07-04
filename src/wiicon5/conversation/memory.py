@@ -24,3 +24,10 @@ class ConversationMemory:
 
     def save(self, context: ConversationContext) -> None:
         self._sessions[context.session_id] = context
+
+    def list_contexts(self) -> list[ConversationContext]:
+        return sorted(
+            self._sessions.values(),
+            key=lambda context: context.messages[-1].ts if context.messages else "",
+            reverse=True,
+        )

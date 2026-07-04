@@ -46,6 +46,15 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
                     },
                 )
                 return
+            if path == "/api/conversations":
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "sessions": [conversation_summary(context) for context in agent.memory.list_contexts()],
+                    },
+                )
+                return
             if path == "/api/admin/onboarding/status":
                 self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
                 return
@@ -154,6 +163,17 @@ def first_query_value(query: Dict[str, list[str]], name: str) -> str:
     return values[0].strip() if values else ""
 
 
+def conversation_summary(context) -> Dict[str, Any]:
+    latest = context.messages[-1] if context.messages else None
+    preview = latest.content if latest else ""
+    return {
+        "session_id": context.session_id,
+        "message_count": len(context.messages),
+        "updated_at": latest.ts if latest else "",
+        "preview": preview[:140],
+    }
+
+
 def seed_context_from_payload(agent: AgentOrchestrator, session_id: str, payload: Dict[str, Any]) -> None:
     product_ref = payload.get("product_ref")
     if not product_ref:
@@ -216,7 +236,7 @@ CHAT_HTML = """<!doctype html>
       height: 100vh;
       min-height: 0;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto auto minmax(0, 1fr);
     }
     header {
       display: flex;
@@ -231,13 +251,15 @@ CHAT_HTML = """<!doctype html>
       display: none;
       border-bottom: 1px solid var(--warning-line);
       background: var(--warning-bg);
-      padding: 10px 18px;
+      padding: 6px 18px;
       color: #7c2d12;
-      font-size: 13px;
+      font-size: 12px;
       line-height: 1.35;
+      min-height: 30px;
+      align-items: center;
     }
     .training-banner.visible {
-      display: block;
+      display: flex;
     }
     .training-banner.trained {
       border-color: var(--ok-line);
@@ -277,14 +299,15 @@ CHAT_HTML = """<!doctype html>
       background: var(--accent);
     }
     main {
-      width: min(1120px, 100%);
+      width: 100%;
+      max-width: 1680px;
       margin: 0 auto;
-      padding: 18px;
+      padding: 12px 16px 16px;
       min-height: 0;
       height: 100%;
       display: grid;
-      grid-template-columns: 290px minmax(0, 1fr);
-      gap: 18px;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 12px;
     }
     aside, .dialog {
       background: var(--panel);
@@ -292,12 +315,99 @@ CHAT_HTML = """<!doctype html>
       border-radius: 8px;
     }
     aside {
-      padding: 14px;
-      align-self: start;
+      padding: 12px;
+      align-self: stretch;
       max-height: 100%;
       overflow: auto;
       display: grid;
       gap: 12px;
+      align-content: start;
+    }
+    .sidebar-section {
+      display: grid;
+      gap: 8px;
+    }
+    .sidebar-title {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .session-actions {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+    .session-list {
+      display: grid;
+      gap: 6px;
+      max-height: 36vh;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .session-button {
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      gap: 3px;
+      justify-items: start;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 8px 9px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .session-button:hover { background: #f2f5f5; }
+    .session-button.active {
+      border-color: #8bc8c0;
+      background: #eef8f6;
+    }
+    .session-name {
+      width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .session-meta {
+      width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .settings-panel {
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+    .settings-panel > summary {
+      cursor: pointer;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 650;
+      list-style: none;
+    }
+    .settings-panel > summary::-webkit-details-marker { display: none; }
+    .settings-panel > summary::before {
+      content: "▸";
+      display: inline-block;
+      width: 14px;
+      color: var(--muted);
+    }
+    .settings-panel[open] > summary::before { content: "▾"; }
+    .settings-content {
+      display: grid;
+      gap: 12px;
+      padding-top: 10px;
     }
     .tools {
       display: grid;
@@ -459,7 +569,7 @@ CHAT_HTML = """<!doctype html>
     .admin-panel {
       display: grid;
       gap: 8px;
-      padding-top: 10px;
+      padding-top: 0;
       border-top: 1px solid var(--line);
     }
     .admin-title {
@@ -483,6 +593,12 @@ CHAT_HTML = """<!doctype html>
         padding: 12px;
         overflow: hidden;
       }
+      aside {
+        max-height: 32vh;
+      }
+      .session-list {
+        max-height: 16vh;
+      }
       form { grid-template-columns: 1fr; }
       button { min-height: 42px; }
       .message { max-width: 100%; }
@@ -501,31 +617,46 @@ CHAT_HTML = """<!doctype html>
     <div id="trainingBanner" class="training-banner"></div>
     <main>
       <aside>
-        <label>Session ID
-          <input id="sessionId" value="web-test" autocomplete="off">
-        </label>
-        <div class="tools">
-          <button id="reloadHistoryButton" class="secondary" type="button">Обновить диалог</button>
-          <div class="tool-row">
-            <button id="backendHistoryButton" class="secondary" type="button">Backend</button>
-            <button id="frontendHistoryButton" class="secondary" type="button">Frontend</button>
+        <div class="sidebar-section">
+          <label>Session ID
+            <input id="sessionId" value="web-test" autocomplete="off">
+          </label>
+          <div class="session-actions">
+            <button id="newSessionButton" class="secondary" type="button">Новая сессия</button>
           </div>
         </div>
-        <div id="historyPanel" class="history-panel">
-          <p id="historyTitle" class="history-title"></p>
-          <pre id="historyText"></pre>
+        <div class="sidebar-section">
+          <p class="sidebar-title">Сессии</p>
+          <div id="sessionList" class="session-list"></div>
+          <div id="sessionListEmpty" class="empty">Сохраненных сессий пока нет.</div>
         </div>
-        <div class="admin-panel">
-          <p class="admin-title">Первоначальное обучение</p>
-          <label>Выгрузка конфигурации
-            <input id="configDumpPath" placeholder="/path/to/1c/config">
-          </label>
-          <button id="startOnboardingButton" class="secondary" type="button">Запустить обучение</button>
-          <div id="onboardingStatus" class="admin-status">Статус не загружен.</div>
-        </div>
-        <label>ProductRef JSON
-          <textarea id="productRef" spellcheck="false"></textarea>
-        </label>
+        <details id="settingsDetails" class="settings-panel">
+          <summary>Настройки</summary>
+          <div class="settings-content">
+            <div class="tools">
+              <button id="reloadHistoryButton" class="secondary" type="button">Обновить диалог</button>
+              <div class="tool-row">
+                <button id="backendHistoryButton" class="secondary" type="button">Backend</button>
+                <button id="frontendHistoryButton" class="secondary" type="button">Frontend</button>
+              </div>
+            </div>
+            <div id="historyPanel" class="history-panel">
+              <p id="historyTitle" class="history-title"></p>
+              <pre id="historyText"></pre>
+            </div>
+            <div class="admin-panel">
+              <p class="admin-title">Первоначальное обучение</p>
+              <label>Выгрузка конфигурации
+                <input id="configDumpPath" placeholder="/path/to/1c/config">
+              </label>
+              <button id="startOnboardingButton" class="secondary" type="button">Запустить обучение</button>
+              <div id="onboardingStatus" class="admin-status">Статус не загружен.</div>
+            </div>
+            <label>ProductRef JSON
+              <textarea id="productRef" spellcheck="false"></textarea>
+            </label>
+          </div>
+        </details>
       </aside>
       <section class="dialog" aria-label="chat">
         <div id="messages" class="messages">
@@ -540,12 +671,16 @@ CHAT_HTML = """<!doctype html>
   </div>
   <script>
     const SESSION_STORAGE_KEY = "wiicon5.sessionId";
+    const SESSION_LIST_STORAGE_KEY = "wiicon5.sessionList";
     const form = document.getElementById("chatForm");
     const input = document.getElementById("messageInput");
     const sendButton = document.getElementById("sendButton");
     const messages = document.getElementById("messages");
     const statusText = document.getElementById("status");
     const sessionId = document.getElementById("sessionId");
+    const newSessionButton = document.getElementById("newSessionButton");
+    const sessionList = document.getElementById("sessionList");
+    const sessionListEmpty = document.getElementById("sessionListEmpty");
     const productRef = document.getElementById("productRef");
     const appVersion = document.getElementById("appVersion");
     const reloadHistoryButton = document.getElementById("reloadHistoryButton");
@@ -554,6 +689,7 @@ CHAT_HTML = """<!doctype html>
     const historyPanel = document.getElementById("historyPanel");
     const historyTitle = document.getElementById("historyTitle");
     const historyText = document.getElementById("historyText");
+    const settingsDetails = document.getElementById("settingsDetails");
     const trainingBanner = document.getElementById("trainingBanner");
     const configDumpPath = document.getElementById("configDumpPath");
     const startOnboardingButton = document.getElementById("startOnboardingButton");
@@ -567,6 +703,105 @@ CHAT_HTML = """<!doctype html>
 
     const savedSessionId = localStorage.getItem(SESSION_STORAGE_KEY);
     if (savedSessionId) sessionId.value = savedSessionId;
+
+    function effectiveSessionId() {
+      return sessionId.value.trim() || "web-test";
+    }
+
+    function readLocalSessions() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(SESSION_LIST_STORAGE_KEY) || "[]");
+        return Array.isArray(parsed) ? parsed.filter(item => item && item.session_id) : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function writeLocalSessions(items) {
+      localStorage.setItem(SESSION_LIST_STORAGE_KEY, JSON.stringify(items.slice(0, 30)));
+    }
+
+    function rememberSession(id, patch = {}) {
+      const session = String(id || "").trim();
+      if (!session) return;
+      localStorage.setItem(SESSION_STORAGE_KEY, session);
+      const now = new Date().toISOString();
+      const items = readLocalSessions();
+      const existingIndex = items.findIndex(item => item.session_id === session);
+      const existing = existingIndex >= 0 ? items.splice(existingIndex, 1)[0] : {};
+      items.unshift({
+        session_id: session,
+        updated_at: patch.updated_at || now,
+        message_count: patch.message_count ?? existing.message_count ?? 0,
+        preview: patch.preview || existing.preview || "",
+        local: true
+      });
+      writeLocalSessions(items);
+    }
+
+    function mergeSessions(localItems, serverItems) {
+      const byId = new Map();
+      for (const item of localItems) {
+        byId.set(item.session_id, {...item, local: true});
+      }
+      for (const item of serverItems) {
+        if (!item || !item.session_id) continue;
+        const existing = byId.get(item.session_id) || {};
+        byId.set(item.session_id, {
+          ...existing,
+          ...item,
+          local: Boolean(existing.local),
+          server: true
+        });
+      }
+      return Array.from(byId.values()).sort((left, right) => {
+        return String(right.updated_at || "").localeCompare(String(left.updated_at || ""));
+      });
+    }
+
+    function renderSessionList(items) {
+      sessionList.replaceChildren();
+      const active = effectiveSessionId();
+      sessionListEmpty.style.display = items.length ? "none" : "block";
+      for (const item of items) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "session-button" + (item.session_id === active ? " active" : "");
+        const name = document.createElement("span");
+        name.className = "session-name";
+        name.textContent = item.session_id;
+        const meta = document.createElement("span");
+        meta.className = "session-meta";
+        const count = Number(item.message_count || 0);
+        const source = item.server ? "в памяти" : "локально";
+        meta.textContent = count ? `${count} сообщ. · ${source}` : source;
+        const preview = document.createElement("span");
+        preview.className = "session-meta";
+        preview.textContent = item.preview || "Нет сообщений в текущем процессе.";
+        button.append(name, meta, preview);
+        button.addEventListener("click", () => {
+          sessionId.value = item.session_id;
+          rememberSession(item.session_id);
+          loadConversation();
+        });
+        sessionList.append(button);
+      }
+    }
+
+    async function loadSessionList() {
+      let serverSessions = [];
+      try {
+        const response = await fetch("/api/conversations", {cache: "no-store"});
+        const data = await response.json();
+        if (response.ok && data.ok && Array.isArray(data.sessions)) {
+          serverSessions = data.sessions;
+        }
+      } catch (error) {
+        serverSessions = [];
+      }
+      const localSessions = readLocalSessions();
+      renderSessionList(mergeSessions(localSessions, serverSessions));
+    }
 
     function clearEmpty() {
       const empty = messages.querySelector(".empty");
@@ -669,7 +904,9 @@ CHAT_HTML = """<!doctype html>
       trainingBanner.classList.add("visible");
       trainingBanner.classList.toggle("trained", trained);
       if (trained) {
-        trainingBanner.textContent = "Первоначальное обучение выполнено. Агент использует локальный индекс конфигурации как дополнительный источник метаданных.";
+        const objects = status && status.objects_count ? status.objects_count : 0;
+        const patterns = status && status.query_patterns_count ? status.query_patterns_count : 0;
+        trainingBanner.textContent = `Обучение выполнено: ${objects} объектов, ${patterns} шаблонов.`;
       } else if (running) {
         trainingBanner.textContent = "Идет первоначальное обучение. До завершения агент может отвечать медленнее и ошибаться в выборе объектов конфигурации.";
       } else {
@@ -726,11 +963,11 @@ CHAT_HTML = """<!doctype html>
     }
 
     async function loadConversation() {
-      const effectiveSessionId = sessionId.value.trim() || "web-test";
-      localStorage.setItem(SESSION_STORAGE_KEY, effectiveSessionId);
+      const currentId = effectiveSessionId();
+      rememberSession(currentId);
       setStatus("загрузка истории");
       try {
-        const response = await fetch("/api/conversation?session_id=" + encodeURIComponent(effectiveSessionId), {
+        const response = await fetch("/api/conversation?session_id=" + encodeURIComponent(currentId), {
           cache: "no-store"
         });
         const data = await response.json();
@@ -742,6 +979,8 @@ CHAT_HTML = """<!doctype html>
         const items = Array.isArray(data.messages) ? data.messages : [];
         if (!items.length) {
           showEmpty("Добрый день. Задайте вопрос по WIICON или WIIC.");
+          rememberSession(currentId, {message_count: 0, preview: ""});
+          await loadSessionList();
           return;
         }
         for (const item of items) {
@@ -754,9 +993,17 @@ CHAT_HTML = """<!doctype html>
             false
           );
         }
+        const latest = items[items.length - 1] || {};
+        rememberSession(currentId, {
+          message_count: items.length,
+          preview: latest.content || "",
+          updated_at: latest.ts || new Date().toISOString()
+        });
+        await loadSessionList();
         messages.scrollTop = messages.scrollHeight;
       } catch (error) {
         showEmpty("Историю сессии не удалось загрузить.");
+        await loadSessionList();
       } finally {
         setStatus("готов");
       }
@@ -783,6 +1030,15 @@ CHAT_HTML = """<!doctype html>
       return value;
     }
 
+    function createNewSession() {
+      const suffix = Date.now().toString(36);
+      sessionId.value = "web-" + suffix;
+      rememberSession(effectiveSessionId(), {message_count: 0, preview: ""});
+      showEmpty("Новая сессия создана. Задайте вопрос по WIICON или WIIC.");
+      loadSessionList();
+      input.focus();
+    }
+
     input.addEventListener("keydown", (event) => {
       if (event.isComposing) return;
       if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
@@ -796,6 +1052,8 @@ CHAT_HTML = """<!doctype html>
       if (pending) return;
       const message = input.value.trim();
       if (!message) return;
+      const currentId = effectiveSessionId();
+      rememberSession(currentId, {preview: message});
       appendMessage("user", "Вы", message);
       input.value = "";
       pending = true;
@@ -803,7 +1061,7 @@ CHAT_HTML = """<!doctype html>
       setStatus("выполняется");
       try {
         const payload = {
-          session_id: sessionId.value.trim() || "web-test",
+          session_id: currentId,
           message
         };
         const ref = payloadProductRef();
@@ -816,26 +1074,32 @@ CHAT_HTML = """<!doctype html>
         const data = await response.json();
         if (!response.ok || !data.ok) {
           appendMessage("error", "Ошибка", data.error || "HTTP " + response.status, data);
+          rememberSession(currentId, {preview: data.error || "Ошибка"});
         } else {
           appendMessage("assistant", data.result.source || "agent", data.result.message, data.result);
+          rememberSession(currentId, {preview: data.result.message || message});
         }
       } catch (error) {
         appendMessage("error", "Ошибка", String(error && error.message ? error.message : error));
+        rememberSession(currentId, {preview: String(error && error.message ? error.message : error)});
       } finally {
         pending = false;
         sendButton.disabled = false;
         setStatus("готов");
+        loadSessionList();
         input.focus();
       }
     });
 
+    newSessionButton.addEventListener("click", createNewSession);
     reloadHistoryButton.addEventListener("click", () => loadConversation());
     backendHistoryButton.addEventListener("click", () => showHistory("backend"));
     frontendHistoryButton.addEventListener("click", () => showHistory("frontend"));
     startOnboardingButton.addEventListener("click", () => startOnboarding());
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {
-      localStorage.setItem(SESSION_STORAGE_KEY, sessionId.value.trim() || "web-test");
+      rememberSession(effectiveSessionId());
+      loadSessionList();
     });
     window.addEventListener("focus", clearUnread);
     document.addEventListener("visibilitychange", () => {
@@ -844,6 +1108,8 @@ CHAT_HTML = """<!doctype html>
 
     loadVersion();
     loadOnboardingStatus();
+    rememberSession(effectiveSessionId());
+    loadSessionList();
     loadConversation();
   </script>
 </body>
