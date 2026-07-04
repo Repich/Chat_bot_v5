@@ -1,3 +1,10 @@
+5.0.0-alpha.13
+- Fixed the training banner layout so a completed onboarding message no longer consumes the main viewport.
+- Expanded the chat area to use the available screen width and height.
+- Moved refresh, backend/frontend history, onboarding launch, and ProductRef controls into a collapsible settings panel.
+- Added a visible sessions list that combines browser-saved session ids with sessions currently held by the server process.
+- Added a new-session action in the sidebar.
+
 5.0.0-alpha.11
 - Added initial-training status banner to the web client.
 - Added an admin block for configuration dump path, onboarding launch, and training counters.

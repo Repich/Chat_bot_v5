@@ -1,3 +1,6 @@
+5.0.0-alpha.13
+- Added /api/conversations to list active in-memory chat sessions with message counts and previews for the web client.
+
 5.0.0-alpha.12
 - Added trust/evidence metadata model: MCP and XML-derived fields are verified, while regex/source-path onboarding hints are not accepted as final query facts.
 - Added parser for standard 1C XML configuration dumps, including catalogs, documents, accumulation registers, information registers, attributes, dimensions, resources, and document table parts.
