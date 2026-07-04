@@ -242,6 +242,26 @@ class OneCQueryReviewerTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("reference_filter_string_param", [issue.code for issue in result.issues])
 
+    def test_rejects_reference_string_list_param_inside_balance_virtual_condition_direct_syntax(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Номенклатура КАК Номенклатура,
+                СУММА(Остатки.КоличествоОстаток) КАК Остаток
+            ИЗ
+                РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В &Склады) КАК Остатки
+            СГРУППИРОВАТЬ ПО
+                Остатки.Номенклатура
+            """,
+            params={"Склады": ["Розничный магазин"]},
+            metadata_objects=[stock_register_metadata()],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("reference_filter_string_param", [issue.code for issue in result.issues])
+
     def test_accepts_reference_field_name_attribute_compared_to_string_param(self) -> None:
         reviewer = OneCQueryReviewer()
 
@@ -528,6 +548,43 @@ class OneCQueryReviewerTests(unittest.TestCase):
                 СУММА(Остатки.КоличествоОстаток) КАК Остаток
             ИЗ
                 РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В (&РозничныеСклады)) КАК Остатки
+            СГРУППИРОВАТЬ ПО
+                Остатки.Номенклатура
+            """,
+            params={"РозничныеСклады": []},
+            metadata_objects=[stock_register_metadata()],
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(result.params["РозничныеСклады"][0]["УникальныйИдентификатор"], "warehouse-retail")
+        self.assertEqual(result.resolutions[0]["kind"], "empty_list_param")
+        self.assertEqual(result.resolutions[0]["search_text"], "РозничныеСклады")
+
+    def test_reference_value_resolver_replaces_virtual_condition_direct_empty_list_param(self) -> None:
+        mcp = DictMcpClient(
+            {
+                "success": True,
+                "data": [
+                    {
+                        "Значение": {
+                            "_objectRef": True,
+                            "УникальныйИдентификатор": "warehouse-retail",
+                            "ТипОбъекта": "СправочникСсылка.Склады",
+                            "Представление": "Ларек Розница",
+                        },
+                        "Представление": "Ларек Розница",
+                    }
+                ],
+            }
+        )
+
+        result = ReferenceValueResolver(mcp).resolve(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Номенклатура КАК Номенклатура,
+                СУММА(Остатки.КоличествоОстаток) КАК Остаток
+            ИЗ
+                РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В &РозничныеСклады) КАК Остатки
             СГРУППИРОВАТЬ ПО
                 Остатки.Номенклатура
             """,

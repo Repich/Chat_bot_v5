@@ -1288,6 +1288,17 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Поступление.Дата УБЫВ", result)
         self.assertNotIn("УБЫВЬ", result)
 
+    def test_postprocess_normalizes_single_parameter_in_list_operator(self) -> None:
+        query = (
+            "ВЫБРАТЬ Остатки.Номенклатура КАК Номенклатура "
+            "ИЗ РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В (&РозничныеСклады)) КАК Остатки"
+        )
+
+        result = postprocess_1c_query(query)
+
+        self.assertIn("Склад В &РозничныеСклады", result)
+        self.assertNotIn("Склад В (&РозничныеСклады)", result)
+
     def test_synthesis_sends_normalized_sort_direction_to_mcp(self) -> None:
         llm = ScriptedLLMClient(
             [

@@ -487,6 +487,12 @@ def reference_param_filters(query: str, alias: str) -> Dict[str, List[str]]:
     for match in in_pattern.finditer(query):
         for param_name in re.findall(r"&([A-Za-zА-Яа-яЁё0-9_]+)", match.group("params")):
             add_param_ref(result, match.group("field"), param_name)
+    direct_in_pattern = re.compile(
+        rf"\b{escaped_alias}\.(?P<field>[A-Za-zА-Яа-яЁё0-9_]+)\s+В\s*&(?P<param>[A-Za-zА-Яа-яЁё0-9_]+)",
+        flags=re.IGNORECASE,
+    )
+    for match in direct_in_pattern.finditer(query):
+        add_param_ref(result, match.group("field"), match.group("param"))
     return result
 
 
@@ -513,6 +519,14 @@ def virtual_condition_reference_param_filters(condition: str) -> Dict[str, List[
             continue
         for param_name in re.findall(r"&([A-Za-zА-Яа-яЁё0-9_]+)", raw_params):
             add_param_ref(result, match.group("field"), param_name)
+    direct_in_pattern = re.compile(
+        r"(?<![.&])\b(?P<field>[A-Za-zА-Яа-яЁё0-9_]+)\s+В\s*&(?P<param>[A-Za-zА-Яа-яЁё0-9_]+)",
+        flags=re.IGNORECASE,
+    )
+    for match in direct_in_pattern.finditer(condition):
+        if not is_top_level_position(condition, match.start("field")):
+            continue
+        add_param_ref(result, match.group("field"), match.group("param"))
     return result
 
 

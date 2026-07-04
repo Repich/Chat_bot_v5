@@ -1371,8 +1371,18 @@ def postprocess_1c_query(query: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+    text = normalize_single_parameter_in_list_operator(text)
     text = remove_redundant_reference_joins(text)
     return text
+
+
+def normalize_single_parameter_in_list_operator(query: str) -> str:
+    return re.sub(
+        r"\bВ\s*\(\s*&(?P<param>[A-Za-zА-Яа-яЁё0-9_]+)\s*\)",
+        r"В &\g<param>",
+        query,
+        flags=re.IGNORECASE,
+    )
 
 
 def normalize_1c_query_keywords(query: str) -> str:
