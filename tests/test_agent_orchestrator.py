@@ -15,6 +15,7 @@ from wiicon5.models import ArtifactRequirement, SemanticFilter, SkillContract
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.policies.domain_policy import DomainPolicy
 from wiicon5.bot_instance import BotInstanceConfig
+from wiicon5.query_synthesis import QuerySynthesisResult
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 
@@ -134,6 +135,37 @@ class AgentOrchestratorTests(unittest.TestCase):
             trace_path = Path(result.trace_path or "")
             self.assertTrue((trace_path / "learning/evolution_decision.json").exists())
 
+    def test_agent_reports_query_synthesis_failure_instead_of_masking_as_skill_gap(self) -> None:
+        question = "Покажи остатки товара на оптовых складах"
+        base_registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        warehouse_skill = base_registry.get("get_warehouses")
+        assert warehouse_skill is not None
+        narrow_warehouse_skill = SkillContract.from_dict(
+            {**warehouse_skill.to_dict(), "supported_filter_roles": ["city"]}
+        )
+        registry = SkillRegistry(
+            [
+                skill if skill.skill_id != "get_warehouses" else narrow_warehouse_skill
+                for skill in base_registry.all()
+            ]
+        )
+        with TemporaryDirectory() as temp_dir:
+            orchestrator = AgentOrchestrator(
+                registry=registry,
+                decomposer=ScriptedGoalDecomposer({question: stock_question_decomposition()}),
+                query_synthesizer=FailingQuerySynthesizer(),
+                trace_root=Path(temp_dir),
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+
+            self.assertEqual(result.source, "query_synthesis_failed")
+            self.assertIn("Не удалось построить корректный запрос", result.message)
+            self.assertIn("Синтаксическая ошибка", result.message)
+            self.assertTrue(result.gaps)
+            trace_path = Path(result.trace_path or "")
+            self.assertTrue((trace_path / "query_synthesis/result.json").exists())
+
     def test_agent_rejects_out_of_scope_question_before_skill_search(self) -> None:
         question = "Какая сегодня погода?"
         with TemporaryDirectory() as temp_dir:
@@ -202,6 +234,15 @@ class AgentOrchestratorTests(unittest.TestCase):
         self.assertEqual(result.source, "general_answer")
         self.assertEqual(result.message, "Я Custom Agent для тестовой 1С.")
         self.assertEqual(decomposer.calls, [])
+
+
+class FailingQuerySynthesizer:
+    def run(self, **kwargs) -> QuerySynthesisResult:
+        return QuerySynthesisResult(
+            ok=False,
+            error='MCP query failed: Синтаксическая ошибка "УБЫВЬ"',
+            trace={"attempts": []},
+        )
 
 
 def stock_question_decomposition() -> DecompositionResult:

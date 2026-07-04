@@ -1,3 +1,9 @@
+5.0.0-alpha.15
+- Added language-level normalization for common 1C query sort direction mistakes before MCP execution: УБЫВЬ/УБЫВАНИЕ are normalized to УБЫВ.
+- Added prompt guidance that 1C descending sort uses УБЫВ, not УБЫВЬ, УБЫВАНИЕ, or SQL DESC.
+- Query synthesis failures are now reported as query_synthesis_failed instead of being masked as skill_gap after the agent already attempted to build and execute a query.
+- Added regression tests for normalized 1C sort direction and honest query synthesis failure reporting.
+
 5.0.0-alpha.14
 - Fixed malformed LLM JSON handling: invalid JSON fragments extracted from model responses now raise LLMProviderError instead of leaking raw JSONDecodeError messages to users.
 - Added regression coverage for malformed model JSON such as missing comma delimiters in extracted response objects.

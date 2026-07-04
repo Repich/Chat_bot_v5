@@ -1072,6 +1072,70 @@ class QuerySynthesisTests(unittest.TestCase):
 
         self.assertIn("РегистрНакопления.Продажи.Обороты() КАК Продажи", result)
 
+    def test_postprocess_normalizes_1c_sort_direction_typos(self) -> None:
+        query = (
+            "ВЫБРАТЬ ПЕРВЫЕ 1 Поступление.Ссылка "
+            "ИЗ Документ.ПриобретениеТоваровУслуг КАК Поступление "
+            "УПОРЯДОЧИТЬ ПО Поступление.Дата УБЫВЬ"
+        )
+
+        result = postprocess_1c_query(query)
+
+        self.assertIn("Поступление.Дата УБЫВ", result)
+        self.assertNotIn("УБЫВЬ", result)
+
+    def test_synthesis_sends_normalized_sort_direction_to_mcp(self) -> None:
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["ПриобретениеТоваровУслуг", "закупка"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Поступление.Ссылка КАК Ссылка
+                    ИЗ
+                        Документ.ПриобретениеТоваровУслуг КАК Поступление
+                    ГДЕ
+                        Поступление.Проведен
+                    УПОРЯДОЧИТЬ ПО
+                        Поступление.Дата УБЫВЬ
+                    """
+                ),
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [
+                {
+                    "success": True,
+                    "data": [{"Ссылка": "Приобретение товаров и услуг 0000-000019 от 16.04.2024"}],
+                }
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=PurchaseDocumentMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Покажи последнее приобретение",
+            intent=IntentResult(
+                intent_type=IntentType.DATA_QUESTION,
+                business_goal="Показать последнее приобретение",
+                requires_1c_data=True,
+                expected_output="table",
+                domain_terms=["приобретение", "последнее"],
+                relevant=True,
+            ),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertIn("УБЫВ", mcp.query_calls[0].query)
+        self.assertNotIn("УБЫВЬ", mcp.query_calls[0].query)
+
     def test_search_terms_keep_user_domain_terms_when_discovery_returns_many_terms(self) -> None:
         terms = search_terms_from_discovery(
             {

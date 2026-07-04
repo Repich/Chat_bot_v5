@@ -1014,6 +1014,7 @@ def add_unique(items: List[str], value: str) -> None:
 
 def postprocess_1c_query(query: str) -> str:
     text = query.strip()
+    text = normalize_1c_query_keywords(text)
     text = re.sub(r"\.Остатки\(\s*,\s*,\s*\)", ".Остатки()", text, flags=re.IGNORECASE)
     text = re.sub(r"\.Остатки\(\s*,\s*\)", ".Остатки()", text, flags=re.IGNORECASE)
     text = re.sub(
@@ -1024,6 +1025,18 @@ def postprocess_1c_query(query: str) -> str:
     )
     text = remove_redundant_reference_joins(text)
     return text
+
+
+def normalize_1c_query_keywords(query: str) -> str:
+    replacements = {
+        "УБЫВЬ": "УБЫВ",
+        "УБЫВАНИЕ": "УБЫВ",
+        "ВОЗРАСТАНИЕ": "ВОЗР",
+    }
+    result = query
+    for wrong, correct in replacements.items():
+        result = re.sub(rf"\b{wrong}\b", correct, result, flags=re.IGNORECASE)
+    return result
 
 
 def remove_redundant_reference_joins(query: str) -> str:

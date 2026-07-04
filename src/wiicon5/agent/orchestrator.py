@@ -238,6 +238,17 @@ class AgentOrchestrator:
                     run_trace.write_json("result/result.json", result.to_dict())
                     self._record_assistant_and_save(context, result)
                     return result
+                if synthesis_result is not None and not synthesis_result.ok:
+                    result = self._query_synthesis_failed_result(
+                        synthesis_result=synthesis_result,
+                        intent=decomposition.intent,
+                        goal=decomposition.goal,
+                        plan=compose_result.plan,
+                        trace_path=str(run_trace.path),
+                    )
+                    run_trace.write_json("result/result.json", result.to_dict())
+                    self._record_assistant_and_save(context, result)
+                    return result
                 result = AgentRunResult(
                     source="skill_execution_failed",
                     message=f"Не удалось выполнить план навыков: {execution_result.error}",
@@ -309,6 +320,18 @@ class AgentOrchestrator:
             run_trace.write_json("result/result.json", result.to_dict())
             self._record_assistant_and_save(context, result)
             return result
+        if synthesis_result is not None and not synthesis_result.ok:
+            result = self._query_synthesis_failed_result(
+                synthesis_result=synthesis_result,
+                intent=decomposition.intent,
+                goal=decomposition.goal,
+                gaps=compose_result.gaps,
+                evolution_decisions=decisions,
+                trace_path=str(run_trace.path),
+            )
+            run_trace.write_json("result/result.json", result.to_dict())
+            self._record_assistant_and_save(context, result)
+            return result
         result = AgentRunResult(
             source="skill_gap",
             message="Найден разрыв в навыках; требуется развитие существующего навыка или binding.",
@@ -360,6 +383,29 @@ class AgentOrchestrator:
         )
         return synthesis_result
 
+    def _query_synthesis_failed_result(
+        self,
+        *,
+        synthesis_result: QuerySynthesisResult,
+        intent: IntentResult,
+        goal: Optional[GoalDecomposition],
+        trace_path: str,
+        plan: Optional[SkillPlan] = None,
+        gaps: Optional[List[SkillGap]] = None,
+        evolution_decisions: Optional[List[SkillEvolutionDecision]] = None,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            source="query_synthesis_failed",
+            message=query_synthesis_failure_message(synthesis_result.error),
+            intent=intent,
+            goal=goal,
+            plan=plan,
+            context_artifacts=synthesis_result.context_artifacts,
+            gaps=list(gaps or []),
+            evolution_decisions=list(evolution_decisions or []),
+            trace_path=trace_path,
+        )
+
     def _learn_from_synthesis(
         self,
         *,
@@ -400,3 +446,12 @@ def execution_result_to_dict(execution_result) -> Dict[str, object]:
         "artifacts": {key: artifact.to_dict() for key, artifact in execution_result.artifacts.items()},
         "trace": execution_result.trace,
     }
+
+
+def query_synthesis_failure_message(error: str) -> str:
+    normalized = " ".join((error or "").split())
+    if len(normalized) > 420:
+        normalized = normalized[:417].rstrip() + "..."
+    if normalized:
+        return f"Не удалось построить корректный запрос к данным. Причина: {normalized}"
+    return "Не удалось построить корректный запрос к данным. Подробности сохранены в trace."
