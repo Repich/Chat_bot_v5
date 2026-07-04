@@ -21,6 +21,7 @@ from wiicon5.types import TypeSystem
 class ComposeResult:
     plan: Optional[SkillPlan]
     gaps: List[SkillGap] = field(default_factory=list)
+    search_trace: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class SkillComposer:
@@ -39,7 +40,7 @@ class SkillComposer:
         try:
             self._ensure_artifact(goal.final_artifact_type, state)
         except _CompositionGap as exc:
-            return ComposeResult(plan=None, gaps=[exc.gap])
+            return ComposeResult(plan=None, gaps=[exc.gap], search_trace=state.search_trace)
 
         plan = SkillPlan(
             plan_id="plan_001",
@@ -62,8 +63,9 @@ class SkillComposer:
                         missing=[issue.code for issue in validation.issues],
                     )
                 ],
+                search_trace=state.search_trace,
             )
-        return ComposeResult(plan=plan, gaps=[])
+        return ComposeResult(plan=plan, gaps=[], search_trace=state.search_trace)
 
     def _ensure_artifact(
         self,
@@ -182,24 +184,64 @@ class SkillComposer:
         raise RuntimeError(f"Producer {producer.skill_id} does not produce {artifact_type}.")
 
     def _choose_producer(self, requirement: ArtifactRequirement, state: "_ComposeState") -> Optional[SkillContract]:
-        candidates = [
+        raw_candidates = [
             skill
             for skill in self.registry.active()
             if any(self.type_system.is_assignable(output.type, requirement.type) for output in skill.outputs)
         ]
-        candidates = [
-            skill
-            for skill in candidates
-            if all(_skill_accepts_constraint(skill, constraint) for constraint in requirement.constraints)
-            or (skill.skill_id == "count_entities" and self._count_transform_applicable(requirement, state))
-        ]
-        candidates = [skill for skill in candidates if skill_domain_compatible(skill, requirement, state.goal)]
+        candidate_trace: List[Dict[str, Any]] = []
+        candidates: List[SkillContract] = []
+        for skill in raw_candidates:
+            count_transform = skill.skill_id == "count_entities" and self._count_transform_applicable(requirement, state)
+            accepts_constraints = all(_skill_accepts_constraint(skill, constraint) for constraint in requirement.constraints)
+            domain_ok = skill_domain_compatible(skill, requirement, state.goal)
+            accepted = (accepts_constraints or count_transform) and domain_ok
+            score = producer_score(skill, requirement, state, self.type_system) if accepted else 0
+            reasons = []
+            if accepts_constraints:
+                reasons.append("constraints_supported")
+            if count_transform:
+                reasons.append("count_transform_applicable")
+            if domain_ok:
+                reasons.append("domain_compatible")
+            rejection_reason = ""
+            if not accepted:
+                if not (accepts_constraints or count_transform):
+                    rejection_reason = "unsupported_constraints"
+                elif not domain_ok:
+                    rejection_reason = "domain_incompatible"
+            candidate_trace.append(
+                {
+                    "skill_id": skill.skill_id,
+                    "score": score,
+                    "accepted": accepted,
+                    "reasons": reasons,
+                    "rejection_reason": rejection_reason,
+                }
+            )
+            if accepted:
+                candidates.append(skill)
         if not candidates:
+            state.search_trace.append(
+                {
+                    "required_artifact": requirement.type,
+                    "selected": "",
+                    "candidates": candidate_trace,
+                }
+            )
             return None
-        return sorted(
+        selected = sorted(
             candidates,
             key=lambda skill: (-producer_score(skill, requirement, state, self.type_system), skill.skill_id),
         )[0]
+        state.search_trace.append(
+            {
+                "required_artifact": requirement.type,
+                "selected": selected.skill_id,
+                "candidates": candidate_trace,
+            }
+        )
+        return selected
 
     def _count_transform_applicable(self, requirement: ArtifactRequirement, state: "_ComposeState") -> bool:
         if requirement.type not in {"AggregateTable", "CountResult"}:
@@ -301,6 +343,7 @@ class _ComposeState:
     goal: GoalDecomposition
     nodes: List[SkillInvocation] = field(default_factory=list)
     edges: List[List[str]] = field(default_factory=list)
+    search_trace: List[Dict[str, Any]] = field(default_factory=list)
     _counter: int = 0
 
     def next_invocation_id(self) -> str:

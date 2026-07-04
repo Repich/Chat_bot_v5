@@ -175,6 +175,8 @@ class AgentOrchestrator:
 
         run_trace.write_json("intent/goal_decomposition.json", result_goal_to_dict(decomposition.goal))
         compose_result = self.composer.compose(decomposition.goal)
+        if compose_result.search_trace:
+            run_trace.write_json("skill_search/composer_trace.json", {"items": compose_result.search_trace})
         if compose_result.plan is not None:
             run_trace.write_json("skill_plan/plan_graph.json", compose_result.plan.to_dict())
             if self.plan_executor is not None:

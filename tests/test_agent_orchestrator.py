@@ -50,8 +50,12 @@ class AgentOrchestratorTests(unittest.TestCase):
             self.assertTrue((trace_path / "input/conversation_packet.json").exists())
             self.assertTrue((trace_path / "intent/goal_decomposition.json").exists())
             self.assertTrue((trace_path / "skill_plan/plan_graph.json").exists())
+            self.assertTrue((trace_path / "skill_search/composer_trace.json").exists())
             plan_payload = json.loads((trace_path / "skill_plan/plan_graph.json").read_text(encoding="utf-8"))
+            composer_trace = json.loads((trace_path / "skill_search/composer_trace.json").read_text(encoding="utf-8"))
             self.assertEqual(plan_payload["nodes"][1]["skill_id"], "get_warehouses")
+            selected = [item["selected"] for item in composer_trace["items"]]
+            self.assertIn("get_warehouses", selected)
 
     def test_agent_executes_skill_plan_when_executor_is_configured(self) -> None:
         question = "Покажи остатки товара на оптовых складах"
