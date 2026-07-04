@@ -119,6 +119,29 @@ CLI пишет `training_status.json`, поэтому web-клиент увид�
 используется как fallback при поиске объектов; детали объекта и корректность
 запроса по-прежнему проверяются через MCP и reviewer.
 
+XML-выгрузка 1С считается verified evidence для структуры объекта. Поля,
+найденные только regex по исходникам, записываются как hints и не должны
+использоваться как финальные поля query без подтверждения.
+
+Проверить candidate bindings через MCP:
+
+```bash
+python3 scripts/verify_onboarding_candidates.py \
+  --bot-instance ./bot_instances/client_a \
+  --mcp-url http://127.0.0.1:6003 \
+  --timeout 5 \
+  --max-objects 50
+```
+
+Результат пишется в:
+
+```text
+bot_instances/client_a/onboarding/verified_binding_candidates.json
+```
+
+Параметры `--max-objects` и `--max-candidates` полезны для диагностических
+прогонов, если MCP отвечает медленно. Полный прогон можно выполнять без лимитов.
+
 ## Regression Cases
 
 Создать case из trace:

@@ -1,3 +1,12 @@
+5.0.0-alpha.12
+- Added trust/evidence metadata model: MCP and XML-derived fields are verified, while regex/source-path onboarding hints are not accepted as final query facts.
+- Added parser for standard 1C XML configuration dumps, including catalogs, documents, accumulation registers, information registers, attributes, dimensions, resources, and document table parts.
+- Updated query review and query synthesis payloads so LLM-generated 1C queries can use confirmed fields but cannot rely on unverified field_hints.
+- Added onboarding evidence provider that injects matched register usage and real query patterns into query synthesis as navigation examples.
+- Added candidate binding verifier CLI/scripts that check onboarding candidates against MCP metadata, cache checks by unique object, and support bounded diagnostic runs.
+- Rebuilt local onboarding for /Users/repnikov/Documents/УТ_Демо/config with the XML/trust index: 42,307 files read, 2,722 metadata objects, 500 query patterns, 612 register usage candidates, and 636 binding candidates.
+- Verified a bounded MCP candidate sample: first 20 unique objects produced 28 verified candidates and 0 rejected candidates.
+
 5.0.0-alpha.11
 - Added bot-instance onboarding status tracking with training_status.json.
 - Added admin API endpoints for onboarding status and background initial training.

@@ -90,6 +90,13 @@
 - Можно построить onboarding candidates из файловой выгрузки конфигурации:
   metadata index, semantic dictionary, register usage map, query patterns и
   binding candidates.
+- XML-выгрузка 1С используется как verified metadata source для объектов,
+  реквизитов, измерений, ресурсов и табличных частей; regex-находки остаются
+  только hints.
+- Query synthesis получает matched onboarding evidence: реальные query patterns
+  и связи документов с регистрами из выгрузки конфигурации.
+- Candidate bindings можно проверять через MCP verifier перед ручным
+  утверждением.
 - Web-клиент показывает статус первоначального обучения и умеет запускать
   onboarding для bot instance из админского блока.
 - Если `bot_instances/<id>/onboarding/metadata_index.sqlite` существует, агент
@@ -125,8 +132,8 @@
   метаданные.
 - Некоторые learned skills могут быть специфичны к метаданным, найденным во
   время локального тестирования; поэтому они стартуют как candidate.
-- Onboarding index помогает находить объекты, но пока не утверждает bindings и
-  не заменяет проверку деталей объекта через MCP.
+- Onboarding index помогает находить объекты и XML-confirmed поля, но не
+  утверждает bindings и не заменяет runtime review/MCP-проверки.
 - Web-клиент предназначен для тестирования и диагностики.
 - Память диалога локальна для процесса сервиса, если конкретный запуск не
   включает отдельную персистентность.

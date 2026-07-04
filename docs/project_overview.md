@@ -62,7 +62,7 @@ runtime навыков, пайплайн синтеза запросов, инт
 
 ## Текущий Статус
 
-Текущая версия: `5.0.0-alpha.11`.
+Текущая версия: `5.0.0-alpha.12`.
 
 Реализована основа:
 
@@ -90,6 +90,11 @@ runtime навыков, пайплайн синтеза запросов, инт
 - web-admin запуск первоначального обучения и статус `trained/not trained`;
 - локальный onboarding metadata index как дополнительный источник поиска
   объектов метаданных рядом с MCP;
+- trust/evidence модель метаданных: XML/MCP поля считаются verified, regex
+  находки остаются hints и не проходят query review как факты;
+- onboarding evidence для query synthesis: реальные query patterns и карта
+  движений документов по регистрам из выгрузки конфигурации;
+- verifier candidate bindings через MCP перед ручным утверждением bindings;
 - regression case tooling из trace;
 - composer explainability trace с выбранными и отклоненными candidate skills.
 
