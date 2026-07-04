@@ -232,6 +232,20 @@ class QuerySynthesisEngine:
                 attempt_trace["repeated_partial_query"] = True
                 continue
 
+            empty_list_params = used_empty_list_params(query, params)
+            if empty_list_params:
+                previous_error = (
+                    "Query uses empty list parameter(s): "
+                    + ", ".join("&" + name for name in empty_list_params)
+                    + ". An empty list cannot identify business references and will filter out all rows. "
+                    "Build a lookup query or one query with a verified subquery/condition that retrieves the referenced objects from 1C. "
+                    "Do not ask the user for a concrete object when the question gives a category or attribute that can be resolved from data."
+                )
+                previous_query = query
+                attempt_trace["error"] = previous_error
+                attempt_trace["empty_list_params"] = empty_list_params
+                continue
+
             validation = validate_read_only_query(query, params)
             attempt_trace["validation"] = validation.to_dict()
             if not validation.ok:
@@ -1019,6 +1033,15 @@ def repeats_partial_query(query: str, successful_steps: List[Dict[str, Any]]) ->
         if previous and previous == current:
             return True
     return False
+
+
+def used_empty_list_params(query: str, params: Dict[str, Any]) -> List[str]:
+    used_names = set(re.findall(r"&([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)", query))
+    return sorted(
+        name
+        for name, value in params.items()
+        if name in used_names and isinstance(value, list) and not value
+    )
 
 
 def normalized_query_for_comparison(query: str) -> str:

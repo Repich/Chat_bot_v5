@@ -1,3 +1,7 @@
+5.0.0-alpha.17
+- Added a generic query synthesis guard for empty list parameters used in generated 1C queries: such queries are now rejected before MCP execution and sent back to the model for lookup/subquery repair instead of silently returning empty data.
+- Added regression coverage for a generated stock query that tried to filter by an empty reference list.
+
 5.0.0-alpha.16
 - Fixed metadata collection for object-like terms such as Склады: query synthesis now probes direct 1C object names like Справочник.Склады instead of relying only on broad metadata search results.
 - Boosted ranking for metadata objects whose simple name exactly matches a search term, so required catalogs are not displaced by registers and service objects.

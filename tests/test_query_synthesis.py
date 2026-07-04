@@ -497,6 +497,60 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Repeated previous partial query", llm.calls[3]["user_payload"]["previous_error"])
         self.assertIn("Электротовары", result.message)
 
+    def test_synthesis_rejects_empty_list_param_before_mcp_and_repairs(self) -> None:
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["остатки", "склад"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Остатки.Номенклатура КАК Номенклатура,
+                        СУММА(Остатки.КоличествоОстаток) КАК Остаток
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В (&РозничныеСклады)) КАК Остатки
+                    СГРУППИРОВАТЬ ПО
+                        Остатки.Номенклатура
+                    УПОРЯДОЧИТЬ ПО
+                        Остаток УБЫВ
+                    """,
+                    params={"РозничныеСклады": []},
+                ),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Остатки.Номенклатура КАК Номенклатура,
+                        СУММА(Остатки.КоличествоОстаток) КАК Остаток
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки
+                    СГРУППИРОВАТЬ ПО
+                        Остатки.Номенклатура
+                    УПОРЯДОЧИТЬ ПО
+                        Остаток УБЫВ
+                    """
+                ),
+            ]
+        )
+        mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Кондиционер", "Остаток": 30}]})
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=StockMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Покажи какого товара больше всего в розничном магазине?",
+            intent=data_intent("Показать товар с максимальным остатком"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertEqual(result.trace["attempts"][0]["empty_list_params"], ["РозничныеСклады"])
+        self.assertIn("empty list parameter", llm.calls[2]["user_payload"]["previous_error"])
+        self.assertIn("Кондиционер", result.message)
+
     def test_synthesis_treats_empty_aggregate_row_as_no_data(self) -> None:
         llm = ScriptedLLMClient(
             [
