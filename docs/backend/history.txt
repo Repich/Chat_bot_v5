@@ -1,3 +1,8 @@
+5.0.0-alpha.8
+- Added GitHub-facing project documentation: overview, architecture, capabilities, and operations.
+- Reworked README as a documentation index with quick start commands and links to project docs.
+- Documented the current alpha goals, non-goals, skill-first architecture, MCP/query synthesis flow, trace files, and known limitations.
+
 5.0.0-alpha.7
 - Made clarification prompts more human-readable by summarizing the found partial result as a sentence instead of a raw markdown table.
 - Added deterministic resolution for follow-up answers to a ClarificationRequest when the user selects the document amount option.

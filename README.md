@@ -1,72 +1,65 @@
 # WIICON ChatBot 5
 
-Skill-first self-improving agent for unknown 1C configurations.
+WIICON ChatBot 5 - экспериментальный самообучающийся агент для ответов на
+бизнес-вопросы по данным 1С через MCP-сервер.
 
-Current version: `5.0.0-alpha.7`.
+Текущая версия: `5.0.0-alpha.8`.
 
-Version 5 starts from a new architecture. Business questions are decomposed into
-typed artifacts, then solved through a graph of atomic skills. Data skills bind
-to the current 1C configuration through metadata discovery and MCP execution;
-they must not hardcode object names, field names, enum values, or narrow
-business handlers.
+Проект не является набором жестко зашитых обработчиков под отдельные вопросы.
+Целевая модель: агент получает вопрос пользователя, учитывает контекст диалога,
+проверяет существующие атомарные навыки, при необходимости изучает метаданные
+текущей конфигурации 1С, строит безопасный read-only запрос и сохраняет
+полезные успешные решения как переиспользуемые навыки.
 
-## Current Increment
+## Документация
 
-This repository currently contains the first runnable local increment:
+- [Обзор проекта](docs/project_overview.md): что это за проект, зачем он нужен,
+  цели, нецели и текущий статус.
+- [Архитектура](docs/architecture.md): основные компоненты, пайплайн обработки
+  запроса, навыки, синтез запросов, MCP и трассировка.
+- [Возможности](docs/capabilities.md): что агент уже умеет, что реализовано
+  частично и какие ограничения есть сейчас.
+- [Эксплуатация](docs/operations.md): запуск, настройки LLM/MCP, тесты, логи,
+  трассы и релизный процесс.
+- [Быстрый старт](docs/quickstart.md): короткие команды для локального запуска.
+- [MCP smoke diagnostic](docs/mcp_smoke.md): проверка metadata discovery и
+  binding без обращения к LLM.
+- [Architecture adjustments](docs/architecture_adjustments.md): принятые
+  технические границы разработки версии 5.
 
-- skill, binding, plan, invocation, artifact, and gap contracts;
-- skill registry and graph search primitives;
-- composer for executable skill DAGs;
-- deterministic gap detection for extend-vs-create decisions;
-- conversation context, intent/decomposition contracts, and agent orchestration
-  for `message -> goal -> skill plan -> execution -> answer`;
-- typed-artifact skill plan runtime;
-- MCP/query contracts and data skill runner with read-only validation before MCP;
-- parameterized 1C query execution through MCP `params`, including objectRef reuse;
-- binding store/resolver/discoverer contracts;
-- semantic query builder that uses `SkillBinding` for 1C object and field names;
-- metadata discovery from local MCP with role profiles and object/field compatibility checks;
-- baseline general answers and out-of-scope handling before/around LLM decomposition;
-- LLM goal decomposition with an available-skills catalog and deterministic goal completion;
-- stdlib HTTP MCP adapter for `/api/execute_query` and `/api/get_metadata`;
-- stdlib HTTP `/health` and `/chat` service;
-- stdlib HTTP `/api/version`, `/api/conversation`, `/history/backend`, and
-  `/history/frontend` endpoints for the local web client;
-- web client with sticky message composer, version display, session history
-  reload, and backend/frontend history viewers;
-- audit trace writer;
-- unit tests for the skill-first behavior.
+История изменений:
 
-Validated live against local MCP for warehouse listing and stock balances through
-`РегистрНакопления.ТоварыНаСкладах.Остатки()`.
+- Backend: [docs/backend/history.txt](docs/backend/history.txt)
+- Frontend: [docs/frontend/history.txt](docs/frontend/history.txt)
 
-## Test
+## Быстрый Старт
 
-macOS/Linux:
+Запустить тесты:
 
 ```bash
 python3 scripts/run_tests.py
 ```
 
-Windows:
-
-```bat
-scripts\run_tests.cmd
-```
-
-## MCP Smoke
-
-When the local 1C MCP proxy is available, run:
+Запустить локальный HTTP-сервис:
 
 ```bash
-python3 scripts/mcp_smoke.py --mcp-url http://127.0.0.1:6003 --skill-id get_warehouses --config local
+python3 scripts/run_server.py --host 127.0.0.1 --port 7785
 ```
 
-See [docs/mcp_smoke.md](docs/mcp_smoke.md).
+Задать один вопрос из CLI:
 
-For service startup and one-shot CLI usage, see [docs/quickstart.md](docs/quickstart.md).
+```bash
+python3 scripts/ask.py "Покажи склады"
+```
 
-Change history:
+Открыть web-клиент:
 
-- Backend: [docs/backend/history.txt](docs/backend/history.txt)
-- Frontend: [docs/frontend/history.txt](docs/frontend/history.txt)
+```text
+http://127.0.0.1:7785/
+```
+
+Локальный MCP-прокси 1С по умолчанию ожидается на:
+
+```text
+http://127.0.0.1:6003
+```
