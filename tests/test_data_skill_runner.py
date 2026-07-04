@@ -102,6 +102,38 @@ class DataSkillRunnerTests(unittest.TestCase):
         self.assertEqual(result.artifacts[0].value["columns"], ["Склад", "Остаток"])
         self.assertEqual(result.artifacts[0].value["rows"][0]["Остаток"], 42)
 
+    def test_data_runner_expands_list_param_before_mcp(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        skill = registry.get("get_stock_balances")
+        assert skill is not None
+        mcp = DictMcpClient({"success": True, "data": [{"Склад": "Ларек", "Остаток": 15}]})
+        runner = DataSkillRunner(
+            query_builder=StaticQueryBuilder(
+                QueryDraft(
+                    query=(
+                        "ВЫБРАТЬ\n"
+                        "    Остатки.Склад КАК Склад,\n"
+                        "    Остатки.ВНаличииОстаток КАК Остаток\n"
+                        "ИЗ\n"
+                        "    РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки\n"
+                        "ГДЕ\n"
+                        "    Остатки.Склад В (&Склады)"
+                    ),
+                    params={"Склады": [{"_objectRef": True, "Представление": "Ларек"}]},
+                )
+            ),
+            mcp_client=mcp,
+        )
+
+        result = runner.run(skill, {}, ConversationContext(session_id="s1"))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertIn("Остатки.Склад В (&Склады_1)", mcp.query_calls[0].query)
+        self.assertNotIn("Склады", mcp.query_calls[0].params)
+        self.assertEqual(mcp.query_calls[0].params["Склады_1"]["Представление"], "Ларек")
+        self.assertTrue(result.trace["list_param_expansion"]["changed"])
+
     def test_data_runner_rejects_learned_skill_when_metadata_contract_changed(self) -> None:
         skill = SkillContract.from_dict(
             {

@@ -1,3 +1,8 @@
+5.0.0-alpha.27
+- Added shared MCP parameter preparation for 1C IN-operators: if a query contains В (&Параметр) and the parameter value is a JSON list, it is expanded to scalar parameters В (&Параметр_1, &Параметр_2, ...).
+- Applied the list-parameter expansion both to LLM query synthesis and to learned/semantic skill runtime before query review and MCP execution.
+- Added regression tests for list expansion, empty-list preservation, and DataSkillRunner execution with expanded parameters.
+
 5.0.0-alpha.26
 - Corrected the alpha.25 list-parameter handling after live MCP validation: 1C expects IN-list parameters as В (&Параметр), not В &Параметр.
 - Added query postprocessing that moves single list-parameter filters from accumulation balance virtual table arguments, such as Остатки(, Склад В (&Склады)), into an external WHERE clause by the source alias.

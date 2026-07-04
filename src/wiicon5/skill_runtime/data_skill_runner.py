@@ -10,6 +10,7 @@ from wiicon5.knowledge.metadata import MetadataProvider
 from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpQueryRequest, normalize_mcp_rows
 from wiicon5.models import SkillContract
+from wiicon5.query.list_params import expand_in_list_parameters
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.query_builder import QueryBuildError, QueryBuilder
@@ -91,6 +92,29 @@ class DataSkillRunner(SkillRunner):
                         },
                     )
         if self.query_reviewer is not None:
+            list_param_expansion = expand_in_list_parameters(draft.query, draft.params)
+            if list_param_expansion.changed:
+                draft = QueryDraft(
+                    query=list_param_expansion.query,
+                    params=list_param_expansion.params,
+                    limit=draft.limit,
+                    include_schema=draft.include_schema,
+                    metadata_dependencies=draft.metadata_dependencies,
+                    reasoning=draft.reasoning,
+                )
+                validation = validate_read_only_query(draft.query, draft.params)
+                if not validation.ok:
+                    return SkillRunResult(
+                        ok=False,
+                        skill_id=skill.skill_id,
+                        error="Query safety validation failed after list parameter expansion.",
+                        trace={
+                            "query_draft": draft.to_dict(),
+                            "reference_value_resolution": reference_resolution_payload,
+                            "list_param_expansion": list_param_expansion.to_dict(),
+                            "validation": validation.to_dict(),
+                        },
+                    )
             query_review = self.query_reviewer.review(
                 query=draft.query,
                 params=draft.params,
@@ -105,9 +129,34 @@ class DataSkillRunner(SkillRunner):
                     trace={
                         "query_draft": draft.to_dict(),
                         "reference_value_resolution": reference_resolution_payload,
+                        "list_param_expansion": list_param_expansion.to_dict(),
                         "query_review": query_review.to_dict(),
                     },
                 )
+        else:
+            list_param_expansion = expand_in_list_parameters(draft.query, draft.params)
+            if list_param_expansion.changed:
+                draft = QueryDraft(
+                    query=list_param_expansion.query,
+                    params=list_param_expansion.params,
+                    limit=draft.limit,
+                    include_schema=draft.include_schema,
+                    metadata_dependencies=draft.metadata_dependencies,
+                    reasoning=draft.reasoning,
+                )
+                validation = validate_read_only_query(draft.query, draft.params)
+                if not validation.ok:
+                    return SkillRunResult(
+                        ok=False,
+                        skill_id=skill.skill_id,
+                        error="Query safety validation failed after list parameter expansion.",
+                        trace={
+                            "query_draft": draft.to_dict(),
+                            "reference_value_resolution": reference_resolution_payload,
+                            "list_param_expansion": list_param_expansion.to_dict(),
+                            "validation": validation.to_dict(),
+                        },
+                    )
         response = self.mcp_client.execute_query(
             McpQueryRequest(
                 query=draft.query,
@@ -125,6 +174,7 @@ class DataSkillRunner(SkillRunner):
                 trace={
                     "query_draft": draft.to_dict(),
                     "reference_value_resolution": reference_resolution_payload,
+                    "list_param_expansion": list_param_expansion.to_dict(),
                     "mcp_response": response.raw,
                 },
             )
@@ -135,6 +185,7 @@ class DataSkillRunner(SkillRunner):
             trace={
                 "query_draft": draft.to_dict(),
                 "reference_value_resolution": reference_resolution_payload,
+                "list_param_expansion": list_param_expansion.to_dict(),
                 "query_review": query_review_payload,
                 "row_count": len(rows),
                 "mcp_response": response.raw,

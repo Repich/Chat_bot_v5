@@ -26,6 +26,7 @@ from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.prompting import PromptCatalog
 from wiicon5.presentation.answer_formatter import format_cell, format_user_answer, rows_effectively_empty
 from wiicon5.presentation.llm_answer_formatter import LLMAnswerFormatter
+from wiicon5.query.list_params import expand_in_list_parameters
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.one_c_query_review import (
     OneCQueryReviewer,
@@ -282,6 +283,23 @@ class QuerySynthesisEngine:
                 attempt_trace["error"] = previous_error
                 attempt_trace["empty_list_params"] = empty_list_params
                 continue
+
+            list_param_expansion = expand_in_list_parameters(query, params)
+            attempt_trace["list_param_expansion"] = list_param_expansion.to_dict()
+            if list_param_expansion.changed:
+                query = list_param_expansion.query
+                params = list_param_expansion.params
+                attempt_trace["query"] = query
+                attempt_trace["params"] = dict(params)
+                validation = validate_read_only_query(query, params)
+                attempt_trace["validation_after_list_param_expansion"] = validation.to_dict()
+                if not validation.ok:
+                    previous_error = "Query validation failed after list parameter expansion: " + "; ".join(
+                        issue.message for issue in validation.issues
+                    )
+                    previous_query = query
+                    attempt_trace["error"] = previous_error
+                    continue
 
             query_review = self.query_reviewer.review(
                 query=query,
