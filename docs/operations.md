@@ -12,6 +12,8 @@ WIICON5_LLM_API_BASE=https://api.deepseek.com
 WIICON5_LLM_API_KEY=...
 WIICON5_LLM_MODEL=deepseek-chat
 WIICON5_MCP_URL=http://127.0.0.1:6003
+WIICON5_BOT_ID=local
+WIICON5_CONFIG_FINGERPRINT=local
 ```
 
 Для локальной миграции также принимаются старые имена:
@@ -20,6 +22,23 @@ WIICON5_MCP_URL=http://127.0.0.1:6003
 - `DEEPSEEK_API_KEY`;
 - `DEEPSEEK_MODEL`;
 - `WIICON4_LLM_*`.
+
+Bot instance по умолчанию читается из:
+
+```text
+bot_instances/local/bot.yaml
+```
+
+Полезные переменные bot workspace:
+
+- `WIICON5_BOT_ID`: id экземпляра, например `local` или `client_a`;
+- `WIICON5_BOT_ROOT`: явный путь к каталогу bot instance;
+- `WIICON5_BOT_CONFIG`: явный путь к `bot.yaml`;
+- `WIICON5_CONFIG_FINGERPRINT`: ручной fingerprint или `auto`.
+
+Если указать `WIICON5_CONFIG_FINGERPRINT=auto`, сервис при старте построит
+начальный fingerprint по доступным metadata objects из MCP. Для production
+сценариев это нужно будет заменить более полным onboarding/indexing pipeline.
 
 ## Локальный Запуск
 

@@ -62,6 +62,30 @@ HTTP-сервис отдает тестовый web-клиент, endpoint `/cha
 - вызвать query synthesis, если skill plan не дал ответа;
 - сохранить ответ и контекстные артефакты.
 
+Частные policy больше не должны жить в orchestrator. Например, разрешение
+уточнений вынесено в `src/wiicon5/clarification`, а general/out-of-scope ответы
+берутся из bot instance policy.
+
+### Bot Instance
+
+Код и данные:
+
+- `bot_instances/local/bot.yaml`
+- `src/wiicon5/bot_instance/config.py`
+- `src/wiicon5/policies/...`
+
+Bot instance описывает конкретного бота поверх общего ядра:
+
+- имя бота;
+- доменную область;
+- тексты самопрезентации и out-of-scope ответов;
+- baseline-маркеры;
+- подключенные domain hint packs;
+- профиль конфигурации и fingerprint.
+
+Ядро агента должно работать через этот профиль и не должно знать, что конкретный
+экземпляр называется WIICON ChatBot.
+
 ### Контекст Диалога
 
 Код:
@@ -132,6 +156,8 @@ Binding связывает semantic skill с конкретным объекто
 
 - `src/wiicon5/query_synthesis/synthesizer.py`
 - `src/wiicon5/query_synthesis/sufficiency.py`
+- `src/wiicon5/query_synthesis/term_expansion.py`
+- `src/wiicon5/prompting/templates/...`
 - `src/wiicon5/query/one_c_query_review.py`
 - `src/wiicon5/query/one_c_query_safety.py`
 - `src/wiicon5/presentation/llm_answer_formatter.py`
@@ -149,6 +175,45 @@ Binding связывает semantic skill с конкретным объекто
 8. Presentation layer формирует ответ пользователю.
 9. Полезные артефакты сохраняются в контекст, а успешные шаблоны могут стать
    learned skills.
+
+Prompts разделены на слои:
+
+- `core`: универсальные инструкции synthesis/decomposition/repair;
+- `one_c`: правила языка запросов 1С и safety;
+- `domain_packs`: подключаемые доменные подсказки, например `trade_ru` и
+  `wiicon`.
+
+Расширение терминов поиска метаданных также вынесено в policy. Чистый бот может
+работать только с `one_c_standard`, а WIICON/local профиль подключает торговые
+подсказки отдельно.
+
+### Learned Skills Lifecycle
+
+Новый learned skill после одного успешного synthesis не считается verified. Он
+сохраняется как `candidate` в `skills/learned/candidates` и получает evidence в
+`skills/learned/evidence/<skill_id>/`.
+
+В implementation learned skill хранится:
+
+- `config_fingerprint`;
+- `metadata_dependency_contract`;
+- evidence: trace, question, hash запроса, hash результата, successful_runs,
+  human_confirmed.
+
+Runtime не применяет learned skill к другой конфигурации, если fingerprint явно
+не совпадает. Если доступен metadata provider, runtime проверяет, что поля из
+metadata dependency contract еще существуют.
+
+### Configuration Profile
+
+Код:
+
+- `src/wiicon5/knowledge/config_profile.py`
+
+При `WIICON5_CONFIG_FINGERPRINT=auto` агент строит начальный
+`ConfigurationProfile` по доступным метаданным MCP и использует fingerprint вида
+`cfg_<hash>`. Ручной fingerprint остается доступен для локальных сценариев и
+совместимости с текущими bindings.
 
 ### Проверка Запросов 1С
 

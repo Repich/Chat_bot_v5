@@ -1,3 +1,12 @@
+5.0.0-alpha.9
+- Extracted clarification resolution into a dedicated policy layer so AgentOrchestrator no longer contains the document-amount follow-up scenario.
+- Added BotInstanceConfig/BotInstanceContext and moved general/out-of-scope answer texts plus baseline markers into bot instance/domain policies.
+- Split query/decomposition prompts into core, 1C rules, safety rules, and optional domain packs; moved trade/WIICON hints out of core prompts.
+- Added pluggable metadata term expansion policies so trade-specific expansions are controlled by domain packs.
+- Changed newly learned skills from verified to candidate, writing them under learned/candidates with evidence and metadata dependency contracts.
+- Added config fingerprint support, including WIICON5_CONFIG_FINGERPRINT=auto, learned skill fingerprint checks, and runtime metadata dependency contract checks.
+- Added regression tests for bot instance loading, clean domain packs, learned skill lifecycle, config fingerprint computation, and metadata contract failures.
+
 5.0.0-alpha.8
 - Added GitHub-facing project documentation: overview, architecture, capabilities, and operations.
 - Reworked README as a documentation index with quick start commands and links to project docs.
