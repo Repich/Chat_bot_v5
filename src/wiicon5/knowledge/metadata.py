@@ -7,6 +7,14 @@ from typing import Any, Dict, List
 from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpMetadataRequest
 
+TRUST_VERIFIED = "verified"
+TRUST_HINT = "hint"
+FIELD_HINT_CATEGORIES = {"indexed"}
+FIELD_HINT_SOURCES = {"onboarding_index", "source_path", "bsl_regex", "bsl_query", "heuristic"}
+FIELD_VERIFIED_SOURCES = {"mcp", "metadata_xml"}
+OBJECT_HINT_SOURCES = {"onboarding_index", "source_path", "heuristic"}
+OBJECT_VERIFIED_SOURCES = {"mcp", "metadata_xml"}
+
 
 @dataclass(frozen=True)
 class MetadataObject:
@@ -15,6 +23,53 @@ class MetadataObject:
     fields: List[str] = field(default_factory=list)
     field_details: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
+
+
+def metadata_object_source(metadata: MetadataObject) -> str:
+    raw_source = metadata.raw.get("_source") or metadata.raw.get("evidence_source") or metadata.raw.get("source") or ""
+    return str(raw_source)
+
+
+def metadata_object_trust(metadata: MetadataObject) -> str:
+    raw_trust = metadata.raw.get("_trust") or metadata.raw.get("trust") or ""
+    return str(raw_trust)
+
+
+def is_metadata_object_verified(metadata: MetadataObject) -> bool:
+    trust = metadata_object_trust(metadata)
+    source = metadata_object_source(metadata)
+    if trust == TRUST_VERIFIED or source in OBJECT_VERIFIED_SOURCES:
+        return True
+    if trust == TRUST_HINT or source in OBJECT_HINT_SOURCES:
+        return False
+    return bool(metadata.raw)
+
+
+def field_source(details: Dict[str, Any]) -> str:
+    return str(details.get("_source") or details.get("source") or "")
+
+
+def field_trust(details: Dict[str, Any]) -> str:
+    return str(details.get("_trust") or details.get("trust") or "")
+
+
+def is_field_confirmed(details: Dict[str, Any]) -> bool:
+    trust = field_trust(details)
+    source = field_source(details)
+    category = str(details.get("_category") or "")
+    if trust == TRUST_VERIFIED or source in FIELD_VERIFIED_SOURCES:
+        return True
+    if trust == TRUST_HINT or category in FIELD_HINT_CATEGORIES or source in FIELD_HINT_SOURCES:
+        return False
+    return True
+
+
+def confirmed_field_names(metadata: MetadataObject) -> List[str]:
+    return [name for name in metadata.fields if is_field_confirmed(metadata.field_details.get(name, {}))]
+
+
+def confirmed_field_details(metadata: MetadataObject) -> Dict[str, Dict[str, Any]]:
+    return {name: details for name, details in metadata.field_details.items() if is_field_confirmed(details)}
 
 
 class MetadataProvider(ABC):
@@ -98,7 +153,7 @@ def metadata_object_from_payload(payload: Dict[str, Any]) -> MetadataObject:
         synonym=str(payload.get("Синоним") or payload.get("synonym") or ""),
         fields=fields,
         field_details=field_details,
-        raw=dict(payload),
+        raw={"_source": "mcp", "_trust": TRUST_VERIFIED, **dict(payload)},
     )
 
 
@@ -113,6 +168,8 @@ def add_field(items: List[str], details: Dict[str, Dict[str, Any]], name: str, p
         return
     enriched = dict(payload)
     enriched["_category"] = category
+    enriched.setdefault("_source", "mcp")
+    enriched.setdefault("_trust", TRUST_VERIFIED)
     details[name] = enriched
 
 

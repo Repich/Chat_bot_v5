@@ -11,6 +11,7 @@ from wiicon5.knowledge.bindings import BindingResolver, JsonBindingStore
 from wiicon5.knowledge.config_profile import build_configuration_profile, manual_configuration_profile
 from wiicon5.knowledge.discovery import MetadataBindingDiscoverer
 from wiicon5.knowledge.metadata import McpMetadataProvider, MetadataProvider
+from wiicon5.knowledge.onboarding_evidence import OnboardingEvidenceProvider
 from wiicon5.knowledge.onboarding_index import IndexedMetadataProvider, OnboardingMetadataIndex
 from wiicon5.llm.client import LLMClient, OpenAICompatibleLLMClient
 from wiicon5.mcp.client import HttpMcpClient, McpClient
@@ -82,6 +83,7 @@ def build_agent(
             answer_formatter=LLMAnswerFormatter(effective_llm),
             result_reviewer=ResultSufficiencyReviewer(effective_llm),
             bot_config=settings.bot_instance,
+            onboarding_evidence_provider=OnboardingEvidenceProvider(settings.bot_context.root / "onboarding"),
         ),
         learned_skill_store=learned_skill_store,
         trace_root=settings.runs_dir,

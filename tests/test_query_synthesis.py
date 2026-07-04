@@ -29,6 +29,7 @@ from wiicon5.query_synthesis.synthesizer import (
     expand_metadata_search_terms,
     postprocess_1c_query,
     search_terms_from_discovery,
+    should_expand_metadata,
 )
 from wiicon5.query_synthesis.sufficiency import deterministic_partial_review
 from wiicon5.query_synthesis.term_expansion import CompositeMetadataTermExpansionPolicy
@@ -63,6 +64,7 @@ class QuerySynthesisTests(unittest.TestCase):
             llm_client=llm,
             metadata_provider=FakeMetadataProvider(),
             mcp_client=DictMcpClient({"success": True, "data": [{"Касса": "Основная касса", "Остаток": 1250}]}),
+            onboarding_evidence_provider=FakeOnboardingEvidenceProvider(),
         )
 
         result = engine.run(
@@ -82,6 +84,10 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Основная касса", result.message)
         self.assertIn("1250", result.message)
         self.assertIn("metadata_objects", result.trace)
+        self.assertEqual(
+            llm.calls[1]["user_payload"]["onboarding_evidence"]["query_patterns"][0]["pattern_id"],
+            "evidence_query",
+        )
         self.assertEqual(len(llm.calls), 2)
 
     def test_synthesis_continues_after_partial_document_reference_result(self) -> None:
@@ -1133,6 +1139,14 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual([item.full_name for item in result], ["РегистрНакопления.ДенежныеСредстваНаличные"])
         self.assertIn("Сумма", result[0].fields)
 
+    def test_should_expand_metadata_for_unverified_onboarding_source(self) -> None:
+        self.assertTrue(
+            should_expand_metadata(
+                "Источник РегистрНакопления.ДенежныеСредства найден только по эвристике onboarding "
+                "и не подтвержден структурой метаданных из MCP или XML выгрузки конфигурации."
+            )
+        )
+
 
 class FakeMetadataProvider(MetadataProvider):
     def __init__(self) -> None:
@@ -1156,6 +1170,16 @@ class FakeMetadataProvider(MetadataProvider):
     def get_object(self, full_name: str) -> MetadataObject:
         self.last_requests.append({"operation": "get_object", "full_name": full_name})
         return self.object
+
+
+class FakeOnboardingEvidenceProvider:
+    def evidence_for(self, *, search_terms: List[str], metadata_objects: List[MetadataObject]) -> Dict[str, object]:
+        return {
+            "available": True,
+            "terms": list(search_terms),
+            "query_patterns": [{"pattern_id": "evidence_query", "query": "ВЫБРАТЬ ..."}],
+            "register_usage": [],
+        }
 
 
 class RankingMetadataProvider(MetadataProvider):

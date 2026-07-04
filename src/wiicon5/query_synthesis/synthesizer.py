@@ -8,7 +8,17 @@ from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.intent.models import IntentResult
-from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
+from wiicon5.knowledge.metadata import (
+    MetadataObject,
+    MetadataProvider,
+    confirmed_field_names,
+    field_source,
+    field_trust,
+    is_field_confirmed,
+    metadata_object_source,
+    metadata_object_trust,
+)
+from wiicon5.knowledge.onboarding_evidence import OnboardingEvidenceProvider
 from wiicon5.llm.client import LLMClient, LLMProviderError
 from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpQueryRequest, normalize_mcp_rows
@@ -93,6 +103,7 @@ class QuerySynthesisEngine:
         bot_config: Optional[BotInstanceConfig] = None,
         prompt_catalog: Optional[PromptCatalog] = None,
         term_expansion_policy: Optional[MetadataTermExpansionPolicy] = None,
+        onboarding_evidence_provider: Optional[OnboardingEvidenceProvider] = None,
     ) -> None:
         self.llm_client = llm_client
         self.metadata_provider = metadata_provider
@@ -108,6 +119,7 @@ class QuerySynthesisEngine:
         self.term_expansion_policy = term_expansion_policy or CompositeMetadataTermExpansionPolicy.from_bot_config(
             self.bot_config
         )
+        self.onboarding_evidence_provider = onboarding_evidence_provider
 
     def run(
         self,
@@ -149,6 +161,8 @@ class QuerySynthesisEngine:
         trace["metadata_search_terms"] = search_terms
         trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
         trace["metadata_objects"] = [metadata_object_summary(item) for item in metadata_objects]
+        onboarding_evidence = self._onboarding_evidence(search_terms, metadata_objects)
+        trace["onboarding_evidence"] = onboarding_evidence
         if not metadata_objects:
             return QuerySynthesisResult(ok=False, error="Metadata search returned no objects.", trace=trace)
 
@@ -171,6 +185,7 @@ class QuerySynthesisEngine:
                         "goal": goal_to_payload(goal),
                         "conversation_context": context.to_packet(),
                         "metadata_objects": [metadata_object_summary(item) for item in metadata_objects],
+                        "onboarding_evidence": onboarding_evidence,
                         "hypothesis": discovery.get("hypothesis"),
                         "draft_query": discovery.get("draft_query"),
                         "previous_error": previous_error,
@@ -270,6 +285,8 @@ class QuerySynthesisEngine:
                     trace["metadata_search_terms"] = combined_terms
                     trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
                     trace["metadata_objects"] = [metadata_object_summary(item) for item in metadata_objects]
+                    onboarding_evidence = self._onboarding_evidence(combined_terms, metadata_objects)
+                    trace["onboarding_evidence"] = onboarding_evidence
                 continue
             previous_review = query_review.to_dict()
 
@@ -310,6 +327,8 @@ class QuerySynthesisEngine:
                     trace["metadata_search_terms"] = combined_terms
                     trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
                     trace["metadata_objects"] = [metadata_object_summary(item) for item in metadata_objects]
+                    onboarding_evidence = self._onboarding_evidence(combined_terms, metadata_objects)
+                    trace["onboarding_evidence"] = onboarding_evidence
                 continue
 
             columns = columns_from_rows(rows)
@@ -398,6 +417,8 @@ class QuerySynthesisEngine:
                     trace["metadata_search_terms"] = combined_terms
                     trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
                     trace["metadata_objects"] = [metadata_object_summary(item) for item in metadata_objects]
+                    onboarding_evidence = self._onboarding_evidence(combined_terms, metadata_objects)
+                    trace["onboarding_evidence"] = onboarding_evidence
                 if len(successful_steps) >= self.max_successful_steps:
                     return QuerySynthesisResult(
                         ok=False,
@@ -530,6 +551,18 @@ class QuerySynthesisEngine:
             add_unique(terms, str(item).strip())
         return terms[:8]
 
+    def _onboarding_evidence(
+        self,
+        search_terms: List[str],
+        metadata_objects: List[MetadataObject],
+    ) -> Dict[str, Any]:
+        if self.onboarding_evidence_provider is None:
+            return {"available": False}
+        return self.onboarding_evidence_provider.evidence_for(
+            search_terms=search_terms,
+            metadata_objects=metadata_objects,
+        )
+
 
 def collect_metadata_objects(
     metadata_provider: MetadataProvider,
@@ -613,7 +646,10 @@ def looks_like_full_1c_name(term: str) -> bool:
 
 
 def detailed_enough(item: MetadataObject) -> bool:
-    return any(key in item.raw for key in ["Реквизиты", "Измерения", "Ресурсы", "СтандартныеРеквизиты", "ТабличныеЧасти"])
+    return (
+        any(key in item.raw for key in ["Реквизиты", "Измерения", "Ресурсы", "СтандартныеРеквизиты", "ТабличныеЧасти"])
+        or metadata_object_source(item) == "metadata_xml"
+    )
 
 
 def merge_metadata_objects(left: List[MetadataObject], right: List[MetadataObject]) -> List[MetadataObject]:
@@ -639,7 +675,9 @@ def should_expand_metadata(error: str) -> bool:
             "таблица не найдена",
             "поле не найдено",
             "не подтверждено метаданными",
+            "не подтвержден структурой метаданных",
             "field_not_confirmed",
+            "source_not_confirmed_by_verified_metadata",
             "result insufficiency",
             "missing facts",
         ]
@@ -686,18 +724,48 @@ def expand_metadata_search_terms(
 
 
 def metadata_object_summary(item: MetadataObject) -> Dict[str, Any]:
+    confirmed_fields = confirmed_field_names(item)
+    hint_fields = [field for field in item.fields if field not in confirmed_fields]
     return {
         "full_name": item.full_name,
         "synonym": item.synonym,
-        "fields": list(item.fields),
+        "source": metadata_object_source(item),
+        "trust": metadata_object_trust(item),
+        "confidence": item.raw.get("_confidence"),
+        "fields": confirmed_fields,
+        "field_hints": hint_fields,
         "table_parts": table_parts_summary(item),
         "field_details": {
             name: {
                 key: value
                 for key, value in details.items()
-                if key in {"Имя", "Синоним", "Тип", "_category", "name", "synonym", "type"}
+                if key
+                in {
+                    "Имя",
+                    "Синоним",
+                    "Тип",
+                    "_category",
+                    "_source",
+                    "_trust",
+                    "_confidence",
+                    "name",
+                    "synonym",
+                    "type",
+                }
             }
             for name, details in item.field_details.items()
+            if is_field_confirmed(details)
+        },
+        "field_hint_details": {
+            name: {
+                "name": name,
+                "category": details.get("_category"),
+                "source": field_source(details),
+                "trust": field_trust(details),
+                "confidence": details.get("_confidence"),
+            }
+            for name, details in item.field_details.items()
+            if not is_field_confirmed(details)
         },
     }
 
@@ -705,9 +773,12 @@ def metadata_object_summary(item: MetadataObject) -> Dict[str, Any]:
 def table_parts_summary(item: MetadataObject) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     for name, details in item.field_details.items():
-        if details.get("_category") != "table_part":
+        if details.get("_category") != "table_part" or not is_field_confirmed(details):
             continue
         nested = details.get("_nested_fields")
+        nested_details = details.get("_nested_field_details")
+        if isinstance(nested_details, dict):
+            nested = [field for field in (nested or []) if is_field_confirmed(nested_details.get(str(field), {}))]
         result[name] = {
             "fields": list(nested) if isinstance(nested, list) else [],
         }

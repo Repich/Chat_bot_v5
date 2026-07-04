@@ -4,7 +4,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Set
 
-from wiicon5.knowledge.metadata import MetadataObject
+from wiicon5.knowledge.metadata import (
+    MetadataObject,
+    confirmed_field_names,
+    is_field_confirmed,
+    is_metadata_object_verified,
+)
 from wiicon5.knowledge.one_c_wiki import EmbeddedOneCWiki
 
 
@@ -118,6 +123,18 @@ class OneCQueryReviewer:
                     QueryReviewIssue(
                         code="source_not_confirmed_by_metadata",
                         message=f"Источник {source.source} не подтвержден метаданными.",
+                        evidence=["metadata_objects"],
+                    )
+                )
+                continue
+            if not is_metadata_object_verified(metadata):
+                issues.append(
+                    QueryReviewIssue(
+                        code="source_not_confirmed_by_verified_metadata",
+                        message=(
+                            f"Источник {source.source} найден только по эвристике onboarding и не подтвержден "
+                            "структурой метаданных из MCP или XML выгрузки конфигурации."
+                        ),
                         evidence=["metadata_objects"],
                     )
                 )
@@ -344,7 +361,7 @@ def review_unconfirmed_enum_literals(
 
 
 def expected_fields_for_source(source: QuerySourceRef, metadata: MetadataObject) -> Set[str]:
-    base_fields = set(metadata.fields)
+    base_fields = set(confirmed_field_names(metadata))
     if source.object_type == "Документ" and source.table_part:
         table_part_fields = fields_for_document_table_part(metadata, source.table_part)
         if table_part_fields:
@@ -387,22 +404,37 @@ def metadata_for_source(source: QuerySourceRef, metadata_by_name: Mapping[str, M
 
 def fields_for_document_table_part(metadata: MetadataObject, table_part: str) -> Set[str]:
     details = metadata.field_details.get(table_part)
-    if not details:
+    if not details or not is_field_confirmed(details):
         return set()
     nested = details.get("_nested_fields")
     if not isinstance(nested, list):
         return set()
+    nested_details = details.get("_nested_field_details")
+    if isinstance(nested_details, dict):
+        return {
+            str(item)
+            for item in nested
+            if item and is_field_confirmed(nested_details.get(str(item), {}))
+        }
     return {str(item) for item in nested if item}
 
 
 def dimensions_for(metadata: Optional[MetadataObject]) -> Set[str]:
     if metadata is None:
         return set()
-    return {name for name, details in metadata.field_details.items() if details.get("_category") == "dimension"}
+    return {
+        name
+        for name, details in metadata.field_details.items()
+        if details.get("_category") == "dimension" and is_field_confirmed(details)
+    }
 
 
 def resources_for(metadata: MetadataObject) -> Set[str]:
-    return {name for name, details in metadata.field_details.items() if details.get("_category") == "resource"}
+    return {
+        name
+        for name, details in metadata.field_details.items()
+        if details.get("_category") == "resource" and is_field_confirmed(details)
+    }
 
 
 def reference_param_filters(query: str, alias: str) -> Dict[str, List[str]]:
@@ -433,7 +465,7 @@ def add_param_ref(result: Dict[str, List[str]], field_name: str, param_name: str
 
 def is_reference_field(metadata: MetadataObject, field_name: str) -> bool:
     details = metadata.field_details.get(field_name)
-    if not details:
+    if not details or not is_field_confirmed(details):
         return False
     type_text = str(details.get("Тип") or details.get("type") or "")
     normalized = type_text.replace(" ", "").lower()
@@ -451,7 +483,7 @@ def is_reference_field(metadata: MetadataObject, field_name: str) -> bool:
 
 def field_type_text(metadata: MetadataObject, field_name: str) -> str:
     details = metadata.field_details.get(field_name)
-    if not details:
+    if not details or not is_field_confirmed(details):
         return ""
     return str(details.get("Тип") or details.get("type") or "")
 

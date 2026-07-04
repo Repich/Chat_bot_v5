@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from wiicon5.knowledge.metadata import MetadataObject
 from wiicon5.knowledge.metadata import metadata_object_from_payload
 from wiicon5.knowledge.one_c_wiki import EmbeddedOneCWiki
 from wiicon5.mcp.client import DictMcpClient
@@ -204,6 +205,73 @@ class OneCQueryReviewerTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertIn("source_not_confirmed_by_metadata", [issue.code for issue in result.issues])
+
+    def test_rejects_source_confirmed_only_by_onboarding_hint(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Касса КАК Касса,
+                Остатки.СуммаОстаток КАК Остаток
+            ИЗ
+                РегистрНакопления.ДенежныеСредства.Остатки() КАК Остатки
+            """,
+            params={},
+            metadata_objects=[
+                MetadataObject(
+                    full_name="РегистрНакопления.ДенежныеСредства",
+                    fields=["Касса", "Сумма"],
+                    field_details={
+                        "Касса": {"Имя": "Касса", "_category": "indexed", "_source": "bsl_regex", "_trust": "hint"},
+                        "Сумма": {"Имя": "Сумма", "_category": "indexed", "_source": "bsl_regex", "_trust": "hint"},
+                    },
+                    raw={"source": "onboarding_index", "_source": "source_path", "_trust": "hint"},
+                )
+            ],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("source_not_confirmed_by_verified_metadata", [issue.code for issue in result.issues])
+
+    def test_accepts_source_confirmed_by_xml_metadata(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Касса КАК Касса,
+                Остатки.СуммаОстаток КАК Остаток
+            ИЗ
+                РегистрНакопления.ДенежныеСредства.Остатки() КАК Остатки
+            """,
+            params={},
+            metadata_objects=[
+                MetadataObject(
+                    full_name="РегистрНакопления.ДенежныеСредства",
+                    fields=["Касса", "Сумма"],
+                    field_details={
+                        "Касса": {
+                            "Имя": "Касса",
+                            "Тип": "СправочникСсылка.Кассы",
+                            "_category": "dimension",
+                            "_source": "metadata_xml",
+                            "_trust": "verified",
+                        },
+                        "Сумма": {
+                            "Имя": "Сумма",
+                            "Тип": "Число",
+                            "_category": "resource",
+                            "_source": "metadata_xml",
+                            "_trust": "verified",
+                        },
+                    },
+                    raw={"source": "onboarding_index", "_source": "metadata_xml", "_trust": "verified"},
+                )
+            ],
+        )
+
+        self.assertTrue(result.ok)
 
     def test_rejects_document_table_part_without_document_link(self) -> None:
         reviewer = OneCQueryReviewer()

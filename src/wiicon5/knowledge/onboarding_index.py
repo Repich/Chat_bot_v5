@@ -15,6 +15,11 @@ class IndexedMetadataRecord:
     kind: str
     source_files: List[str] = field(default_factory=list)
     fields: List[str] = field(default_factory=list)
+    field_details: Dict[str, Dict[str, object]] = field(default_factory=dict)
+    source: str = "onboarding_index"
+    trust: str = "hint"
+    confidence: float = 0.2
+    synonym: str = ""
 
 
 class OnboardingMetadataIndex:
@@ -34,7 +39,17 @@ class OnboardingMetadataIndex:
             return []
         scored: List[tuple[int, IndexedMetadataRecord]] = []
         for record in self._records.values():
-            haystacks = [record.full_name, record.kind, *record.fields, *record.source_files]
+            field_haystacks = []
+            for details in record.field_details.values():
+                field_haystacks.extend([str(details.get("synonym") or ""), str(details.get("type") or "")])
+            haystacks = [
+                record.full_name,
+                record.kind,
+                record.synonym,
+                *record.fields,
+                *field_haystacks,
+                *record.source_files,
+            ]
             score = score_record(normalized, haystacks)
             if score:
                 scored.append((score, record))
@@ -62,14 +77,59 @@ class OnboardingMetadataIndex:
     def _read_records(self) -> Dict[str, IndexedMetadataRecord]:
         records: Dict[str, IndexedMetadataRecord] = {}
         fields: Dict[str, List[str]] = {}
+        field_details: Dict[str, Dict[str, Dict[str, object]]] = {}
         with sqlite3.connect(self.path) as connection:
-            for full_name, field_name in connection.execute(
-                "SELECT object_full_name, field_name FROM fields ORDER BY object_full_name, field_name"
+            object_columns = table_columns(connection, "objects")
+            field_columns = table_columns(connection, "fields")
+            if {"category", "source", "trust", "confidence", "type_text", "synonym", "nested_fields_json"}.issubset(
+                field_columns
             ):
-                fields.setdefault(str(full_name), []).append(str(field_name))
-            for full_name, kind, source_files_json in connection.execute(
-                "SELECT full_name, kind, source_files_json FROM objects ORDER BY full_name"
-            ):
+                for row in connection.execute(
+                    """
+                    SELECT object_full_name, field_name, category, source, trust, confidence, type_text, synonym, nested_fields_json
+                    FROM fields
+                    ORDER BY object_full_name, field_name
+                    """
+                ):
+                    full_name = str(row[0])
+                    field_name = str(row[1])
+                    fields.setdefault(full_name, []).append(field_name)
+                    field_details.setdefault(full_name, {})[field_name] = field_details_from_row(
+                        field_name=field_name,
+                        category=str(row[2]),
+                        source=str(row[3]),
+                        trust=str(row[4]),
+                        confidence=float(row[5]),
+                        type_text=str(row[6]),
+                        synonym=str(row[7]),
+                        nested_fields_json=str(row[8]),
+                    )
+            else:
+                for full_name, field_name in connection.execute(
+                    "SELECT object_full_name, field_name FROM fields ORDER BY object_full_name, field_name"
+                ):
+                    full_name = str(full_name)
+                    field_name = str(field_name)
+                    fields.setdefault(full_name, []).append(field_name)
+                    field_details.setdefault(full_name, {})[field_name] = field_details_from_row(
+                        field_name=field_name,
+                        category="indexed",
+                        source="onboarding_index",
+                        trust="hint",
+                        confidence=0.2,
+                        type_text="",
+                        synonym="",
+                        nested_fields_json="[]",
+                    )
+            if {"source", "trust", "confidence", "synonym"}.issubset(object_columns):
+                object_rows = connection.execute(
+                    "SELECT full_name, kind, source_files_json, source, trust, confidence, synonym FROM objects ORDER BY full_name"
+                )
+            else:
+                object_rows = connection.execute(
+                    "SELECT full_name, kind, source_files_json, 'onboarding_index', 'hint', 0.2, '' FROM objects ORDER BY full_name"
+                )
+            for full_name, kind, source_files_json, source, trust, confidence, synonym in object_rows:
                 try:
                     source_files = json.loads(str(source_files_json))
                 except json.JSONDecodeError:
@@ -81,6 +141,11 @@ class OnboardingMetadataIndex:
                     kind=str(kind),
                     source_files=[str(item) for item in source_files],
                     fields=fields.get(str(full_name), []),
+                    field_details=field_details.get(str(full_name), {}),
+                    source=str(source),
+                    trust=str(trust),
+                    confidence=float(confidence),
+                    synonym=str(synonym),
                 )
         return records
 
@@ -120,9 +185,9 @@ class IndexedMetadataProvider(MetadataProvider):
                 "operation": "get_object",
                 "full_name": full_name,
                 "source": "onboarding_index",
-                "success": bool(index_item.fields),
-                "error": "" if index_item.fields else "object not found in onboarding metadata index",
-                "returned": 1 if index_item.fields else 0,
+                "success": bool(index_item.raw),
+                "error": "" if index_item.raw else "object not found in onboarding metadata index",
+                "returned": 1 if index_item.raw else 0,
             }
         )
         return index_item
@@ -144,10 +209,17 @@ def score_record(term: str, haystacks: List[str]) -> int:
 def metadata_object_from_record(record: IndexedMetadataRecord) -> MetadataObject:
     return MetadataObject(
         full_name=record.full_name,
+        synonym=record.synonym,
         fields=list(record.fields),
-        field_details={field: {"Имя": field, "_category": "indexed"} for field in record.fields},
+        field_details={
+            field: dict(record.field_details.get(field, field_details_from_row(field_name=field)))
+            for field in record.fields
+        },
         raw={
             "source": "onboarding_index",
+            "_source": record.source,
+            "_trust": record.trust,
+            "_confidence": record.confidence,
             "kind": record.kind,
             "source_files": list(record.source_files),
         },
@@ -161,3 +233,72 @@ def merge_metadata_objects(primary_items: List[MetadataObject], index_items: Lis
             continue
         by_name[item.full_name] = item
     return list(by_name.values())
+
+
+def table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def field_details_from_row(
+    *,
+    field_name: str,
+    category: str = "indexed",
+    source: str = "onboarding_index",
+    trust: str = "hint",
+    confidence: float = 0.2,
+    type_text: str = "",
+    synonym: str = "",
+    nested_fields_json: str = "[]",
+) -> Dict[str, object]:
+    nested_fields, nested_details = parse_nested_fields(nested_fields_json)
+    details: Dict[str, object] = {
+        "Имя": field_name,
+        "name": field_name,
+        "Синоним": synonym,
+        "synonym": synonym,
+        "Тип": type_text,
+        "type": type_text,
+        "_category": category,
+        "_source": source,
+        "_trust": trust,
+        "_confidence": confidence,
+    }
+    if nested_fields:
+        details["_nested_fields"] = nested_fields
+        details["_nested_field_details"] = nested_details
+    return details
+
+
+def parse_nested_fields(raw: str) -> tuple[List[str], Dict[str, Dict[str, object]]]:
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError:
+        return [], {}
+    if not isinstance(items, list):
+        return [], {}
+    names: List[str] = []
+    details: Dict[str, Dict[str, object]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        names.append(name)
+        nested_names, nested_details = parse_nested_fields(json.dumps(item.get("nested_fields", []), ensure_ascii=False))
+        details[name] = {
+            "Имя": name,
+            "name": name,
+            "Синоним": str(item.get("synonym") or ""),
+            "synonym": str(item.get("synonym") or ""),
+            "Тип": str(item.get("type") or ""),
+            "type": str(item.get("type") or ""),
+            "_category": str(item.get("category") or "attribute"),
+            "_source": str(item.get("source") or "metadata_xml"),
+            "_trust": str(item.get("trust") or "verified"),
+            "_confidence": float(item.get("confidence") or 0.95),
+        }
+        if nested_names:
+            details[name]["_nested_fields"] = nested_names
+            details[name]["_nested_field_details"] = nested_details
+    return names, details
