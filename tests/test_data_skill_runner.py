@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from wiicon5.conversation.context import ConversationContext
+from wiicon5.knowledge.metadata import MetadataProvider, metadata_object_from_payload
 from wiicon5.mcp.client import DictMcpClient
 from wiicon5.models import SkillContract
 from wiicon5.query.query_builder import QueryBuilder
@@ -101,6 +102,47 @@ class DataSkillRunnerTests(unittest.TestCase):
         self.assertEqual(result.artifacts[0].value["columns"], ["Склад", "Остаток"])
         self.assertEqual(result.artifacts[0].value["rows"][0]["Остаток"], 42)
 
+    def test_data_runner_rejects_learned_skill_when_metadata_contract_changed(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_test",
+                "kind": "data_acquisition",
+                "status": "candidate",
+                "outputs": [{"name": "table", "type": "LearnedMetricsTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "metadata_dependency_contract": [
+                        {
+                            "object": "РегистрНакопления.Тест",
+                            "required_fields": {"Период": "unknown", "Сумма": "unknown"},
+                        }
+                    ]
+                },
+            }
+        )
+        mcp = DictMcpClient({"success": True, "data": []})
+        runner = DataSkillRunner(
+            query_builder=StaticQueryBuilder(
+                QueryDraft(
+                    query="ВЫБРАТЬ 1 КАК Значение",
+                    metadata_dependencies=["РегистрНакопления.Тест"],
+                )
+            ),
+            mcp_client=mcp,
+            metadata_provider=SingleObjectMetadataProvider(
+                {
+                    "ПолноеИмя": "РегистрНакопления.Тест",
+                    "Измерения": [{"Имя": "Период"}],
+                }
+            ),
+        )
+
+        result = runner.run(skill, {}, ConversationContext(session_id="s1"))
+
+        self.assertFalse(result.ok)
+        self.assertIn("metadata dependency changed", result.error)
+        self.assertEqual(len(mcp.query_calls), 0)
+
 
 class StaticQueryBuilder(QueryBuilder):
     def __init__(self, draft: QueryDraft) -> None:
@@ -112,6 +154,16 @@ class StaticQueryBuilder(QueryBuilder):
         return self.draft
 
 
+class SingleObjectMetadataProvider(MetadataProvider):
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self.object = metadata_object_from_payload(payload)
+
+    def search_objects(self, term: str):
+        return [self.object]
+
+    def get_object(self, full_name: str):
+        return self.object
+
+
 if __name__ == "__main__":
     unittest.main()
-

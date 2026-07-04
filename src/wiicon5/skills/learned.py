@@ -47,6 +47,7 @@ class LearnedSkillStore:
         goal: Optional[GoalDecomposition],
         synthesis_result: QuerySynthesisResult,
         created_from_trace: str = "",
+        config_fingerprint: str = "",
     ) -> Optional[LearnedSkillWriteResult]:
         if not synthesis_result.ok:
             return None
@@ -62,6 +63,7 @@ class LearnedSkillStore:
             intent=intent,
             trace=synthesis_result.trace,
             created_from_trace=created_from_trace,
+            config_fingerprint=config_fingerprint,
         )
         skill = skill_from_spec(spec, intent=intent, goal=goal)
         self.candidates_dir.mkdir(parents=True, exist_ok=True)
@@ -136,6 +138,7 @@ def enrich_spec_with_lifecycle(
     intent: IntentResult,
     trace: Dict[str, Any],
     created_from_trace: str,
+    config_fingerprint: str,
 ) -> Dict[str, Any]:
     result = dict(spec)
     final_query = dict(trace.get("final_query") or {})
@@ -150,6 +153,8 @@ def enrich_spec_with_lifecycle(
         "human_confirmed": False,
         "successful_runs": 1,
     }
+    if config_fingerprint:
+        result["config_fingerprint"] = config_fingerprint
     return result
 
 

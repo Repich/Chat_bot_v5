@@ -8,6 +8,7 @@ from wiicon5.conversation.memory import ConversationMemory
 from wiicon5.execution.runtime import SkillPlanExecutor, default_runners
 from wiicon5.intent.llm_decomposer import LLMGoalDecomposer
 from wiicon5.knowledge.bindings import BindingResolver, JsonBindingStore
+from wiicon5.knowledge.config_profile import build_configuration_profile, manual_configuration_profile
 from wiicon5.knowledge.discovery import MetadataBindingDiscoverer
 from wiicon5.knowledge.metadata import McpMetadataProvider
 from wiicon5.llm.client import LLMClient, OpenAICompatibleLLMClient
@@ -37,6 +38,7 @@ def build_agent(
     effective_mcp = mcp_client or HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds)
     domain_policy = DomainPolicy(settings.bot_instance)
     metadata_provider = McpMetadataProvider(effective_mcp)
+    config_profile = resolve_configuration_profile(settings, metadata_provider)
     query_reviewer = OneCQueryReviewer()
     binding_store = JsonBindingStore(settings.bindings_dir)
     binding_resolver = BindingResolver(binding_store, MetadataBindingDiscoverer(metadata_provider))
@@ -62,7 +64,7 @@ def build_agent(
         query_reviewer=query_reviewer,
         metadata_provider=metadata_provider,
     )
-    effective_memory = memory or ConversationMemory(default_config_fingerprint=settings.config_fingerprint)
+    effective_memory = memory or ConversationMemory(default_config_fingerprint=config_profile.fingerprint)
     learned_skill_store = LearnedSkillStore(skills_dir=settings.skills_dir, registry=registry)
     return AgentOrchestrator(
         registry=registry,
@@ -93,3 +95,9 @@ def build_llm_client(settings: Settings) -> LLMClient:
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
     )
+
+
+def resolve_configuration_profile(settings: Settings, metadata_provider: McpMetadataProvider):
+    if settings.config_fingerprint.lower() in {"auto", "computed"}:
+        return build_configuration_profile(metadata_provider, source="mcp")
+    return manual_configuration_profile(settings.config_fingerprint)

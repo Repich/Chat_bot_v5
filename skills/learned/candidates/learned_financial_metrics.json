@@ -73,6 +73,7 @@
     "metadata_dependencies": [
       "РегистрНакопления.ВыручкаИСебестоимостьПродаж"
     ],
+    "config_fingerprint": "local",
     "metadata_dependency_contract": [
       {
         "object": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",

@@ -52,6 +52,16 @@ class DataSkillRunner(SkillRunner):
         query_review_payload = None
         reference_resolution_payload = None
         metadata_dependencies = self._metadata_dependencies(draft.metadata_dependencies)
+        metadata_contract_error = ""
+        if self.metadata_provider is not None:
+            metadata_contract_error = metadata_dependency_contract_error(skill, metadata_dependencies)
+        if metadata_contract_error:
+            return SkillRunResult(
+                ok=False,
+                skill_id=skill.skill_id,
+                error=metadata_contract_error,
+                trace={"query_draft": draft.to_dict(), "metadata_dependency_contract_error": metadata_contract_error},
+            )
         if metadata_dependencies:
             reference_resolution = ReferenceValueResolver(self.mcp_client).resolve(
                 query=draft.query,
@@ -167,3 +177,29 @@ def _columns_from_rows(rows: List[Dict[str, Any]]) -> List[str]:
             if key not in columns:
                 columns.append(key)
     return columns
+
+
+def metadata_dependency_contract_error(skill: SkillContract, metadata_objects) -> str:
+    contract = skill.implementation.get("metadata_dependency_contract")
+    if not isinstance(contract, list) or not contract:
+        return ""
+    by_name = {item.full_name: item for item in metadata_objects if item.full_name}
+    for dependency in contract:
+        if not isinstance(dependency, dict):
+            continue
+        object_name = str(dependency.get("object") or "")
+        if not object_name:
+            continue
+        metadata_object = by_name.get(object_name)
+        if metadata_object is None:
+            return f"Learned skill {skill.skill_id} metadata dependency is not available: {object_name}."
+        required_fields = dependency.get("required_fields")
+        if not isinstance(required_fields, dict):
+            continue
+        missing = [field for field in required_fields if field not in metadata_object.fields]
+        if missing:
+            return (
+                f"Learned skill {skill.skill_id} metadata dependency changed for {object_name}; "
+                f"missing fields: {', '.join(missing)}."
+            )
+    return ""

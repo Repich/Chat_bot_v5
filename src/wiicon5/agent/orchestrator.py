@@ -221,6 +221,7 @@ class AgentOrchestrator:
                         goal=decomposition.goal,
                         synthesis_result=synthesis_result,
                         run_trace=run_trace,
+                        context=context,
                     )
                     result = AgentRunResult(
                         source="query_synthesis_ok",
@@ -290,6 +291,7 @@ class AgentOrchestrator:
                 goal=decomposition.goal,
                 synthesis_result=synthesis_result,
                 run_trace=run_trace,
+                context=context,
             )
             result = AgentRunResult(
                 source="query_synthesis_ok",
@@ -363,6 +365,7 @@ class AgentOrchestrator:
         goal: Optional[GoalDecomposition],
         synthesis_result: QuerySynthesisResult,
         run_trace: RunTrace,
+        context: ConversationContext,
     ) -> None:
         if self.learned_skill_store is None:
             return
@@ -371,6 +374,7 @@ class AgentOrchestrator:
             goal=goal,
             synthesis_result=synthesis_result,
             created_from_trace=str(run_trace.path),
+            config_fingerprint=context.config_fingerprint or "",
         )
         if learned is not None:
             run_trace.write_json("learning/learned_skill.json", learned.to_dict())

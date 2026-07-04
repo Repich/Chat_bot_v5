@@ -18,9 +18,10 @@ from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider, metadat
 from wiicon5.llm.client import ScriptedLLMClient
 from wiicon5.mcp.client import DictMcpClient, McpClient
 from wiicon5.mcp.contracts import McpMetadataRequest, McpMetadataResponse, McpQueryRequest, McpQueryResponse
-from wiicon5.models import ArtifactRequirement, SemanticFilter
+from wiicon5.models import ArtifactRequirement, SemanticFilter, SkillContract
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.query.learned_query_builder import LearnedQueryBuilder
+from wiicon5.query.query_builder import QueryBuildError
 from wiicon5.query.reference_value_resolver import best_reference_match
 from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
 from wiicon5.query_synthesis.synthesizer import (
@@ -934,6 +935,7 @@ class QuerySynthesisTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             skills_dir = Path(temp_dir) / "skills"
             skills_dir.mkdir()
+            memory = ConversationMemory(default_config_fingerprint="cfg")
             orchestrator = AgentOrchestrator(
                 registry=registry,
                 decomposer=ScriptedGoalDecomposer(
@@ -942,6 +944,7 @@ class QuerySynthesisTests(unittest.TestCase):
                         second_question: financial_by_year_decomposition(second_question),
                     }
                 ),
+                memory=memory,
                 plan_executor=SkillPlanExecutor(registry, runners),
                 query_synthesizer=QuerySynthesisEngine(
                     llm_client=llm,
@@ -972,6 +975,7 @@ class QuerySynthesisTests(unittest.TestCase):
         )
         self.assertEqual(learned_payload["implementation"]["evidence"]["successful_runs"], 1)
         self.assertFalse(learned_payload["implementation"]["evidence"]["human_confirmed"])
+        self.assertEqual(learned_payload["implementation"]["config_fingerprint"], "cfg")
         self.assertIsNotNone(registry.get("learned_financial_metrics"))
         self.assertEqual(second.source, "skill_execution_ok")
         assert second.plan is not None
@@ -1004,6 +1008,26 @@ class QuerySynthesisTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertFalse(learned_dir_exists)
+
+    def test_learned_query_rejects_different_config_fingerprint(self) -> None:
+        skill = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills").get("learned_financial_metrics")
+        assert skill is not None
+        skill = SkillContract.from_dict(
+            {
+                **skill.to_dict(),
+                "implementation": {**skill.implementation, "config_fingerprint": "cfg_a"},
+            }
+        )
+
+        with self.assertRaises(QueryBuildError) as exc:
+            LearnedQueryBuilder().build(
+                skill,
+                inputs={},
+                context=ConversationContext(session_id="s1", config_fingerprint="cfg_b"),
+            )
+
+        self.assertIn("cfg_a", str(exc.exception))
+        self.assertIn("cfg_b", str(exc.exception))
 
     def test_postprocess_removes_redundant_reference_join_and_empty_balance_args(self) -> None:
         query = (

@@ -11,6 +11,13 @@ from wiicon5.query.query_draft import QueryDraft
 class LearnedQueryBuilder(QueryBuilder):
     def build(self, skill: SkillContract, inputs: Dict[str, Any], context: ConversationContext) -> QueryDraft:
         spec = skill.implementation
+        expected_fingerprint = str(spec.get("config_fingerprint") or "")
+        actual_fingerprint = context.config_fingerprint or ""
+        if expected_fingerprint and actual_fingerprint and expected_fingerprint != actual_fingerprint:
+            raise QueryBuildError(
+                f"Learned skill {skill.skill_id} was created for config {expected_fingerprint}, "
+                f"current config is {actual_fingerprint}."
+            )
         kind = str(spec.get("kind") or "")
         if kind == "period_metric_aggregate":
             return build_period_metric_aggregate(skill, inputs)

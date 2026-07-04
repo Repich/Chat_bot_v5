@@ -168,6 +168,40 @@ class AppFactoryTests(unittest.TestCase):
 
         self.assertEqual(context.config_fingerprint, "cfg_local")
 
+    def test_build_agent_can_compute_config_fingerprint_from_metadata(self) -> None:
+        metadata_response = {
+            "success": True,
+            "data": [
+                {
+                    "ПолноеИмя": "Справочник.Склады",
+                    "Синоним": "Склады",
+                    "Реквизиты": [{"Имя": "ТипСклада", "Тип": "ПеречислениеСсылка.ТипыСкладов"}],
+                }
+            ],
+        }
+        with TemporaryDirectory() as temp_dir:
+            settings = Settings.from_env(
+                {
+                    "WIICON5_SKILLS_DIR": str(PROJECT_ROOT / "skills"),
+                    "WIICON5_BINDINGS_DIR": str(Path(temp_dir) / "bindings"),
+                    "WIICON5_RUNS_DIR": str(Path(temp_dir) / "runs"),
+                    "WIICON5_CONFIG_FINGERPRINT": "auto",
+                },
+                root=PROJECT_ROOT,
+            )
+            mcp = DictMcpClient({"success": True, "data": []}, metadata_response=metadata_response)
+            agent = build_agent(
+                settings,
+                llm_client=ScriptedLLMClient([]),
+                mcp_client=mcp,
+            )
+
+            context = agent.memory.get_or_create("s1")
+
+        self.assertNotEqual(context.config_fingerprint, "auto")
+        self.assertTrue(str(context.config_fingerprint).startswith("cfg_"))
+        self.assertGreaterEqual(len(mcp.metadata_calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
