@@ -238,20 +238,6 @@ class QuerySynthesisEngine:
                 attempt_trace["repeated_partial_query"] = True
                 continue
 
-            empty_list_params = used_empty_list_params(query, params)
-            if empty_list_params:
-                previous_error = (
-                    "Query uses empty list parameter(s): "
-                    + ", ".join("&" + name for name in empty_list_params)
-                    + ". An empty list cannot identify business references and will filter out all rows. "
-                    "Build a lookup query or one query with a verified subquery/condition that retrieves the referenced objects from 1C. "
-                    "Do not ask the user for a concrete object when the question gives a category or attribute that can be resolved from data."
-                )
-                previous_query = query
-                attempt_trace["error"] = previous_error
-                attempt_trace["empty_list_params"] = empty_list_params
-                continue
-
             validation = validate_read_only_query(query, params)
             attempt_trace["validation"] = validation.to_dict()
             if not validation.ok:
@@ -280,6 +266,20 @@ class QuerySynthesisEngine:
                     previous_query = query
                     attempt_trace["error"] = previous_error
                     continue
+
+            empty_list_params = used_empty_list_params(query, params)
+            if empty_list_params:
+                previous_error = (
+                    "Query uses empty list parameter(s): "
+                    + ", ".join("&" + name for name in empty_list_params)
+                    + ". An empty list cannot identify business references and will filter out all rows. "
+                    "Build a lookup query or one query with a verified subquery/condition that retrieves the referenced objects from 1C. "
+                    "Do not ask the user for a concrete object when the question gives a category or attribute that can be resolved from data."
+                )
+                previous_query = query
+                attempt_trace["error"] = previous_error
+                attempt_trace["empty_list_params"] = empty_list_params
+                continue
 
             query_review = self.query_reviewer.review(
                 query=query,

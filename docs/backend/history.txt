@@ -1,3 +1,8 @@
+5.0.0-alpha.24
+- Reference resolution now handles empty list parameters on reference fields inside virtual table conditions, resolving values such as Склад В (&РозничныеСклады) through MCP before the empty-list guard rejects the query.
+- Query synthesis now performs safety validation and reference resolution before the empty-list guard, so resolvable empty reference lists can be repaired while unresolved ones are still blocked before the main MCP query.
+- Added regression coverage for resolving empty reference lists in accumulation virtual table conditions.
+
 5.0.0-alpha.23
 - Extended semantic query review so top/max product stock questions are detected from the original user text and intent, even if the LLM goal decomposition omits an AggregateTable artifact.
 - Rejected row-level ПЕРВЫЕ 1 stock-balance queries for top/max product questions when they do not aggregate to product grain with СУММА and СГРУППИРОВАТЬ ПО.

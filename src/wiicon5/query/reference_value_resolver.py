@@ -102,14 +102,15 @@ class ReferenceValueResolver:
                 continue
             for param_name in param_names:
                 raw_value = result_params.get(param_name)
-                if not is_plain_string(raw_value):
+                raw_is_empty_list = is_empty_list(raw_value)
+                if not is_plain_string(raw_value) and not raw_is_empty_list:
                     continue
                 discovery = self._discover_field_values(source=source, field_name=field_name)
-                search_text = reference_search_text(param_name, str(raw_value))
+                search_text = param_name if raw_is_empty_list else reference_search_text(param_name, str(raw_value))
                 match = best_reference_match(search_text, discovery.rows)
                 resolutions.append(
                     {
-                        "kind": "string_param",
+                        "kind": "empty_list_param" if raw_is_empty_list else "string_param",
                         "source": source.source,
                         "field": field_name,
                         "param": param_name,
@@ -124,7 +125,7 @@ class ReferenceValueResolver:
                     }
                 )
                 if match is not None:
-                    result_params[param_name] = match.value
+                    result_params[param_name] = [match.value] if raw_is_empty_list else match.value
         return result_params, resolutions
 
     def _resolve_enum_literals(
@@ -317,6 +318,10 @@ def field_type_text(metadata: MetadataObject, field_name: str) -> str:
 
 def is_plain_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def is_empty_list(value: Any) -> bool:
+    return isinstance(value, list) and not value
 
 
 def reference_search_text(param_name: str, raw_value: str) -> str:

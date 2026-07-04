@@ -503,6 +503,43 @@ class OneCQueryReviewerTests(unittest.TestCase):
         self.assertIn("РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки", mcp.query_calls[0].query)
         self.assertNotIn("Склад = &СкладРозничный", mcp.query_calls[0].query)
 
+    def test_reference_value_resolver_replaces_virtual_condition_empty_list_param(self) -> None:
+        mcp = DictMcpClient(
+            {
+                "success": True,
+                "data": [
+                    {
+                        "Значение": {
+                            "_objectRef": True,
+                            "УникальныйИдентификатор": "warehouse-retail",
+                            "ТипОбъекта": "СправочникСсылка.Склады",
+                            "Представление": "Ларек Розница",
+                        },
+                        "Представление": "Ларек Розница",
+                    }
+                ],
+            }
+        )
+
+        result = ReferenceValueResolver(mcp).resolve(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Номенклатура КАК Номенклатура,
+                СУММА(Остатки.КоличествоОстаток) КАК Остаток
+            ИЗ
+                РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В (&РозничныеСклады)) КАК Остатки
+            СГРУППИРОВАТЬ ПО
+                Остатки.Номенклатура
+            """,
+            params={"РозничныеСклады": []},
+            metadata_objects=[stock_register_metadata()],
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(result.params["РозничныеСклады"][0]["УникальныйИдентификатор"], "warehouse-retail")
+        self.assertEqual(result.resolutions[0]["kind"], "empty_list_param")
+        self.assertEqual(result.resolutions[0]["search_text"], "РозничныеСклады")
+
 
 def money_register_metadata():
     return metadata_object_from_payload(

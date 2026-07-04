@@ -613,7 +613,7 @@ class QuerySynthesisTests(unittest.TestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(len(mcp.query_calls), 2)
+        self.assertEqual(len(mcp.query_calls), 3)
         self.assertEqual(result.trace["attempts"][0]["empty_list_params"], ["РозничныеСклады"])
         self.assertIn("empty list parameter", llm.calls[2]["user_payload"]["previous_error"])
         self.assertEqual(
@@ -629,7 +629,9 @@ class QuerySynthesisTests(unittest.TestCase):
             "reference_filter_string_param",
         )
         self.assertIn("ПРЕДСТАВЛЕНИЕ(Остатки.Склад)", mcp.query_calls[0].query)
-        self.assertNotIn("Склад = &Склад", mcp.query_calls[0].query)
+        self.assertIn("ПРЕДСТАВЛЕНИЕ(Остатки.Склад)", mcp.query_calls[1].query)
+        self.assertNotIn("Склад В (&РозничныеСклады)", mcp.query_calls[0].query)
+        self.assertNotIn("Склад = &Склад", mcp.query_calls[1].query)
         final_query = mcp.query_calls[-1].query
         self.assertIn("Справочник.Склады", final_query)
         self.assertIn("ТипСклада", final_query)
