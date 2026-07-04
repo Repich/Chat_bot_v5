@@ -1,3 +1,8 @@
+5.0.0-alpha.22
+- Expanded stock-balance metadata search using the existing semantic profile vocabulary instead of relying only on LLM-provided object names.
+- Added structural metadata ranking for stock questions: objects with confirmed product, warehouse, and numeric balance/quantity fields are preferred over name-only matches.
+- Added regression coverage for stock-balance term expansion and source ranking.
+
 5.0.0-alpha.21
 - Extended reference value resolution to string parameters inside accumulation virtual table conditions, so filters such as Остатки(, Склад = &СкладРозничный) can be resolved through MCP before query review rejects them.
 - Reference lookup now ignores placeholder-like parameter values such as zero GUIDs or СправочникСсылка.* strings and can use the parameter name as the business search text.

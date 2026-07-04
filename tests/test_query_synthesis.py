@@ -28,6 +28,7 @@ from wiicon5.query_synthesis.synthesizer import (
     collect_metadata_objects,
     expand_metadata_search_terms,
     postprocess_1c_query,
+    rank_metadata_objects,
     search_terms_from_discovery,
     should_expand_metadata,
 )
@@ -1323,6 +1324,45 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Документ.ПриобретениеТоваровУслуг", terms)
         self.assertIn("ПриобретениеТоваровУслуг", terms)
         self.assertIn("РасчетыСПоставщиками", terms)
+
+    def test_metadata_search_terms_expand_stock_balance_vocabulary(self) -> None:
+        terms = expand_metadata_search_terms(["остатки товаров в розничном магазине"])
+
+        self.assertIn("товары на складах", terms)
+        self.assertIn("складские остатки", terms)
+        self.assertIn("регистр накопления", terms)
+
+    def test_metadata_ranking_prefers_stock_object_with_product_warehouse_quantity_fields(self) -> None:
+        wrong_register = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "РегистрНакопления.ТоварыОрганизаций",
+                "Синоним": "Товары организаций",
+                "Измерения": [
+                    {"Имя": "Организация", "Тип": "СправочникСсылка.Организации"},
+                    {"Имя": "ВидЗапасов", "Тип": "СправочникСсылка.ВидыЗапасов"},
+                ],
+                "Ресурсы": [{"Имя": "Количество", "Тип": "Число"}],
+            }
+        )
+        stock_register = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "РегистрНакопления.ОстаткиПоМестамХранения",
+                "Синоним": "Остатки по местам хранения",
+                "Измерения": [
+                    {"Имя": "Номенклатура", "Тип": "СправочникСсылка.Номенклатура"},
+                    {"Имя": "Склад", "Тип": "СправочникСсылка.Склады"},
+                ],
+                "Ресурсы": [{"Имя": "ВНаличии", "Тип": "Число"}],
+            }
+        )
+
+        ranked = rank_metadata_objects(
+            [wrong_register, stock_register],
+            search_terms=["остатки товаров", "розничный магазин"],
+            max_objects=2,
+        )
+
+        self.assertEqual(ranked[0].full_name, "РегистрНакопления.ОстаткиПоМестамХранения")
 
     def test_metadata_search_terms_can_disable_trade_domain_pack(self) -> None:
         policy = CompositeMetadataTermExpansionPolicy.from_bot_config(

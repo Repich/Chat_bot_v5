@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional, Protocol
 
 from wiicon5.bot_instance import BotInstanceConfig
+from wiicon5.knowledge.semantic_profiles import STOCK_BALANCE_PROFILE
 
 
 class MetadataTermExpansionPolicy(Protocol):
@@ -28,6 +29,10 @@ class TradeRuTermExpansionPolicy:
     def expand(self, terms: List[str]) -> List[str]:
         result = list(terms)
         text = " ".join(terms).lower()
+        if "остат" in text and any(marker in text for marker in ["товар", "номенклатур", "склад", "магазин"]):
+            for term in STOCK_BALANCE_PROFILE.object_terms:
+                add_unique(result, term)
+            add_unique(result, "регистр накопления")
         if any(marker in text for marker in ["продаж", "прода", "реализац"]):
             add_unique(result, "реализация")
             add_unique(result, "Реализация товаров")
