@@ -22,8 +22,11 @@ RESULT_SUFFICIENCY_PROMPT = (
     "и числовую сумму/количество/остаток, либо явно объясняет отсутствие данных. "
     "Если в вопросе спрашивают долг/задолженность/кому должны, сумма документа поставки сама по себе не равна задолженности, "
     "если это не подтверждено запросом или метаданными расчетов. "
+    "Если вопрос пользователя допускает два бизнес-смысла, а текущий результат покрывает только один из них, "
+    "не выбирай смысл за пользователя: верни needs_clarification=true и короткий уточняющий вопрос с вариантами. "
     "Верни строго JSON: sufficient (bool), partial (bool), missing_facts (array of strings), "
-    "next_query_goal (string), reasoning (string)."
+    "next_query_goal (string), needs_clarification (bool), clarification_question (string), "
+    "clarification_options (array of strings), reasoning (string)."
 )
 
 
@@ -33,6 +36,9 @@ class ResultSufficiencyReview:
     partial: bool = False
     missing_facts: List[str] = field(default_factory=list)
     next_query_goal: str = ""
+    needs_clarification: bool = False
+    clarification_question: str = ""
+    clarification_options: List[str] = field(default_factory=list)
     reasoning: str = ""
     error: str = ""
     trace: Dict[str, Any] = field(default_factory=dict)
@@ -43,6 +49,9 @@ class ResultSufficiencyReview:
             "partial": self.partial,
             "missing_facts": list(self.missing_facts),
             "next_query_goal": self.next_query_goal,
+            "needs_clarification": self.needs_clarification,
+            "clarification_question": self.clarification_question,
+            "clarification_options": list(self.clarification_options),
             "reasoning": self.reasoning,
             "error": self.error,
             "trace": dict(self.trace),
@@ -94,6 +103,9 @@ class ResultSufficiencyReviewer:
                 "partial": False,
                 "missing_facts": ["fact"],
                 "next_query_goal": "what to query next if insufficient",
+                "needs_clarification": False,
+                "clarification_question": "question to user if ambiguous",
+                "clarification_options": ["option 1", "option 2"],
                 "reasoning": "short explanation",
             },
         }
@@ -110,12 +122,22 @@ class ResultSufficiencyReviewer:
         partial = bool(response.get("partial")) or not sufficient
         missing = [str(item) for item in response.get("missing_facts", []) if str(item).strip()]
         next_goal = str(response.get("next_query_goal") or "").strip()
+        needs_clarification = bool(response.get("needs_clarification"))
+        clarification_question = str(response.get("clarification_question") or "").strip()
+        clarification_options = [
+            str(item).strip()
+            for item in response.get("clarification_options", []) or []
+            if str(item).strip()
+        ]
         reasoning = str(response.get("reasoning") or "").strip()
         return ResultSufficiencyReview(
             sufficient=sufficient,
             partial=partial,
             missing_facts=missing,
             next_query_goal=next_goal,
+            needs_clarification=needs_clarification,
+            clarification_question=clarification_question,
+            clarification_options=clarification_options,
             reasoning=reasoning,
             trace={"request": payload, "response": response},
         )
@@ -165,6 +187,31 @@ def deterministic_partial_review(
                 ),
             )
         if asks_debt(lowered_question) and has_subject and has_amount and not has_debt_metric:
+            if needs_amount_vs_debt_clarification(lowered_question):
+                return ResultSufficiencyReview(
+                    sufficient=False,
+                    partial=True,
+                    missing_facts=[
+                        "Неясно, пользователь хочет сумму документа или фактическую задолженность по расчетам."
+                    ],
+                    next_query_goal=(
+                        "После уточнения либо вернуть найденную сумму документа, либо получить фактическую "
+                        "задолженность по регистрам расчетов."
+                    ),
+                    needs_clarification=True,
+                    clarification_question=(
+                        "Уточните, что именно показать: сумму последней отгрузки по документу "
+                        "или фактическую задолженность клиента после оплат и зачетов?"
+                    ),
+                    clarification_options=[
+                        "Сумму последней отгрузки по документу",
+                        "Фактическую задолженность клиента",
+                    ],
+                    reasoning=(
+                        "Фраза с 'должен/должны за документ' может означать как сумму документа, "
+                        "так и задолженность. Нельзя выбирать бизнес-смысл без пользователя."
+                    ),
+                )
             return ResultSufficiencyReview(
                 sufficient=False,
                 partial=True,
@@ -191,6 +238,13 @@ def asks_subject_and_amount(question: str) -> bool:
 
 def asks_debt(question: str) -> bool:
     return any(marker in question for marker in ["долг", "долж", "задолж"])
+
+
+def needs_amount_vs_debt_clarification(question: str) -> bool:
+    explicit_debt_markers = ["задолж", "дебитор", "кредитор", "долг"]
+    if any(marker in question for marker in explicit_debt_markers):
+        return False
+    return "долж" in question
 
 
 def normalize_rows_for_review(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

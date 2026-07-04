@@ -74,7 +74,8 @@ QUERY_PROMPT = (
 
 
 METADATA_REPAIR_PROMPT = (
-    "Предыдущий read-only запрос 1С не выполнился из-за отсутствующей таблицы или поля. "
+    "Предыдущий read-only запрос 1С не выполнился из-за отсутствующей таблицы/поля или выполнился, "
+    "но вернул только промежуточный/недостаточный результат. "
     "Нужно не чинить запрос напрямую, а предложить дополнительные термины поиска метаданных. "
     "Используй текст пользователя, ошибку 1С, предыдущий запрос и уже найденные metadata_objects. "
     "Добавляй синонимы из типовой терминологии 1С, например для долгов клиентов ищи также расчеты с клиентами/контрагентами. "
@@ -107,6 +108,7 @@ class QuerySynthesisResult:
     context_artifacts: List[Artifact] = field(default_factory=list)
     message: str = ""
     error: str = ""
+    needs_clarification: bool = False
     trace: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -116,6 +118,7 @@ class QuerySynthesisResult:
             "error": self.error,
             "final_artifact": self.final_artifact.to_dict() if self.final_artifact else None,
             "context_artifacts": [artifact.to_dict() for artifact in self.context_artifacts],
+            "needs_clarification": self.needs_clarification,
             "trace": dict(self.trace),
         }
 
@@ -374,10 +377,65 @@ class QuerySynthesisEngine:
                 attempt_trace["partial_result"] = True
                 successful_steps.append(current_step)
                 trace["successful_steps"] = compact_successful_steps(successful_steps, include_rows=True)
+                if sufficiency.needs_clarification:
+                    artifact = clarification_artifact(
+                        question=message,
+                        query=query,
+                        params=params,
+                        columns=columns,
+                        rows=rows,
+                        sufficiency=sufficiency,
+                    )
+                    message_to_user = clarification_message(
+                        sufficiency=sufficiency,
+                        question=message,
+                        columns=columns,
+                        rows=rows,
+                    )
+                    trace["clarification"] = artifact.value
+                    return QuerySynthesisResult(
+                        ok=False,
+                        context_artifacts=[artifact],
+                        message=message_to_user,
+                        error="Clarification is required before continuing query synthesis.",
+                        needs_clarification=True,
+                        trace=trace,
+                    )
                 previous_result_insufficiency = sufficiency.to_dict()
                 previous_error = result_insufficiency_error(sufficiency)
                 previous_query = query
                 previous_review = query_review.to_dict()
+                extra_terms = []
+                if should_expand_metadata_after_insufficiency(sufficiency):
+                    extra_terms = self._metadata_repair_terms(
+                        message=message,
+                        intent=intent,
+                        goal=goal,
+                        context=context,
+                        metadata_objects=metadata_objects,
+                        previous_query=previous_query,
+                        previous_error=previous_error,
+                        attempt=attempt,
+                    )
+                if extra_terms:
+                    attempt_trace["metadata_repair_terms"] = extra_terms
+                    combined_terms = merge_terms(trace["metadata_search_terms"], extra_terms)
+                    metadata_objects = merge_metadata_objects(
+                        metadata_objects,
+                        collect_metadata_objects(
+                            self.metadata_provider,
+                            search_terms=extra_terms,
+                            max_objects=self.max_metadata_objects,
+                        ),
+                    )
+                    metadata_objects = rank_metadata_objects(
+                        metadata_objects,
+                        search_terms=combined_terms,
+                        max_objects=self.max_metadata_objects,
+                    )
+                    trace["metadata_search_terms"] = combined_terms
+                    trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
+                    trace["metadata_objects"] = [metadata_object_summary(item) for item in metadata_objects]
                 if len(successful_steps) >= self.max_successful_steps:
                     return QuerySynthesisResult(
                         ok=False,
@@ -615,7 +673,14 @@ def should_expand_metadata(error: str) -> bool:
     lowered = error.lower()
     return any(
         marker in lowered
-        for marker in ["таблица не найдена", "поле не найдено", "не подтверждено метаданными", "field_not_confirmed"]
+        for marker in [
+            "таблица не найдена",
+            "поле не найдено",
+            "не подтверждено метаданными",
+            "field_not_confirmed",
+            "result insufficiency",
+            "missing facts",
+        ]
     )
 
 
@@ -651,6 +716,11 @@ def expand_metadata_search_terms(terms: List[str]) -> List[str]:
         add_unique(result, "Документ.РеализацияТоваровУслуг")
         add_unique(result, "ВыручкаИСебестоимостьПродаж")
         add_unique(result, "РегистрНакопления.ВыручкаИСебестоимостьПродаж")
+    if any(marker in text for marker in ["отгруз", "реализац", "клиент", "дебитор", "задолж", "долж"]):
+        add_unique(result, "РасчетыСКлиентами")
+        add_unique(result, "Расчеты с клиентами")
+        add_unique(result, "РегистрНакопления.РасчетыСКлиентами")
+        add_unique(result, "РегистрНакопления.РасчетыСКлиентамиПоДокументам")
     if any(marker in text for marker in ["поставка", "поставк", "поступлен", "поставщик", "приобрет"]):
         add_unique(result, "поступление")
         add_unique(result, "приобретение")
@@ -745,6 +815,55 @@ def successful_step_payload(
     }
 
 
+def clarification_artifact(
+    *,
+    question: str,
+    query: str,
+    params: Dict[str, Any],
+    columns: List[str],
+    rows: List[Dict[str, Any]],
+    sufficiency: ResultSufficiencyReview,
+) -> Artifact:
+    return Artifact(
+        name="clarification_request",
+        type="ClarificationRequest",
+        value={
+            "question": question,
+            "clarification_question": sufficiency.clarification_question,
+            "clarification_options": list(sufficiency.clarification_options),
+            "reasoning": sufficiency.reasoning,
+            "missing_facts": list(sufficiency.missing_facts),
+            "next_query_goal": sufficiency.next_query_goal,
+            "partial_result": {
+                "query": query,
+                "params": dict(params),
+                "columns": list(columns),
+                "rows": rows[:10],
+            },
+        },
+        provenance=["query_synthesis"],
+    )
+
+
+def clarification_message(
+    *,
+    sufficiency: ResultSufficiencyReview,
+    question: str,
+    columns: List[str],
+    rows: List[Dict[str, Any]],
+) -> str:
+    question_text = sufficiency.clarification_question or "Уточните, какой показатель нужно показать?"
+    parts = [question_text]
+    if sufficiency.clarification_options:
+        parts.append("Варианты: " + "; ".join(sufficiency.clarification_options) + ".")
+    if rows and not rows_effectively_empty(rows):
+        parts.append(
+            "Уже найден промежуточный результат: "
+            + format_user_answer(question=question, columns=columns, rows=rows[:1])
+        )
+    return "\n\n".join(parts)
+
+
 def compact_successful_steps(steps: List[Dict[str, Any]], *, include_rows: bool = False) -> List[Dict[str, Any]]:
     result: List[Dict[str, Any]] = []
     for step in steps[-3:]:
@@ -771,6 +890,30 @@ def result_insufficiency_error(sufficiency: ResultSufficiencyReview) -> str:
     if sufficiency.reasoning:
         parts.append("Reasoning: " + sufficiency.reasoning)
     return " ".join(parts)
+
+
+def should_expand_metadata_after_insufficiency(sufficiency: ResultSufficiencyReview) -> bool:
+    text = " ".join(
+        [
+            *sufficiency.missing_facts,
+            sufficiency.next_query_goal,
+            sufficiency.reasoning,
+        ]
+    ).lower()
+    if "финальные факты" in text and "промежуточ" in text:
+        return False
+    return any(
+        marker in text
+        for marker in [
+            "задолж",
+            "долг",
+            "фактическ",
+            "метадан",
+            "не получен",
+            "не подтвержден",
+            "не подтверждён",
+        ]
+    )
 
 
 def repeats_partial_query(query: str, successful_steps: List[Dict[str, Any]]) -> bool:

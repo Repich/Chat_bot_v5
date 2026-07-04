@@ -168,6 +168,19 @@ class AgentOrchestrator:
                     gaps=[],
                     source="skill_execution_failed",
                 )
+                if synthesis_result is not None and synthesis_result.needs_clarification:
+                    result = AgentRunResult(
+                        source="needs_clarification",
+                        message=synthesis_result.message,
+                        intent=decomposition.intent,
+                        goal=decomposition.goal,
+                        plan=compose_result.plan,
+                        context_artifacts=synthesis_result.context_artifacts,
+                        trace_path=str(run_trace.path),
+                    )
+                    run_trace.write_json("result/result.json", result.to_dict())
+                    self._record_assistant_and_save(context, result)
+                    return result
                 if synthesis_result is not None and synthesis_result.ok and synthesis_result.final_artifact is not None:
                     self._learn_from_synthesis(
                         intent=decomposition.intent,
@@ -223,6 +236,20 @@ class AgentOrchestrator:
             gaps=[gap.to_dict() for gap in compose_result.gaps],
             source="skill_gap",
         )
+        if synthesis_result is not None and synthesis_result.needs_clarification:
+            result = AgentRunResult(
+                source="needs_clarification",
+                message=synthesis_result.message,
+                intent=decomposition.intent,
+                goal=decomposition.goal,
+                context_artifacts=synthesis_result.context_artifacts,
+                gaps=compose_result.gaps,
+                evolution_decisions=decisions,
+                trace_path=str(run_trace.path),
+            )
+            run_trace.write_json("result/result.json", result.to_dict())
+            self._record_assistant_and_save(context, result)
+            return result
         if synthesis_result is not None and synthesis_result.ok and synthesis_result.final_artifact is not None:
             self._learn_from_synthesis(
                 intent=decomposition.intent,

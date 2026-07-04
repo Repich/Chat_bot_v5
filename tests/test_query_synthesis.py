@@ -206,9 +206,9 @@ class QuerySynthesisTests(unittest.TestCase):
 
     def test_sufficiency_rejects_document_amount_for_debt_question(self) -> None:
         review = deterministic_partial_review(
-            question="Кому мы должны за последнюю поставку и сколько?",
-            columns=["Поставщик", "СуммаДокумента"],
-            rows=[{"Поставщик": "Электротовары", "СуммаДокумента": 461000}],
+            question="Кто имеет дебиторскую задолженность по последней отгрузке и сколько?",
+            columns=["Контрагент", "СуммаДокумента"],
+            rows=[{"Контрагент": "Омега", "СуммаДокумента": 461000}],
             query_reasoning="",
         )
 
@@ -216,6 +216,130 @@ class QuerySynthesisTests(unittest.TestCase):
         assert review is not None
         self.assertFalse(review.sufficient)
         self.assertIn("Сумма задолженности", review.missing_facts[0])
+        self.assertFalse(review.needs_clarification)
+
+    def test_sufficiency_requests_clarification_for_ambiguous_debt_or_document_amount(self) -> None:
+        review = deterministic_partial_review(
+            question="Кто нам должен за последнюю отгрузку и сколько?",
+            columns=["Контрагент", "СуммаДокумента"],
+            rows=[{"Контрагент": "Омега", "СуммаДокумента": 96900}],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertFalse(review.sufficient)
+        self.assertTrue(review.needs_clarification)
+        self.assertIn("сумму последней отгрузки", review.clarification_question)
+        self.assertGreaterEqual(len(review.clarification_options), 2)
+
+    def test_synthesis_returns_clarification_for_ambiguous_debt_or_shipment_amount(self) -> None:
+        customer_ref = {
+            "_objectRef": True,
+            "УникальныйИдентификатор": "customer-1",
+            "ТипОбъекта": "СправочникСсылка.Контрагенты",
+            "Представление": "Омега",
+        }
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["отгрузка", "реализация", "контрагент", "сумма"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Реализация.Контрагент КАК Контрагент,
+                        Реализация.СуммаДокумента КАК СуммаДокумента
+                    ИЗ
+                        Документ.РеализацияТоваровУслуг КАК Реализация
+                    ГДЕ
+                        Реализация.Проведен
+                    УПОРЯДОЧИТЬ ПО
+                        Реализация.Дата УБЫВ
+                    """
+                ),
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [{"success": True, "data": [{"Контрагент": customer_ref, "СуммаДокумента": 96900}]}]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=SalesDocumentMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Кто нам должен за последнюю отгрузку и сколько?",
+            intent=IntentResult(
+                intent_type=IntentType.DATA_QUESTION,
+                business_goal="Уточнить сумму по последней отгрузке или задолженность",
+                requires_1c_data=True,
+                expected_output="short_answer",
+                domain_terms=["отгрузка", "должен", "сумма"],
+                relevant=True,
+            ),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.needs_clarification)
+        self.assertIn("Уточните", result.message)
+        self.assertIn("Сумму последней отгрузки", result.message)
+        self.assertIn("Омега", result.message)
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertEqual(result.context_artifacts[0].type, "ClarificationRequest")
+        self.assertEqual(result.context_artifacts[0].value["partial_result"]["rows"][0]["СуммаДокумента"], 96900)
+
+    def test_orchestrator_returns_clarification_instead_of_skill_gap(self) -> None:
+        question = "Кто нам должен за последнюю отгрузку и сколько?"
+        customer_ref = {
+            "_objectRef": True,
+            "УникальныйИдентификатор": "customer-1",
+            "ТипОбъекта": "СправочникСсылка.Контрагенты",
+            "Представление": "Омега",
+        }
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["отгрузка", "реализация", "контрагент", "сумма"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Реализация.Контрагент КАК Контрагент,
+                        Реализация.СуммаДокумента КАК СуммаДокумента
+                    ИЗ
+                        Документ.РеализацияТоваровУслуг КАК Реализация
+                    ГДЕ
+                        Реализация.Проведен
+                    УПОРЯДОЧИТЬ ПО
+                        Реализация.Дата УБЫВ
+                    """
+                ),
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [{"success": True, "data": [{"Контрагент": customer_ref, "СуммаДокумента": 96900}]}]
+        )
+        with TemporaryDirectory() as temp_dir:
+            orchestrator = AgentOrchestrator(
+                registry=SkillRegistry.load_from_dir(PROJECT_ROOT / "skills"),
+                decomposer=ScriptedGoalDecomposer({question: debt_question_decomposition(question)}),
+                query_synthesizer=QuerySynthesisEngine(
+                    llm_client=llm,
+                    metadata_provider=SalesDocumentMetadataProvider(),
+                    mcp_client=mcp,
+                ),
+                trace_root=Path(temp_dir),
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+            trace_path = Path(result.trace_path or "")
+            result_payload = json.loads((trace_path / "result/result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.source, "needs_clarification")
+        self.assertIn("Уточните", result.message)
+        self.assertEqual(result.context_artifacts[0].type, "ClarificationRequest")
+        self.assertEqual(result_payload["source"], "needs_clarification")
 
     def test_synthesis_rejects_repeated_partial_query_and_asks_for_new_query(self) -> None:
         document_ref = document_object_ref(
@@ -371,6 +495,57 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Query review failed", llm.calls[2]["user_payload"]["previous_error"])
         self.assertFalse(result.trace["attempts"][0]["query_review"]["ok"])
         self.assertTrue(result.trace["attempts"][1]["query_review"]["ok"])
+
+    def test_synthesis_repairs_metadata_after_mcp_error(self) -> None:
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["денежные средства"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        СУММА(Движения.Сумма) КАК Сумма
+                    ИЗ
+                        РегистрНакопления.ДенежныеСредства КАК Движения
+                    ГДЕ
+                        Движения.Активность
+                    """
+                ),
+                {"metadata_search_terms": ["ДенежныеСредстваНаличные"], "reasoning": "Нужно проверить другой регистр."},
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        СУММА(Движения.Сумма) КАК Сумма
+                    ИЗ
+                        РегистрНакопления.ДенежныеСредства КАК Движения
+                    ГДЕ
+                        Движения.Активность
+                    """
+                ),
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [
+                {"success": False, "error": "Поле не найдено: Сумма"},
+                {"success": True, "data": [{"Сумма": 100}]},
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=FakeMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Показать сумму движений денежных средств",
+            intent=data_intent("Показать сумму движений денежных средств"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(mcp.query_calls), 2)
+        self.assertEqual(result.trace["attempts"][0]["metadata_repair_terms"], ["ДенежныеСредстваНаличные"])
 
     def test_synthesis_repairs_reference_field_string_filter_before_mcp(self) -> None:
         llm = ScriptedLLMClient(
@@ -817,6 +992,12 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Документ.РеализацияТоваровУслуг", terms)
         self.assertIn("РегистрНакопления.ВыручкаИСебестоимостьПродаж", terms)
 
+    def test_metadata_search_terms_expand_customer_debt_vocabulary(self) -> None:
+        terms = expand_metadata_search_terms(["кто нам должен за последнюю отгрузку"])
+
+        self.assertIn("РегистрНакопления.РасчетыСКлиентами", terms)
+        self.assertIn("РегистрНакопления.РасчетыСКлиентамиПоДокументам", terms)
+
     def test_metadata_search_terms_expand_supply_to_purchase_documents(self) -> None:
         terms = expand_metadata_search_terms(["последняя поставка", "поступление товаров"])
 
@@ -995,6 +1176,36 @@ class PurchaseDocumentMetadataProvider(MetadataProvider):
         return self.object
 
 
+class SalesDocumentMetadataProvider(MetadataProvider):
+    def __init__(self) -> None:
+        self.object = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "Документ.РеализацияТоваровУслуг",
+                "Синоним": "Реализация товаров и услуг",
+                "Реквизиты": [
+                    {"Имя": "Контрагент", "Тип": "СправочникСсылка.Контрагенты"},
+                    {"Имя": "СуммаДокумента", "Тип": "Число"},
+                    {"Имя": "Проведен", "Тип": "Булево"},
+                    {"Имя": "ПометкаУдаления", "Тип": "Булево"},
+                    {"Имя": "Дата", "Тип": "Дата"},
+                ],
+                "СтандартныеРеквизиты": [
+                    {"Имя": "Ссылка", "Тип": "ДокументСсылка.РеализацияТоваровУслуг"},
+                    {"Имя": "Номер", "Тип": "Строка"},
+                ],
+            }
+        )
+        self.last_requests: List[Dict[str, object]] = []
+
+    def search_objects(self, term: str) -> List[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        return [self.object]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        return self.object
+
+
 class TablePartMetadataProvider(MetadataProvider):
     def __init__(self) -> None:
         self.parent = metadata_object_from_payload(
@@ -1089,6 +1300,28 @@ def cash_balance_decomposition(question: str) -> DecompositionResult:
             final_artifact_type="UserAnswer",
             expected_answer_type="table",
             required_artifacts=[ArtifactRequirement(name="cash_balances", type="CashBalanceTable")],
+        ),
+    )
+
+
+def debt_question_decomposition(question: str) -> DecompositionResult:
+    return DecompositionResult(
+        intent=IntentResult(
+            intent_type=IntentType.DATA_QUESTION,
+            business_goal="Узнать контрагента и сумму по последней отгрузке",
+            requires_1c_data=True,
+            expected_output="short_answer",
+            domain_terms=["отгрузка", "должен", "сумма"],
+            relevant=True,
+        ),
+        goal=GoalDecomposition(
+            business_goal="Узнать контрагента и сумму по последней отгрузке",
+            final_artifact_type="UserAnswer",
+            expected_answer_type="short_answer",
+            required_artifacts=[
+                ArtifactRequirement(name="last_shipment", type="DocumentRef"),
+                ArtifactRequirement(name="debt_balance", type="DebtBalanceTable"),
+            ],
         ),
     )
 
