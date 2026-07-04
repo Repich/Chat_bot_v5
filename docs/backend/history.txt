@@ -1,3 +1,8 @@
+5.0.0-alpha.18
+- Tightened skill composition so a plan cannot ignore required artifacts from the decomposed goal: if the goal requires an AggregateTable, rendering another available table is no longer accepted as a complete plan.
+- When choosing a concrete artifact for an abstract presentation input, the composer now prefers the latest matching required artifact, which helps route final answers to the actual target artifact instead of an intermediate helper table.
+- Added regression coverage for a stock-balance question that also requires ranking/aggregation.
+
 5.0.0-alpha.17
 - Added a generic query synthesis guard for empty list parameters used in generated 1C queries: such queries are now rejected before MCP execution and sent back to the model for lookup/subquery repair instead of silently returning empty data.
 - Added regression coverage for a generated stock query that tried to filter by an empty reference list.

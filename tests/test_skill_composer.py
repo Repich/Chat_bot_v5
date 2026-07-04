@@ -346,6 +346,61 @@ class SkillComposerTests(unittest.TestCase):
         self.assertEqual(result.gaps[0].required_output, "AggregateTable")
         self.assertIn("not_document_list", result.gaps[0].missing)
 
+    def test_composer_does_not_ignore_required_aggregate_when_stock_table_is_available(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        composer = SkillComposer(registry)
+        goal = GoalDecomposition(
+            business_goal="Определить товар с максимальным остатком в розничном магазине",
+            final_artifact_type="UserAnswer",
+            expected_answer_type="table",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="stock_balances",
+                    type="StockBalanceTable",
+                    constraints=[
+                        SemanticFilter(
+                            semantic_field="warehouse",
+                            operator="equals",
+                            value="Розничный магазин",
+                            raw_user_text="розничный магазин",
+                        )
+                    ],
+                ),
+                ArtifactRequirement(
+                    name="aggregate_result",
+                    type="AggregateTable",
+                    source="question",
+                    constraints=[
+                        SemanticFilter(
+                            semantic_field="aggregation",
+                            operator="equals",
+                            value="max",
+                            raw_user_text="больше всего",
+                        ),
+                        SemanticFilter(
+                            semantic_field="group_by",
+                            operator="equals",
+                            value="product",
+                            raw_user_text="товара",
+                        ),
+                        SemanticFilter(
+                            semantic_field="measure",
+                            operator="equals",
+                            value="stock_balance",
+                            raw_user_text="остаток",
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        result = composer.compose(goal)
+
+        self.assertIsNone(result.plan)
+        self.assertEqual(len(result.gaps), 1)
+        self.assertEqual(result.gaps[0].required_output, "AggregateTable")
+        self.assertIn("filter:aggregation", result.gaps[0].missing)
+
     def test_composer_rejects_foreign_filter_for_concrete_skill_contract(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         composer = SkillComposer(registry)

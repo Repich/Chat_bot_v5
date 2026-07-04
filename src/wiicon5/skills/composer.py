@@ -42,6 +42,10 @@ class SkillComposer:
         except _CompositionGap as exc:
             return ComposeResult(plan=None, gaps=[exc.gap], search_trace=state.search_trace)
 
+        missing_required_gap = self._missing_required_artifact_gap(goal, state)
+        if missing_required_gap is not None:
+            return ComposeResult(plan=None, gaps=[missing_required_gap], search_trace=state.search_trace)
+
         plan = SkillPlan(
             plan_id="plan_001",
             business_goal=goal.business_goal,
@@ -337,6 +341,29 @@ class SkillComposer:
             missing=["aggregate_query", "not_document_list"],
         )
 
+    def _missing_required_artifact_gap(
+        self,
+        goal: GoalDecomposition,
+        state: "_ComposeState",
+    ) -> Optional[SkillGap]:
+        for requirement in goal.required_artifacts:
+            if not requirement.required or requirement.type == goal.final_artifact_type:
+                continue
+            if state.produced_artifact(requirement.type, self.type_system) is not None:
+                continue
+            detected = self.gap_detector.detect_for_requirement(requirement, goal=goal)
+            if detected is not None:
+                return detected
+            return SkillGap(
+                required_capability=f"produce:{requirement.type}",
+                required_output=requirement.type,
+                reason="Generated skill plan did not produce a required artifact from the decomposed goal.",
+                nearest_skill_ids=[node.skill_id for node in state.nodes],
+                recommended_resolution=GapResolution.CREATE_NEW,
+                missing=[requirement.type, "required_artifact_not_produced"],
+            )
+        return None
+
 
 @dataclass
 class _ComposeState:
@@ -400,7 +427,7 @@ def semantic_filter_constraints_for_skill(
 def concrete_dependency_type_for_input(input_type: str, state: _ComposeState, type_system: TypeSystem) -> str:
     if not type_system.is_abstract_artifact_type(input_type):
         return input_type
-    for requirement in state.goal.required_artifacts:
+    for requirement in reversed(state.goal.required_artifacts):
         if requirement.type != input_type and type_system.is_assignable(requirement.type, input_type):
             return requirement.type
     return input_type
