@@ -31,6 +31,44 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.config_fingerprint, "cfg_test")
         self.assertEqual(settings.skills_dir, root / "skills")
         self.assertEqual(settings.bindings_dir, root / "skills" / "bindings")
+        self.assertEqual(settings.bot_instance.bot_id, "local")
+        self.assertEqual(settings.bot_context.root, root / "bot_instances" / "local")
+
+    def test_settings_loads_bot_instance_yaml(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bot_root = root / "bot_instances" / "custom"
+            bot_root.mkdir(parents=True)
+            (bot_root / "bot.yaml").write_text(
+                "\n".join(
+                    [
+                        "bot:",
+                        "  id: custom",
+                        "  name: Custom 1C Agent",
+                        "  domain_label: тестовая база 1С",
+                        "  domain_hint_packs:",
+                        "    - one_c_standard",
+                        "baseline:",
+                        "  general_markers:",
+                        "    - hello",
+                        "  data_markers:",
+                        "    - data",
+                        "answers:",
+                        "  intro: Я Custom 1C Agent.",
+                        "  out_of_scope_default: Это не мой домен.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            settings = Settings.from_env({"WIICON5_BOT_ID": "custom"}, root=root)
+
+        self.assertEqual(settings.bot_instance.bot_id, "custom")
+        self.assertEqual(settings.bot_instance.bot_name, "Custom 1C Agent")
+        self.assertEqual(settings.bot_instance.domain_label, "тестовая база 1С")
+        self.assertEqual(settings.bot_instance.general_markers, ["hello"])
+        self.assertEqual(settings.bot_instance.data_markers, ["data"])
+        self.assertEqual(settings.bot_instance.intro_answer, "Я Custom 1C Agent.")
 
     def test_settings_validate_for_llm_reports_missing_keys(self) -> None:
         settings = Settings.from_env({}, root=PROJECT_ROOT)

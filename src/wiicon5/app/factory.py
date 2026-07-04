@@ -12,6 +12,7 @@ from wiicon5.knowledge.discovery import MetadataBindingDiscoverer
 from wiicon5.knowledge.metadata import McpMetadataProvider
 from wiicon5.llm.client import LLMClient, OpenAICompatibleLLMClient
 from wiicon5.mcp.client import HttpMcpClient, McpClient
+from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
 from wiicon5.presentation.llm_answer_formatter import LLMAnswerFormatter
 from wiicon5.query.document_list_query_builder import DocumentListQueryBuilder
 from wiicon5.query.learned_query_builder import LearnedQueryBuilder
@@ -34,6 +35,7 @@ def build_agent(
     registry = SkillRegistry.load_from_dir(settings.skills_dir)
     effective_llm = llm_client or build_llm_client(settings)
     effective_mcp = mcp_client or HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds)
+    domain_policy = DomainPolicy(settings.bot_instance)
     metadata_provider = McpMetadataProvider(effective_mcp)
     query_reviewer = OneCQueryReviewer()
     binding_store = JsonBindingStore(settings.bindings_dir)
@@ -66,6 +68,8 @@ def build_agent(
         registry=registry,
         decomposer=LLMGoalDecomposer(llm_client=effective_llm, registry=registry),
         memory=effective_memory,
+        baseline_intent_policy=BaselineIntentPolicy(domain_policy),
+        domain_policy=domain_policy,
         plan_executor=SkillPlanExecutor(registry, runners),
         query_synthesizer=QuerySynthesisEngine(
             llm_client=effective_llm,

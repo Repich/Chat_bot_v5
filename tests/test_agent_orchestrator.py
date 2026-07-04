@@ -13,6 +13,8 @@ from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import ContextDependency, IntentResult, IntentType
 from wiicon5.models import ArtifactRequirement, SemanticFilter, SkillContract
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.policies.domain_policy import DomainPolicy
+from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 
@@ -170,6 +172,31 @@ class AgentOrchestratorTests(unittest.TestCase):
         self.assertEqual(result.source, "general_answer")
         self.assertIn("WIICON ChatBot 5", result.message)
         self.assertIsNone(result.plan)
+        self.assertEqual(decomposer.calls, [])
+
+    def test_agent_uses_bot_instance_domain_policy_for_general_answer(self) -> None:
+        question = "Привет"
+        decomposer = ScriptedGoalDecomposer({})
+        domain_policy = DomainPolicy(
+            BotInstanceConfig(
+                bot_id="custom",
+                bot_name="Custom Agent",
+                domain_label="тестовая 1С",
+                intro_answer="Я Custom Agent для тестовой 1С.",
+            )
+        )
+        with TemporaryDirectory() as temp_dir:
+            orchestrator = AgentOrchestrator(
+                registry=SkillRegistry.load_from_dir(PROJECT_ROOT / "skills"),
+                decomposer=decomposer,
+                domain_policy=domain_policy,
+                trace_root=Path(temp_dir),
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+
+        self.assertEqual(result.source, "general_answer")
+        self.assertEqual(result.message, "Я Custom Agent для тестовой 1С.")
         self.assertEqual(decomposer.calls, [])
 
 

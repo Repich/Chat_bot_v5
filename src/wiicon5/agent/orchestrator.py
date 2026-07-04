@@ -15,6 +15,7 @@ from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.intent.relevance_gate import RelevanceGate
 from wiicon5.models import SkillGap, SkillPlan
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
 from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
 from wiicon5.skills.composer import SkillComposer
 from wiicon5.skills.learned import LearnedSkillStore
@@ -74,12 +75,16 @@ class AgentOrchestrator:
         query_synthesizer: Optional[QuerySynthesisEngine] = None,
         learned_skill_store: Optional[LearnedSkillStore] = None,
         clarification_resolver: Optional[ClarificationResolver] = None,
+        domain_policy: Optional[DomainPolicy] = None,
+        baseline_intent_policy: Optional[BaselineIntentPolicy] = None,
     ) -> None:
         self.registry = registry
         self.decomposer = decomposer
         self.memory = memory or ConversationMemory()
         self.composer = SkillComposer(registry)
-        self.relevance_gate = relevance_gate or RelevanceGate()
+        self.domain_policy = domain_policy or DomainPolicy()
+        self.relevance_gate = relevance_gate or RelevanceGate(self.domain_policy)
+        self.baseline_intent_policy = baseline_intent_policy or BaselineIntentPolicy(self.domain_policy)
         self.evolution_policy = evolution_policy or SkillEvolutionPolicy()
         self.plan_executor = plan_executor
         self.query_synthesizer = query_synthesizer
@@ -119,12 +124,12 @@ class AgentOrchestrator:
             self._record_assistant_and_save(context, result)
             return result
 
-        baseline_intent = baseline_general_intent(message)
+        baseline_intent = self.baseline_intent_policy.detect(message)
         if baseline_intent is not None:
             run_trace.write_json("intent/intent_response.json", {"intent": baseline_intent.to_dict(), "source": "baseline"})
             result = AgentRunResult(
                 source="general_answer",
-                message=general_answer(baseline_intent),
+                message=self.domain_policy.general_answer(baseline_intent),
                 intent=baseline_intent,
                 trace_path=str(run_trace.path),
             )
@@ -149,7 +154,7 @@ class AgentOrchestrator:
         if decomposition.intent.intent_type == IntentType.GENERAL_QUESTION:
             result = AgentRunResult(
                 source="general_answer",
-                message=general_answer(decomposition.intent),
+                message=self.domain_policy.general_answer(decomposition.intent),
                 intent=decomposition.intent,
                 trace_path=str(run_trace.path),
             )
@@ -388,64 +393,3 @@ def execution_result_to_dict(execution_result) -> Dict[str, object]:
         "artifacts": {key: artifact.to_dict() for key, artifact in execution_result.artifacts.items()},
         "trace": execution_result.trace,
     }
-
-
-def general_answer(intent: IntentResult) -> str:
-    text = " ".join([intent.business_goal, *intent.domain_terms]).lower()
-    if any(marker in text for marker in ["кто ты", "что ты", "представься", "привет", "здравств"]):
-        return (
-            "Я WIICON ChatBot 5, агент для работы с WIICON/WIIC и данными 1С. "
-            "Помогаю искать данные через MCP, строить проверяемые навыки и оставляю трассировку действий для разбора ошибок."
-        )
-    if any(marker in text for marker in ["умеешь", "возможност", "навык", "можешь"]):
-        return (
-            "Умею отвечать на вопросы по WIICON/WIIC, раскладывать бизнес-вопрос на атомарные навыки, "
-            "искать метаданные конфигурации через MCP, строить read-only запросы 1С и сохранять найденные bindings для повторного использования."
-        )
-    return (
-        "Я агент WIICON ChatBot 5. Моя зона ответственности - WIICON/WIIC, данные 1С, MCP-запросы, "
-        "навыки получения данных и диагностируемые ответы."
-    )
-
-
-def baseline_general_intent(message: str) -> Optional[IntentResult]:
-    text = message.lower()
-    data_markers = [
-        "покажи",
-        "найди",
-        "сколько",
-        "остат",
-        "склад",
-        "номенклатур",
-        "заказ",
-        "документ",
-        "дебитор",
-        "задолж",
-        "клиент",
-        "поступлен",
-        "требован",
-    ]
-    if any(marker in text for marker in data_markers):
-        return None
-    general_markers = [
-        "привет",
-        "здравств",
-        "добрый день",
-        "кто ты",
-        "что ты",
-        "представься",
-        "что умеешь",
-        "что можешь",
-        "возможности",
-    ]
-    if not any(marker in text for marker in general_markers):
-        return None
-    return IntentResult(
-        intent_type=IntentType.GENERAL_QUESTION,
-        business_goal=message,
-        requires_1c_data=False,
-        expected_output="short_answer",
-        domain_terms=["general"],
-        relevant=True,
-        reasoning="Handled by baseline general assistant skill before LLM decomposition.",
-    )

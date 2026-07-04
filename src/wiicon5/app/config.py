@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
 
+from wiicon5.bot_instance import BotInstanceConfig, BotInstanceContext
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -18,11 +20,17 @@ class Settings:
     bindings_dir: Path
     runs_dir: Path
     config_fingerprint: str
+    bot_instance: BotInstanceConfig
+    bot_context: BotInstanceContext
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None, root: Optional[Path] = None) -> "Settings":
         base = root or Path.cwd()
         values = merged_env(base, env)
+        bot_id = values.get("WIICON5_BOT_ID", "local")
+        bot_root = path_from_env(values.get("WIICON5_BOT_ROOT"), base / "bot_instances" / bot_id)
+        bot_config_path = path_from_env(values.get("WIICON5_BOT_CONFIG"), bot_root / "bot.yaml")
+        bot_instance = BotInstanceConfig.from_file(bot_config_path)
         return cls(
             llm_api_base=first_value(values, "WIICON5_LLM_API_BASE", "DEEPSEEK_API_BASE", "WIICON4_LLM_API_BASE"),
             llm_api_key=first_value(values, "WIICON5_LLM_API_KEY", "DEEPSEEK_API_KEY", "WIICON4_LLM_API_KEY"),
@@ -34,6 +42,8 @@ class Settings:
             bindings_dir=path_from_env(values.get("WIICON5_BINDINGS_DIR"), base / "skills" / "bindings"),
             runs_dir=path_from_env(values.get("WIICON5_RUNS_DIR"), base / "runs"),
             config_fingerprint=values.get("WIICON5_CONFIG_FINGERPRINT", "local"),
+            bot_instance=bot_instance,
+            bot_context=BotInstanceContext(config=bot_instance, root=bot_root),
         )
 
     def validate_for_llm(self) -> None:
