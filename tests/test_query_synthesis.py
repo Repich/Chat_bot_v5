@@ -498,6 +498,12 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Электротовары", result.message)
 
     def test_synthesis_rejects_empty_list_param_before_mcp_and_repairs(self) -> None:
+        retail_type_ref = {
+            "_objectRef": True,
+            "УникальныйИдентификатор": "РозничныйМагазин",
+            "ТипОбъекта": "ПеречислениеСсылка.ТипыСкладов",
+            "Представление": "Розничный магазин",
+        }
         llm = ScriptedLLMClient(
             [
                 discovery_response(["остатки", "склад"]),
@@ -528,19 +534,65 @@ class QuerySynthesisTests(unittest.TestCase):
                         Остаток УБЫВ
                     """
                 ),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Остатки.Номенклатура КАК Номенклатура,
+                        Остатки.КоличествоОстаток КАК Остаток
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки(
+                            ,
+                            Склад В (
+                                ВЫБРАТЬ
+                                    Склады.Ссылка
+                                ИЗ
+                                    Справочник.Склады КАК Склады
+                                ГДЕ
+                                    Склады.ТипСклада = &ТипСклада
+                            )
+                        ) КАК Остатки
+                    УПОРЯДОЧИТЬ ПО
+                        Остатки.КоличествоОстаток УБЫВ
+                    """,
+                    params={"ТипСклада": retail_type_ref},
+                ),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Остатки.Номенклатура КАК Номенклатура,
+                        СУММА(Остатки.КоличествоОстаток) КАК Остаток
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки(
+                            ,
+                            Склад В (
+                                ВЫБРАТЬ
+                                    Склады.Ссылка
+                                ИЗ
+                                    Справочник.Склады КАК Склады
+                                ГДЕ
+                                    Склады.ТипСклада = &ТипСклада
+                            )
+                        ) КАК Остатки
+                    СГРУППИРОВАТЬ ПО
+                        Остатки.Номенклатура
+                    УПОРЯДОЧИТЬ ПО
+                        Остаток УБЫВ
+                    """,
+                    params={"ТипСклада": retail_type_ref},
+                ),
             ]
         )
         mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Кондиционер", "Остаток": 30}]})
         engine = QuerySynthesisEngine(
             llm_client=llm,
-            metadata_provider=StockMetadataProvider(),
+            metadata_provider=StockAndWarehouseMetadataProvider(),
             mcp_client=mcp,
         )
 
         result = engine.run(
             message="Покажи какого товара больше всего в розничном магазине?",
             intent=data_intent("Показать товар с максимальным остатком"),
-            goal=None,
+            goal=top_stock_by_retail_goal(),
             context=ConversationContext(session_id="s1"),
             gaps=[],
         )
@@ -549,6 +601,19 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(len(mcp.query_calls), 1)
         self.assertEqual(result.trace["attempts"][0]["empty_list_params"], ["РозничныеСклады"])
         self.assertIn("empty list parameter", llm.calls[2]["user_payload"]["previous_error"])
+        self.assertEqual(
+            result.trace["attempts"][1]["goal_semantic_review"]["issues"][0]["code"],
+            "required_filter_not_reflected",
+        )
+        self.assertEqual(
+            result.trace["attempts"][2]["goal_semantic_review"]["issues"][0]["code"],
+            "aggregate_grain_not_confirmed",
+        )
+        final_query = mcp.query_calls[0].query
+        self.assertIn("Справочник.Склады", final_query)
+        self.assertIn("ТипСклада", final_query)
+        self.assertIn("СУММА", final_query)
+        self.assertIn("СГРУППИРОВАТЬ ПО", final_query)
         self.assertIn("Кондиционер", result.message)
 
     def test_synthesis_treats_empty_aggregate_row_as_no_data(self) -> None:
@@ -1453,6 +1518,45 @@ class WarehouseMetadataProvider(MetadataProvider):
         return self.object
 
 
+class StockAndWarehouseMetadataProvider(MetadataProvider):
+    def __init__(self) -> None:
+        self.stock = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "РегистрНакопления.ТоварыНаСкладах",
+                "Синоним": "Товары на складах",
+                "Измерения": [
+                    {"Имя": "Номенклатура", "Тип": "СправочникСсылка.Номенклатура"},
+                    {"Имя": "Склад", "Тип": "СправочникСсылка.Склады"},
+                ],
+                "Ресурсы": [{"Имя": "Количество", "Тип": "Число"}],
+            }
+        )
+        self.warehouse = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "Справочник.Склады",
+                "Синоним": "Склады",
+                "Реквизиты": [
+                    {"Имя": "Ссылка", "Тип": "СправочникСсылка.Склады"},
+                    {"Имя": "Наименование", "Тип": "Строка(50)"},
+                    {"Имя": "ТипСклада", "Тип": "ПеречислениеСсылка.ТипыСкладов"},
+                ],
+            }
+        )
+        self.last_requests: List[Dict[str, object]] = []
+
+    def search_objects(self, term: str) -> List[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        return [self.stock, self.warehouse]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        if full_name == "Справочник.Склады":
+            return self.warehouse
+        if full_name == "РегистрНакопления.ТоварыНаСкладах":
+            return self.stock
+        return MetadataObject(full_name=full_name)
+
+
 class PurchaseDocumentMetadataProvider(MetadataProvider):
     def __init__(self) -> None:
         self.object = metadata_object_from_payload(
@@ -1597,6 +1701,53 @@ def data_intent(goal: str) -> IntentResult:
         expected_output="table",
         domain_terms=["остаток", "денежные средства"],
         relevant=True,
+    )
+
+
+def top_stock_by_retail_goal() -> GoalDecomposition:
+    return GoalDecomposition(
+        business_goal="Определить товар с максимальным остатком в розничном магазине",
+        final_artifact_type="UserAnswer",
+        expected_answer_type="table",
+        required_artifacts=[
+            ArtifactRequirement(
+                name="stock_balances",
+                type="StockBalanceTable",
+                constraints=[
+                    SemanticFilter(
+                        semantic_field="warehouse_type",
+                        operator="equals",
+                        value="Розничный магазин",
+                        raw_user_text="розничный магазин",
+                    )
+                ],
+            ),
+            ArtifactRequirement(
+                name="aggregate_result",
+                type="AggregateTable",
+                source="question",
+                constraints=[
+                    SemanticFilter(
+                        semantic_field="aggregation",
+                        operator="equals",
+                        value="max",
+                        raw_user_text="больше всего",
+                    ),
+                    SemanticFilter(
+                        semantic_field="group_by",
+                        operator="equals",
+                        value="product",
+                        raw_user_text="товара",
+                    ),
+                    SemanticFilter(
+                        semantic_field="measure",
+                        operator="equals",
+                        value="stock_balance",
+                        raw_user_text="остаток",
+                    ),
+                ],
+            ),
+        ],
     )
 
 

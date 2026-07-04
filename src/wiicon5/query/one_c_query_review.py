@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Set
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 from wiicon5.knowledge.metadata import (
     MetadataObject,
@@ -493,31 +493,90 @@ def is_plain_string_param(value: Any) -> bool:
 
 
 def parse_sources(query: str) -> List[QuerySourceRef]:
-    pattern = re.compile(
-        r"(?:\bИЗ\b|\b(?:ВНУТРЕННЕЕ|ЛЕВОЕ|ПРАВОЕ|ПОЛНОЕ)?\s*СОЕДИНЕНИЕ\b)\s+"
-        r"(?P<source>(?:РегистрНакопления|РегистрСведений|Документ|Справочник)"
-        r"\.[A-Za-zА-Яа-яЁё0-9_]+"
-        r"(?:\.(?:ОстаткиИОбороты|Остатки|Обороты)\s*\([^)]*\)|\.[A-Za-zА-Яа-яЁё0-9_]+)?)"
-        r"\s+КАК\s+(?P<alias>[A-Za-zА-Яа-яЁё0-9_]+)",
-        flags=re.IGNORECASE | re.DOTALL,
-    )
     result: List[QuerySourceRef] = []
-    for match in pattern.finditer(query):
-        source = normalize_space(match.group("source"))
-        alias = match.group("alias")
-        object_type = source.split(".", 1)[0]
-        object_full_name = object_name_for_source(source)
-        result.append(
-            QuerySourceRef(
-                source=source,
-                alias=alias,
-                object_full_name=object_full_name,
-                object_type=object_type,
-                virtual_table=virtual_table_for_source(source),
-                table_part=table_part_for_source(source),
-            )
-        )
+    keyword_pattern = re.compile(
+        r"\bИЗ\b|\b(?:(?:ВНУТРЕННЕЕ|ЛЕВОЕ|ПРАВОЕ|ПОЛНОЕ)\s+)?СОЕДИНЕНИЕ\b",
+        flags=re.IGNORECASE,
+    )
+    for match in keyword_pattern.finditer(query):
+        parsed = parse_source_after_keyword(query, match.end())
+        if parsed is None:
+            continue
+        source_ref, _ = parsed
+        result.append(source_ref)
     return result
+
+
+def parse_source_after_keyword(query: str, start: int) -> Optional[Tuple[QuerySourceRef, int]]:
+    source_pattern = re.compile(
+        r"\s*(?P<object_type>РегистрНакопления|РегистрСведений|Документ|Справочник)"
+        r"\.(?P<object_name>[A-Za-zА-Яа-яЁё0-9_]+)",
+        flags=re.IGNORECASE,
+    )
+    match = source_pattern.match(query, start)
+    if match is None:
+        return None
+    object_type = match.group("object_type")
+    source = f"{object_type}.{match.group('object_name')}"
+    position = match.end()
+
+    if position < len(query) and query[position] == ".":
+        token_match = re.match(r"\.([A-Za-zА-Яа-яЁё0-9_]+)", query[position:])
+        if token_match is not None:
+            token = token_match.group(1)
+            position += len(token_match.group(0))
+            if token.lower() in {item.lower() for item in VIRTUAL_TABLES}:
+                source += "." + canonical_virtual_table_name(token)
+                position = skip_spaces(query, position)
+                if position < len(query) and query[position] == "(":
+                    end_position = matching_parenthesis_position(query, position)
+                    if end_position is None:
+                        return None
+                    source += query[position : end_position + 1]
+                    position = end_position + 1
+            elif object_type.lower() == "документ":
+                source += "." + token
+
+    alias_match = re.match(r"\s+КАК\s+(?P<alias>[A-Za-zА-Яа-яЁё0-9_]+)", query[position:], flags=re.IGNORECASE)
+    if alias_match is None:
+        return None
+    alias = alias_match.group("alias")
+    source = normalize_space(source)
+    source_ref = QuerySourceRef(
+        source=source,
+        alias=alias,
+        object_full_name=object_name_for_source(source),
+        object_type=source.split(".", 1)[0],
+        virtual_table=virtual_table_for_source(source),
+        table_part=table_part_for_source(source),
+    )
+    return source_ref, position + alias_match.end()
+
+
+def canonical_virtual_table_name(value: str) -> str:
+    for item in VIRTUAL_TABLES:
+        if item.lower() == value.lower():
+            return item
+    return value
+
+
+def skip_spaces(query: str, position: int) -> int:
+    while position < len(query) and query[position].isspace():
+        position += 1
+    return position
+
+
+def matching_parenthesis_position(query: str, open_position: int) -> Optional[int]:
+    depth = 0
+    for position in range(open_position, len(query)):
+        char = query[position]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return position
+    return None
 
 
 def object_name_for_source(source: str) -> str:

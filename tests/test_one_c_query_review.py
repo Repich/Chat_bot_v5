@@ -6,7 +6,7 @@ from wiicon5.knowledge.metadata import MetadataObject
 from wiicon5.knowledge.metadata import metadata_object_from_payload
 from wiicon5.knowledge.one_c_wiki import EmbeddedOneCWiki
 from wiicon5.mcp.client import DictMcpClient
-from wiicon5.query.one_c_query_review import OneCQueryReviewer
+from wiicon5.query.one_c_query_review import OneCQueryReviewer, parse_sources
 from wiicon5.query.reference_value_resolver import ReferenceValueResolver
 
 
@@ -113,6 +113,38 @@ class OneCQueryReviewerTests(unittest.TestCase):
         )
 
         self.assertTrue(result.ok)
+
+    def test_parse_sources_keeps_virtual_table_with_nested_subquery(self) -> None:
+        query = """
+        ВЫБРАТЬ ПЕРВЫЕ 1
+            Остатки.Номенклатура КАК Номенклатура,
+            Остатки.ВНаличииОстаток КАК Остаток
+        ИЗ
+            РегистрНакопления.ТоварыНаСкладах.Остатки(
+                ,
+                Склад В (
+                    ВЫБРАТЬ
+                        Склады.Ссылка
+                    ИЗ
+                        Справочник.Склады КАК Склады
+                    ГДЕ
+                        Склады.ТипСклада = &ТипСклада
+                )
+            ) КАК Остатки
+        """
+
+        sources = parse_sources(query)
+
+        self.assertEqual([item.source for item in sources], [
+            (
+                "РегистрНакопления.ТоварыНаСкладах.Остатки( , Склад В ( "
+                "ВЫБРАТЬ Склады.Ссылка ИЗ Справочник.Склады КАК Склады "
+                "ГДЕ Склады.ТипСклада = &ТипСклада ) )"
+            ),
+            "Справочник.Склады",
+        ])
+        self.assertEqual(sources[0].object_full_name, "РегистрНакопления.ТоварыНаСкладах")
+        self.assertEqual(sources[0].virtual_table, "Остатки")
 
     def test_rejects_balance_virtual_table_third_parameter(self) -> None:
         reviewer = OneCQueryReviewer()

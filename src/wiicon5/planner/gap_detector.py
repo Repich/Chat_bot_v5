@@ -36,6 +36,7 @@ class GapDetector:
             skill
             for skill in self.registry.active()
             if any(self.type_system.is_assignable(output.type, requirement.type) for output in skill.outputs)
+            and not count_skill_misused_for_non_count_aggregate(skill.skill_id, requirement, goal)
         ]
         if not producers:
             return SkillGap(
@@ -84,3 +85,21 @@ def _skill_accepts_constraint(skill, constraint) -> bool:  # type: ignore[no-unt
         or any(input_port.name == constraint.semantic_field for input_port in skill.inputs)
         or constraint_selects_skill_domain(skill, constraint)
     )
+
+
+def count_skill_misused_for_non_count_aggregate(
+    skill_id: str,
+    requirement: ArtifactRequirement,
+    goal: Optional[GoalDecomposition],
+) -> bool:
+    if skill_id != "count_entities":
+        return False
+    if requirement.type not in {"AggregateTable", "CountResult"}:
+        return False
+    text_parts = [requirement.name]
+    if goal is not None:
+        text_parts.append(goal.business_goal)
+    for constraint in requirement.constraints:
+        text_parts.extend([constraint.semantic_field, str(constraint.value or ""), constraint.raw_user_text])
+    text = " ".join(text_parts).lower()
+    return not any(marker in text for marker in ["сколько", "количество", "число", "count"])

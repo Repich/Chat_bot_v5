@@ -1,3 +1,9 @@
+5.0.0-alpha.19
+- Fixed 1C query source parsing for accumulation virtual tables whose parameters contain nested subqueries, so the reviewer validates both the main register source and nested reference sources.
+- Added goal-aware semantic query review for top/max stock-style aggregate questions: a query over balances scoped by multiple warehouses must aggregate to product grain with SUM and GROUP BY instead of returning the first register row.
+- Strengthened query synthesis regression coverage so repair after an empty reference-list parameter must preserve the original warehouse-type filter and cannot downgrade a top/max question to an ungrouped row-level query.
+- Stopped treating count_entities as the nearest producer for non-count AggregateTable goals such as max/top/ranking questions.
+
 5.0.0-alpha.18
 - Tightened skill composition so a plan cannot ignore required artifacts from the decomposed goal: if the goal requires an AggregateTable, rendering another available table is no longer accepted as a complete plan.
 - When choosing a concrete artifact for an abstract presentation input, the composer now prefers the latest matching required artifact, which helps route final answers to the actual target artifact instead of an intermediate helper table.

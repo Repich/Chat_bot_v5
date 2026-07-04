@@ -399,7 +399,9 @@ class SkillComposerTests(unittest.TestCase):
         self.assertIsNone(result.plan)
         self.assertEqual(len(result.gaps), 1)
         self.assertEqual(result.gaps[0].required_output, "AggregateTable")
-        self.assertIn("filter:aggregation", result.gaps[0].missing)
+        self.assertEqual(result.gaps[0].recommended_resolution.value, "create_new_atomic_skill")
+        self.assertNotIn("count_entities", result.gaps[0].nearest_skill_ids)
+        self.assertIn("AggregateTable", result.gaps[0].missing)
 
     def test_composer_rejects_foreign_filter_for_concrete_skill_contract(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")

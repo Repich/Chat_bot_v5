@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
@@ -27,7 +27,13 @@ from wiicon5.prompting import PromptCatalog
 from wiicon5.presentation.answer_formatter import format_cell, format_user_answer, rows_effectively_empty
 from wiicon5.presentation.llm_answer_formatter import LLMAnswerFormatter
 from wiicon5.query.one_c_query_safety import validate_read_only_query
-from wiicon5.query.one_c_query_review import OneCQueryReviewer
+from wiicon5.query.one_c_query_review import (
+    OneCQueryReviewer,
+    dimensions_for,
+    metadata_for_source,
+    parse_sources,
+    resources_for,
+)
 from wiicon5.query.reference_value_resolver import ReferenceValueResolver
 from wiicon5.query_synthesis.sufficiency import (
     ResultSufficiencyReview,
@@ -310,6 +316,24 @@ class QuerySynthesisEngine:
                     trace["onboarding_evidence"] = onboarding_evidence
                 continue
             previous_review = query_review.to_dict()
+
+            semantic_issues = goal_semantic_review_issues(
+                query=query,
+                params=params,
+                goal=goal,
+                metadata_objects=metadata_objects,
+            )
+            attempt_trace["goal_semantic_review"] = {
+                "ok": not semantic_issues,
+                "issues": semantic_issues,
+            }
+            if semantic_issues:
+                previous_error = "Query semantic review failed: " + "; ".join(
+                    issue["message"] for issue in semantic_issues
+                )
+                previous_query = query
+                attempt_trace["error"] = previous_error
+                continue
 
             response = self.mcp_client.execute_query(McpQueryRequest(query=query, params=params, limit=limit))
             rows = normalize_mcp_rows(response)
@@ -1019,6 +1043,142 @@ def should_expand_metadata_after_insufficiency(sufficiency: ResultSufficiencyRev
             "не подтверждён",
         ]
     )
+
+
+def goal_semantic_review_issues(
+    *,
+    query: str,
+    params: Dict[str, Any],
+    goal: Optional[GoalDecomposition],
+    metadata_objects: List[MetadataObject],
+) -> List[Dict[str, str]]:
+    if goal is None:
+        return []
+    issues: List[Dict[str, str]] = []
+    constraints = [constraint for item in goal.required_artifacts for constraint in item.constraints]
+    haystack = normalized_semantic_text(query, params)
+
+    for constraint in constraints:
+        if constraint.semantic_field == "warehouse_type" and not warehouse_type_filter_reflected(constraint, haystack):
+            issues.append(
+                {
+                    "code": "required_filter_not_reflected",
+                    "message": (
+                        "Запрос не отражает обязательный фильтр warehouse_type из цели. "
+                        "Сохрани ограничение пользователя в запросе: получи подходящие склады или используй "
+                        "проверенное условие по типу склада."
+                    ),
+                }
+            )
+
+    if goal_requires_top_product_aggregate(goal):
+        aggregate_issue = top_product_aggregate_grain_issue(
+            query=query,
+            goal=goal,
+            metadata_objects=metadata_objects,
+        )
+        if aggregate_issue is not None:
+            issues.append(aggregate_issue)
+    return issues
+
+
+def warehouse_type_filter_reflected(constraint, haystack: str) -> bool:  # type: ignore[no-untyped-def]
+    if "типсклада" in haystack:
+        return True
+    if "рознич" in haystack or "оптов" in haystack:
+        return True
+    value_terms = semantic_value_terms(str(constraint.value or "") + " " + constraint.raw_user_text)
+    return bool(value_terms and any(term in haystack for term in value_terms))
+
+
+def goal_requires_top_product_aggregate(goal: GoalDecomposition) -> bool:
+    for requirement in goal.required_artifacts:
+        if requirement.type not in {"AggregateTable", "TopNMetricTable", "RankedMetricTable", "RankedStockBalanceTable"}:
+            continue
+        values = " ".join(
+            [requirement.name, requirement.type]
+            + [constraint.semantic_field + " " + str(constraint.value or "") + " " + constraint.raw_user_text for constraint in requirement.constraints]
+        ).lower()
+        if not any(marker in values for marker in ["max", "top", "сам", "больше всего", "наибольш", "максим"]):
+            continue
+        if not any(marker in values for marker in ["product", "номенклат", "товар"]):
+            continue
+        if not any(marker in values for marker in ["stock", "остат", "quantity", "колич"]):
+            continue
+        return True
+    return False
+
+
+def top_product_aggregate_grain_issue(
+    *,
+    query: str,
+    goal: GoalDecomposition,
+    metadata_objects: List[MetadataObject],
+) -> Optional[Dict[str, str]]:
+    normalized_query = " ".join(query.lower().split())
+    if not ("первые" in normalized_query and "упорядочить по" in normalized_query):
+        return None
+    if not goal_has_warehouse_scope(goal) and "склад в" not in normalized_query:
+        return None
+    metadata_by_name = {item.full_name: item for item in metadata_objects if item.full_name}
+    for source in parse_sources(query):
+        if source.object_type != "РегистрНакопления" or source.virtual_table != "Остатки":
+            continue
+        metadata = metadata_for_source(source, metadata_by_name)
+        if metadata is None:
+            continue
+        dimensions = dimensions_for(metadata)
+        resources = resources_for(metadata)
+        if "Номенклатура" not in dimensions or "Склад" not in dimensions:
+            continue
+        if query_groups_product(query) and query_sums_balance_resource(query, resources):
+            return None
+        return {
+            "code": "aggregate_grain_not_confirmed",
+            "message": (
+                "Для top/max товара по группе складов запрос к Остатки() должен агрегировать строки регистра "
+                "до зерна товара: СУММА(<Ресурс>Остаток), СГРУППИРОВАТЬ ПО Номенклатура, сортировка по агрегату. "
+                "Нельзя отвечать ПЕРВЫЕ 1 по одной строке регистра, если в области может быть несколько складов."
+            ),
+        }
+    return None
+
+
+def goal_has_warehouse_scope(goal: GoalDecomposition) -> bool:
+    for requirement in goal.required_artifacts:
+        for constraint in requirement.constraints:
+            if constraint.semantic_field in {"warehouse_type", "warehouse", "warehouses"}:
+                return True
+    return False
+
+
+def query_groups_product(query: str) -> bool:
+    normalized = " ".join(query.lower().split())
+    if "сгруппировать по" not in normalized:
+        return False
+    group_by = normalized.split("сгруппировать по", 1)[1]
+    return "номенклатура" in group_by
+
+
+def query_sums_balance_resource(query: str, resources: Set[str]) -> bool:
+    normalized = " ".join(query.lower().split())
+    if "сумма(" not in normalized:
+        return False
+    if not resources:
+        return "остаток" in normalized
+    return any((resource + "Остаток").lower() in normalized for resource in resources)
+
+
+def normalized_semantic_text(query: str, params: Dict[str, Any]) -> str:
+    return (query + " " + str(params)).replace("_", "").lower()
+
+
+def semantic_value_terms(value: str) -> List[str]:
+    return [
+        token.lower()
+        for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", value)
+        if len(token) >= 4
+    ]
 
 
 def repeats_partial_query(query: str, successful_steps: List[Dict[str, Any]]) -> bool:
