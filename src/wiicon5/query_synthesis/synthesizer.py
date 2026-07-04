@@ -321,6 +321,8 @@ class QuerySynthesisEngine:
                 query=query,
                 params=params,
                 goal=goal,
+                message=message,
+                intent=intent,
                 metadata_objects=metadata_objects,
             )
             attempt_trace["goal_semantic_review"] = {
@@ -1143,12 +1145,12 @@ def goal_semantic_review_issues(
     query: str,
     params: Dict[str, Any],
     goal: Optional[GoalDecomposition],
+    message: str = "",
+    intent: Optional[IntentResult] = None,
     metadata_objects: List[MetadataObject],
 ) -> List[Dict[str, str]]:
-    if goal is None:
-        return []
     issues: List[Dict[str, str]] = []
-    constraints = [constraint for item in goal.required_artifacts for constraint in item.constraints]
+    constraints = [constraint for item in (goal.required_artifacts if goal is not None else []) for constraint in item.constraints]
     haystack = normalized_semantic_text(query, params)
 
     for constraint in constraints:
@@ -1164,15 +1166,39 @@ def goal_semantic_review_issues(
                 }
             )
 
-    if goal_requires_top_product_aggregate(goal):
+    if top_product_aggregate_required(goal=goal, message=message, intent=intent):
         aggregate_issue = top_product_aggregate_grain_issue(
             query=query,
             goal=goal,
+            message=message,
+            intent=intent,
             metadata_objects=metadata_objects,
         )
         if aggregate_issue is not None:
             issues.append(aggregate_issue)
     return issues
+
+
+def top_product_aggregate_required(
+    *,
+    goal: Optional[GoalDecomposition],
+    message: str = "",
+    intent: Optional[IntentResult] = None,
+) -> bool:
+    if goal is not None and goal_requires_top_product_aggregate(goal):
+        return True
+    values = " ".join(
+        [
+            message,
+            getattr(intent, "business_goal", "") if intent is not None else "",
+            " ".join(getattr(intent, "domain_terms", []) or []) if intent is not None else "",
+        ]
+    ).lower()
+    if not any(marker in values for marker in ["больше всего", "наибольш", "максим", "самый больш", "top", "max"]):
+        return False
+    if not any(marker in values for marker in ["товар", "номенклатур", "product"]):
+        return False
+    return any(marker in values for marker in ["остат", "в наличии", "колич", "stock", "quantity"])
 
 
 def warehouse_type_filter_reflected(constraint, haystack: str) -> bool:  # type: ignore[no-untyped-def]
@@ -1205,13 +1231,15 @@ def goal_requires_top_product_aggregate(goal: GoalDecomposition) -> bool:
 def top_product_aggregate_grain_issue(
     *,
     query: str,
-    goal: GoalDecomposition,
+    goal: Optional[GoalDecomposition],
+    message: str = "",
+    intent: Optional[IntentResult] = None,
     metadata_objects: List[MetadataObject],
 ) -> Optional[Dict[str, str]]:
     normalized_query = " ".join(query.lower().split())
     if not ("первые" in normalized_query and "упорядочить по" in normalized_query):
         return None
-    if not goal_has_warehouse_scope(goal) and "склад в" not in normalized_query:
+    if not goal_has_warehouse_scope(goal) and not query_or_question_has_warehouse_scope(normalized_query, message, intent):
         return None
     metadata_by_name = {item.full_name: item for item in metadata_objects if item.full_name}
     for source in parse_sources(query):
@@ -1229,20 +1257,38 @@ def top_product_aggregate_grain_issue(
         return {
             "code": "aggregate_grain_not_confirmed",
             "message": (
-                "Для top/max товара по группе складов запрос к Остатки() должен агрегировать строки регистра "
+                "Для top/max товара по остаткам запрос к Остатки() должен агрегировать строки регистра "
                 "до зерна товара: СУММА(<Ресурс>Остаток), СГРУППИРОВАТЬ ПО Номенклатура, сортировка по агрегату. "
-                "Нельзя отвечать ПЕРВЫЕ 1 по одной строке регистра, если в области может быть несколько складов."
+                "Нельзя отвечать ПЕРВЫЕ 1 по одной строке регистра, если у регистра есть дополнительные измерения."
             ),
         }
     return None
 
 
-def goal_has_warehouse_scope(goal: GoalDecomposition) -> bool:
+def goal_has_warehouse_scope(goal: Optional[GoalDecomposition]) -> bool:
+    if goal is None:
+        return False
     for requirement in goal.required_artifacts:
         for constraint in requirement.constraints:
             if constraint.semantic_field in {"warehouse_type", "warehouse", "warehouses"}:
                 return True
     return False
+
+
+def query_or_question_has_warehouse_scope(
+    normalized_query: str,
+    message: str = "",
+    intent: Optional[IntentResult] = None,
+) -> bool:
+    text = " ".join(
+        [
+            normalized_query,
+            message.lower(),
+            getattr(intent, "business_goal", "").lower() if intent is not None else "",
+            " ".join(getattr(intent, "domain_terms", []) or []).lower() if intent is not None else "",
+        ]
+    )
+    return any(marker in text for marker in ["склад", "магазин", "warehouse"])
 
 
 def query_groups_product(query: str) -> bool:

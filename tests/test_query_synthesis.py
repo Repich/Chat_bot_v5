@@ -637,6 +637,68 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("СГРУППИРОВАТЬ ПО", final_query)
         self.assertIn("Кондиционер", result.message)
 
+    def test_synthesis_rejects_top_stock_row_level_when_goal_misses_aggregate(self) -> None:
+        warehouse_ref = {
+            "_objectRef": True,
+            "УникальныйИдентификатор": "retail-warehouse",
+            "ТипОбъекта": "СправочникСсылка.Склады",
+            "Представление": "Ларек Розница",
+        }
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["остатки товаров", "склад"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Остатки.Номенклатура КАК Номенклатура,
+                        Остатки.КоличествоОстаток КАК КоличествоОстаток
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад = &Склад) КАК Остатки
+                    УПОРЯДОЧИТЬ ПО
+                        Остатки.КоличествоОстаток УБЫВ
+                    """,
+                    params={"Склад": warehouse_ref},
+                ),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Остатки.Номенклатура КАК Номенклатура,
+                        СУММА(Остатки.КоличествоОстаток) КАК КоличествоОстаток
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад = &Склад) КАК Остатки
+                    СГРУППИРОВАТЬ ПО
+                        Остатки.Номенклатура
+                    УПОРЯДОЧИТЬ ПО
+                        КоличествоОстаток УБЫВ
+                    """,
+                    params={"Склад": warehouse_ref},
+                ),
+            ]
+        )
+        mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Ботинки", "КоличествоОстаток": 15}]})
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=StockAndWarehouseMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Покажи какого товара больше всего в розничном магазине?",
+            intent=data_intent("Узнать товар с максимальным остатком в розничном магазине"),
+            goal=stock_by_warehouse_goal_without_aggregate(),
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertEqual(
+            result.trace["attempts"][0]["goal_semantic_review"]["issues"][0]["code"],
+            "aggregate_grain_not_confirmed",
+        )
+        self.assertIn("СУММА", mcp.query_calls[0].query)
+        self.assertIn("СГРУППИРОВАТЬ ПО", mcp.query_calls[0].query)
+
     def test_synthesis_treats_empty_aggregate_row_as_no_data(self) -> None:
         llm = ScriptedLLMClient(
             [
@@ -1807,6 +1869,28 @@ def top_stock_by_retail_goal() -> GoalDecomposition:
                     ),
                 ],
             ),
+        ],
+    )
+
+
+def stock_by_warehouse_goal_without_aggregate() -> GoalDecomposition:
+    return GoalDecomposition(
+        business_goal="Узнать товар с максимальным остатком в розничном магазине",
+        final_artifact_type="UserAnswer",
+        expected_answer_type="table",
+        required_artifacts=[
+            ArtifactRequirement(
+                name="stock_table",
+                type="StockBalanceTable",
+                constraints=[
+                    SemanticFilter(
+                        semantic_field="warehouse",
+                        operator="equals",
+                        value="WarehouseRef",
+                        raw_user_text="розничный магазин",
+                    )
+                ],
+            )
         ],
     )
 

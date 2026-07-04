@@ -1,3 +1,8 @@
+5.0.0-alpha.23
+- Extended semantic query review so top/max product stock questions are detected from the original user text and intent, even if the LLM goal decomposition omits an AggregateTable artifact.
+- Rejected row-level ПЕРВЫЕ 1 stock-balance queries for top/max product questions when they do not aggregate to product grain with СУММА and СГРУППИРОВАТЬ ПО.
+- Added regression coverage for the live failure mode where the decomposed goal only requested StockBalanceTable but the user asked for the product with the largest balance.
+
 5.0.0-alpha.22
 - Expanded stock-balance metadata search using the existing semantic profile vocabulary instead of relying only on LLM-provided object names.
 - Added structural metadata ranking for stock questions: objects with confirmed product, warehouse, and numeric balance/quantity fields are preferred over name-only matches.
