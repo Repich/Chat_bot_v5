@@ -1,3 +1,11 @@
+5.0.0-alpha.11
+- Added bot-instance onboarding status tracking with training_status.json.
+- Added admin API endpoints for onboarding status and background initial training.
+- Connected onboarding metadata_index.sqlite to runtime metadata search as a local fallback next to MCP.
+- Tightened configuration dump indexing to prefer real 1C object directories and avoid false Document.<field> objects from source text.
+- Updated onboarding CLI to write the same training status used by the web client.
+- Prepared the local bot instance from /Users/repnikov/Documents/УТ_Демо/config: 42,307 files read, 1,754 metadata objects, 500 query patterns, 612 register usage candidates, and 476 binding candidates.
+
 5.0.0-alpha.10
 - Added offline configuration dump onboarding that produces candidate metadata index, semantic dictionary, register usage map, query patterns, binding candidates, manifest, and report without approving skills automatically.
 - Added CLI wrappers for onboarding on macOS/Linux and Windows.

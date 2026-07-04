@@ -37,8 +37,9 @@ bot_instances/local/bot.yaml
 - `WIICON5_CONFIG_FINGERPRINT`: ручной fingerprint или `auto`.
 
 Если указать `WIICON5_CONFIG_FINGERPRINT=auto`, сервис при старте построит
-начальный fingerprint по доступным metadata objects из MCP. Для production
-сценариев это нужно будет заменить более полным onboarding/indexing pipeline.
+начальный fingerprint по доступным metadata objects из MCP. Отдельно от этого
+сервис умеет использовать предварительно построенный onboarding index из
+`bot_instances/<id>/onboarding/metadata_index.sqlite`.
 
 ## Локальный Запуск
 
@@ -107,7 +108,16 @@ python3 scripts/onboard_config.py \
 bot_instances/client_a/onboarding/
 ```
 
-Это candidates, а не утвержденные skills/bindings.
+CLI пишет `training_status.json`, поэтому web-клиент увидит bot instance как
+обученный после успешного запуска.
+
+То же можно запустить из web-клиента: в левом блоке `Первоначальное обучение`
+указать путь к файловой выгрузке и нажать `Запустить обучение`. Пока обучение
+не выполнено, web-клиент показывает предупреждающую плашку.
+
+Это candidates, а не утвержденные skills/bindings. Индекс метаданных
+используется как fallback при поиске объектов; детали объекта и корректность
+запроса по-прежнему проверяются через MCP и reviewer.
 
 ## Regression Cases
 

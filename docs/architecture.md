@@ -15,6 +15,7 @@ flowchart TD
     Executor --> MCP["1C MCP server"]
     Orchestrator --> Synth["QuerySynthesisEngine"]
     Synth --> Metadata["MetadataProvider"]
+    Metadata --> Index["Onboarding metadata index"]
     Metadata --> MCP
     Synth --> Reviewer["1C query reviewer и safety checks"]
     Reviewer --> MCP
@@ -230,10 +231,22 @@ Onboarding читает выгрузку конфигурации в файла�
 - `candidate_semantic_roles.json`;
 - `candidate_query_patterns.jsonl`;
 - `register_usage_map.json`;
+- `training_status.json`;
 - `onboarding_report.md`.
 
 Этот слой не утверждает skills/bindings автоматически. Его задача - дать агенту
 и разработчику карту конфигурации, словарь и кандидаты для последующей проверки.
+
+После построения `metadata_index.sqlite` runtime подключает его через
+`IndexedMetadataProvider`: MCP остается главным источником подробных метаданных,
+но локальный индекс используется как fallback при поиске объектов. Это снижает
+вероятность, что агент не найдет объект только из-за слабого поиска MCP.
+
+Список объектов в onboarding строится преимущественно по структуре выгрузки
+`Catalogs/`, `Documents/`, `AccumulationRegisters/`, `InformationRegisters/`.
+Regex по текстам используется только для привязки дополнительных source files к
+уже известным объектам, чтобы не индексировать случайные конструкции вида
+`Документ.<Реквизит>` как реальные документы.
 
 ### Regression Learning Loop
 

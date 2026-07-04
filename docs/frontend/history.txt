@@ -1,3 +1,8 @@
+5.0.0-alpha.11
+- Added initial-training status banner to the web client.
+- Added an admin block for configuration dump path, onboarding launch, and training counters.
+- Added polling for background onboarding status so the page updates after training finishes.
+
 5.0.0-alpha.6
 - Added Enter-to-send in the chat input; Shift+Enter still inserts a new line.
 - Added unread assistant/error notification by blinking the browser tab title while the tab/window is not active.

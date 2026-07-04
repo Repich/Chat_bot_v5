@@ -62,7 +62,7 @@ runtime навыков, пайплайн синтеза запросов, инт
 
 ## Текущий Статус
 
-Текущая версия: `5.0.0-alpha.10`.
+Текущая версия: `5.0.0-alpha.11`.
 
 Реализована основа:
 
@@ -87,6 +87,9 @@ runtime навыков, пайплайн синтеза запросов, инт
 - onboarding pipeline по выгрузке конфигурации, который создает candidates,
   metadata index, semantic dictionary, register usage map и query patterns без
   автоматического утверждения skills/bindings;
+- web-admin запуск первоначального обучения и статус `trained/not trained`;
+- локальный onboarding metadata index как дополнительный источник поиска
+  объектов метаданных рядом с MCP;
 - regression case tooling из trace;
 - composer explainability trace с выбранными и отклоненными candidate skills.
 
