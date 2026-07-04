@@ -315,11 +315,12 @@ def review_reference_string_params(
         bad_params = [name for name in param_names if is_plain_string_param(params.get(name))]
         if not bad_params:
             continue
+        field_type = field_type_text(metadata, field_name)
         issues.append(
             QueryReviewIssue(
                 code="reference_filter_string_param",
                 message=(
-                    f"Поле {source.alias}.{field_name} имеет ссылочный тип, но сравнивается со строковым "
+                    f"Поле {source.alias}.{field_name} имеет ссылочный тип {field_type}, но сравнивается со строковым "
                     f"параметром {', '.join('&' + name for name in bad_params)}. "
                     "Сначала получи ссылку на объект или сравнивай реквизит ссылки, например .Наименование."
                 ),
@@ -343,12 +344,13 @@ def review_virtual_condition_reference_params(
         bad_params = [name for name in param_names if is_plain_string_param(params.get(name))]
         if not bad_params:
             continue
+        field_type = field_type_text(metadata, field_name)
         issues.append(
             QueryReviewIssue(
                 code="reference_filter_string_param",
                 message=(
                     f"Поле {field_name} в условии виртуальной таблицы "
-                    f"{source.object_full_name}.{source.virtual_table}() имеет ссылочный тип, но сравнивается "
+                    f"{source.object_full_name}.{source.virtual_table}() имеет ссылочный тип {field_type}, но сравнивается "
                     f"со строковым параметром {', '.join('&' + name for name in bad_params)}. "
                     "Сначала получи ссылку на объект или сравнивай подтвержденный реквизит ссылки, например .Наименование."
                 ),

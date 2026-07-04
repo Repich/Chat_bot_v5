@@ -851,6 +851,9 @@ def table_parts_summary(item: MetadataObject) -> Dict[str, Any]:
 
 def metadata_terms_from_query_review(query_review) -> List[str]:
     terms: List[str] = []
+    for issue in getattr(query_review, "issues", []) or []:
+        for term in metadata_terms_from_issue_message(getattr(issue, "message", "")):
+            add_unique(terms, term)
     for source in getattr(query_review, "sources", []) or []:
         if getattr(source, "table_part", ""):
             add_unique(terms, source.source)
@@ -859,6 +862,29 @@ def metadata_terms_from_query_review(query_review) -> List[str]:
         elif getattr(source, "object_full_name", ""):
             add_unique(terms, source.object_full_name)
     return terms[:8]
+
+
+def metadata_terms_from_issue_message(message: str) -> List[str]:
+    result: List[str] = []
+    for kind, name in re.findall(
+        r"\b(Справочник|Документ|Перечисление)Ссылка\.([A-Za-zА-Яа-яЁё0-9_]+)",
+        message,
+        flags=re.IGNORECASE,
+    ):
+        canonical_kind = canonical_reference_owner_type(kind)
+        add_unique(result, f"{canonical_kind}.{name}")
+    return result
+
+
+def canonical_reference_owner_type(kind: str) -> str:
+    lowered = kind.lower()
+    if lowered == "справочник":
+        return "Справочник"
+    if lowered == "документ":
+        return "Документ"
+    if lowered == "перечисление":
+        return "Перечисление"
+    return kind
 
 
 def goal_to_payload(goal: Optional[GoalDecomposition]) -> Optional[Dict[str, Any]]:

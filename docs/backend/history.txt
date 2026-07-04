@@ -1,3 +1,8 @@
+5.0.0-alpha.21
+- Extended reference value resolution to string parameters inside accumulation virtual table conditions, so filters such as Остатки(, Склад = &СкладРозничный) can be resolved through MCP before query review rejects them.
+- Reference lookup now ignores placeholder-like parameter values such as zero GUIDs or СправочникСсылка.* strings and can use the parameter name as the business search text.
+- Query review messages now include the exact reference type, and metadata repair can use it to load the referenced object metadata after a review failure.
+
 5.0.0-alpha.20
 - Rejected plain string parameters and string-list parameters for reference fields inside accumulation virtual table conditions, such as Остатки(, Склад = &Склад), so query synthesis must resolve references or use verified reference attributes before MCP execution.
 - Extended regression coverage for the retail top-stock repair path to catch string warehouse parameters inside virtual table conditions.

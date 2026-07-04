@@ -13,6 +13,8 @@ from wiicon5.query.one_c_query_review import (
     metadata_for_source,
     parse_sources,
     reference_param_filters,
+    virtual_condition_reference_param_filters,
+    virtual_table_args,
 )
 
 
@@ -86,7 +88,16 @@ class ReferenceValueResolver:
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         result_params = dict(params)
         resolutions: List[Dict[str, Any]] = []
-        for field_name, param_names in reference_param_filters(query, source.alias).items():
+        field_params = reference_param_filters(query, source.alias)
+        if source.virtual_table:
+            args = virtual_table_args(source.source)
+            condition = args[1] if len(args) > 1 else ""
+            for field_name, param_names in virtual_condition_reference_param_filters(condition).items():
+                existing = field_params.setdefault(field_name, [])
+                for param_name in param_names:
+                    if param_name not in existing:
+                        existing.append(param_name)
+        for field_name, param_names in field_params.items():
             if not is_reference_field(metadata, field_name):
                 continue
             for param_name in param_names:
@@ -94,7 +105,8 @@ class ReferenceValueResolver:
                 if not is_plain_string(raw_value):
                     continue
                 discovery = self._discover_field_values(source=source, field_name=field_name)
-                match = best_reference_match(str(raw_value), discovery.rows)
+                search_text = reference_search_text(param_name, str(raw_value))
+                match = best_reference_match(search_text, discovery.rows)
                 resolutions.append(
                     {
                         "kind": "string_param",
@@ -102,6 +114,7 @@ class ReferenceValueResolver:
                         "field": field_name,
                         "param": param_name,
                         "value": raw_value,
+                        "search_text": search_text,
                         "discovery_query": discovery.query,
                         "discovery_ok": discovery.ok,
                         "discovery_error": discovery.error,
@@ -158,12 +171,13 @@ class ReferenceValueResolver:
         return result_query, result_params, resolutions
 
     def _discover_field_values(self, *, source: QuerySourceRef, field_name: str) -> "FieldValueDiscovery":
+        discovery_source = reference_discovery_source(source)
         query = (
             f"ВЫБРАТЬ ПЕРВЫЕ {self.discovery_limit}\n"
             f"    {source.alias}.{field_name} КАК Значение,\n"
             f"    ПРЕДСТАВЛЕНИЕ({source.alias}.{field_name}) КАК Представление\n"
             "ИЗ\n"
-            f"    {source.source} КАК {source.alias}\n"
+            f"    {discovery_source} КАК {source.alias}\n"
             "СГРУППИРОВАТЬ ПО\n"
             f"    {source.alias}.{field_name},\n"
             f"    ПРЕДСТАВЛЕНИЕ({source.alias}.{field_name})"
@@ -175,6 +189,12 @@ class ReferenceValueResolver:
             error=response.error,
             rows=normalize_mcp_rows(response) if response.success else [],
         )
+
+
+def reference_discovery_source(source: QuerySourceRef) -> str:
+    if source.virtual_table:
+        return f"{source.object_full_name}.{source.virtual_table}()"
+    return source.source
 
 
 @dataclass(frozen=True)
@@ -297,6 +317,33 @@ def field_type_text(metadata: MetadataObject, field_name: str) -> str:
 
 def is_plain_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def reference_search_text(param_name: str, raw_value: str) -> str:
+    value = raw_value.strip()
+    if value and not looks_like_reference_placeholder(value):
+        return value
+    return param_name
+
+
+def looks_like_reference_placeholder(value: str) -> bool:
+    normalized = value.strip().lower()
+    if not normalized:
+        return True
+    if re.fullmatch(r"0{8}-0{4}-0{4}-0{4}-0{12}", normalized):
+        return True
+    if normalized.startswith(
+        (
+            "справочникссылка.",
+            "документссылка.",
+            "перечислениессылка.",
+            "планвидовхарактеристикссылка.",
+            "плансчетовссылка.",
+            "планвидоврасчетовссылка.",
+        )
+    ):
+        return True
+    return False
 
 
 def unique_param_name(params: Mapping[str, Any], base: str) -> str:
