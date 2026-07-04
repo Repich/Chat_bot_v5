@@ -652,6 +652,12 @@ def reset_metadata_request_log(metadata_provider: MetadataProvider) -> None:
             metadata_provider.last_requests = []  # type: ignore[attr-defined]
         except Exception:
             return
+    primary = getattr(metadata_provider, "primary", None)
+    if primary is not None and hasattr(primary, "last_requests"):
+        try:
+            primary.last_requests = []  # type: ignore[attr-defined]
+        except Exception:
+            return
 
 
 def search_terms_from_discovery(

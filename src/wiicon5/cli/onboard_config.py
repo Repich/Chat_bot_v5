@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from wiicon5.onboarding import run_onboarding
+from wiicon5.onboarding.status import OnboardingManager
 
 
 def main() -> int:
@@ -14,12 +14,9 @@ def main() -> int:
     parser.add_argument("--mcp-url", default="", help="Optional MCP URL recorded in the onboarding manifest.")
     args = parser.parse_args()
 
-    result = run_onboarding(
-        config_dump=Path(args.config_dump).expanduser(),
-        bot_instance=Path(args.bot_instance).expanduser(),
-        mcp_url=args.mcp_url,
-    )
-    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    manager = OnboardingManager(bot_instance_root=Path(args.bot_instance).expanduser(), mcp_url=args.mcp_url)
+    status = manager.start(config_dump=Path(args.config_dump).expanduser(), background=False)
+    print(json.dumps(status.to_dict(), ensure_ascii=False, indent=2))
     return 0
 
 

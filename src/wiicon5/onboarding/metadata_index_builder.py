@@ -12,6 +12,12 @@ from wiicon5.onboarding.config_dump_reader import DumpFile
 
 OBJECT_PATTERN = re.compile(r"\b(Справочник|Документ|РегистрНакопления|РегистрСведений)\.([A-Za-zА-Яа-яЁё0-9_]+)\b")
 FIELD_PATTERN = re.compile(r"\b(?:Реквизит|Измерение|Ресурс|Поле)\.([A-Za-zА-Яа-яЁё0-9_]+)\b")
+PATH_KIND_BY_DIR = {
+    "Catalogs": "Справочник",
+    "Documents": "Документ",
+    "AccumulationRegisters": "РегистрНакопления",
+    "InformationRegisters": "РегистрСведений",
+}
 
 
 @dataclass
@@ -31,19 +37,62 @@ class IndexedObject:
 
 
 def extract_metadata_objects(files: Iterable[DumpFile]) -> List[IndexedObject]:
+    dump_files = list(files)
     by_name: Dict[str, IndexedObject] = {}
-    for dump_file in files:
+    path_full_names = set()
+    for dump_file in dump_files:
+        fields = extract_field_names(dump_file.text)
+        for kind, object_name in objects_from_path(dump_file.relative_path):
+            path_full_names.add(f"{kind}.{object_name}")
+            add_indexed_object(by_name, kind, object_name, dump_file.relative_path, fields)
+    restrict_regex_to_path_objects = bool(path_full_names)
+    for dump_file in dump_files:
         fields = extract_field_names(dump_file.text)
         for match in OBJECT_PATTERN.finditer(dump_file.text + "\n" + dump_file.relative_path):
             kind = match.group(1)
-            full_name = f"{kind}.{match.group(2)}"
-            item = by_name.setdefault(full_name, IndexedObject(full_name=full_name, kind=kind))
-            if dump_file.relative_path not in item.source_files:
-                item.source_files.append(dump_file.relative_path)
-            for field_name in fields:
-                if field_name not in item.fields:
-                    item.fields.append(field_name)
+            object_name = match.group(2)
+            full_name = f"{kind}.{object_name}"
+            if restrict_regex_to_path_objects and full_name not in path_full_names:
+                continue
+            if not restrict_regex_to_path_objects and not is_plausible_metadata_name(object_name):
+                continue
+            add_indexed_object(by_name, kind, object_name, dump_file.relative_path, fields)
     return sorted(by_name.values(), key=lambda item: item.full_name)
+
+
+def add_indexed_object(
+    by_name: Dict[str, IndexedObject],
+    kind: str,
+    object_name: str,
+    relative_path: str,
+    fields: List[str],
+) -> None:
+    full_name = f"{kind}.{object_name}"
+    item = by_name.setdefault(full_name, IndexedObject(full_name=full_name, kind=kind))
+    if relative_path not in item.source_files:
+        item.source_files.append(relative_path)
+    for field_name in fields:
+        if field_name not in item.fields:
+            item.fields.append(field_name)
+
+
+def objects_from_path(relative_path: str) -> List[tuple[str, str]]:
+    parts = relative_path.split("/")
+    if len(parts) < 2:
+        return []
+    kind = PATH_KIND_BY_DIR.get(parts[0])
+    if not kind:
+        return []
+    object_name = Path(parts[1]).stem if "." in parts[1] else parts[1]
+    if not object_name:
+        return []
+    return [(kind, object_name)]
+
+
+def is_plausible_metadata_name(name: str) -> bool:
+    if not name:
+        return False
+    return any("А" <= char <= "я" or char in "Ёё" for char in name)
 
 
 def extract_field_names(text: str) -> List[str]:

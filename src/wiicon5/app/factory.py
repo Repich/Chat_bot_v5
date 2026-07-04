@@ -10,7 +10,8 @@ from wiicon5.intent.llm_decomposer import LLMGoalDecomposer
 from wiicon5.knowledge.bindings import BindingResolver, JsonBindingStore
 from wiicon5.knowledge.config_profile import build_configuration_profile, manual_configuration_profile
 from wiicon5.knowledge.discovery import MetadataBindingDiscoverer
-from wiicon5.knowledge.metadata import McpMetadataProvider
+from wiicon5.knowledge.metadata import McpMetadataProvider, MetadataProvider
+from wiicon5.knowledge.onboarding_index import IndexedMetadataProvider, OnboardingMetadataIndex
 from wiicon5.llm.client import LLMClient, OpenAICompatibleLLMClient
 from wiicon5.mcp.client import HttpMcpClient, McpClient
 from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
@@ -37,7 +38,7 @@ def build_agent(
     effective_llm = llm_client or build_llm_client(settings)
     effective_mcp = mcp_client or HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds)
     domain_policy = DomainPolicy(settings.bot_instance)
-    metadata_provider = McpMetadataProvider(effective_mcp)
+    metadata_provider = build_metadata_provider(settings, effective_mcp)
     config_profile = resolve_configuration_profile(settings, metadata_provider)
     query_reviewer = OneCQueryReviewer()
     binding_store = JsonBindingStore(settings.bindings_dir)
@@ -97,7 +98,13 @@ def build_llm_client(settings: Settings) -> LLMClient:
     )
 
 
-def resolve_configuration_profile(settings: Settings, metadata_provider: McpMetadataProvider):
+def build_metadata_provider(settings: Settings, mcp_client: McpClient) -> MetadataProvider:
+    primary = McpMetadataProvider(mcp_client)
+    index_path = settings.bot_context.root / "onboarding" / "metadata_index.sqlite"
+    return IndexedMetadataProvider(primary, OnboardingMetadataIndex(index_path))
+
+
+def resolve_configuration_profile(settings: Settings, metadata_provider: MetadataProvider):
     if settings.config_fingerprint.lower() in {"auto", "computed"}:
         return build_configuration_profile(metadata_provider, source="mcp")
     return manual_configuration_profile(settings.config_fingerprint)
