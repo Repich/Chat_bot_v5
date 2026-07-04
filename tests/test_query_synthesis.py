@@ -1315,6 +1315,7 @@ class QuerySynthesisTests(unittest.TestCase):
 
         self.assertIn("РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки", result)
         self.assertIn("ГДЕ\n    Остатки.Склад В (&РозничныеСклады)", result)
+        self.assertIn("Остатки.Склад В (&РозничныеСклады)\nСГРУППИРОВАТЬ ПО", result)
         self.assertLess(result.index("ГДЕ"), result.index("СГРУППИРОВАТЬ ПО"))
 
     def test_postprocess_moves_direct_virtual_balance_list_param_filter_to_where(self) -> None:

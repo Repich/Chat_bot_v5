@@ -1508,11 +1508,12 @@ def add_where_conditions(query: str, conditions: List[str]) -> str:
     boundary = query_clause_boundary(query)
     before = query[:boundary].rstrip()
     after = query[boundary:]
+    suffix = "\n" + after.lstrip() if after.strip() else ""
     condition_text = "\n    И ".join(conditions)
     where_match = re.search(r"\bГДЕ\b", before, flags=re.IGNORECASE)
     if where_match is not None:
-        return f"{before}\n    И {condition_text}{after}"
-    return f"{before}\nГДЕ\n    {condition_text}{after}"
+        return f"{before}\n    И {condition_text}{suffix}"
+    return f"{before}\nГДЕ\n    {condition_text}{suffix}"
 
 
 def query_clause_boundary(query: str) -> int:

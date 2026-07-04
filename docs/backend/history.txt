@@ -1,3 +1,7 @@
+5.0.0-alpha.28
+- Fixed formatting of postprocessed queries when a virtual balance table filter is moved into an external WHERE clause: the next query clause now starts on a new line, so logged queries remain copyable.
+- Added regression coverage that prevents GROUP BY from being concatenated to the moved IN-list filter.
+
 5.0.0-alpha.27
 - Added shared MCP parameter preparation for 1C IN-operators: if a query contains В (&Параметр) and the parameter value is a JSON list, it is expanded to scalar parameters В (&Параметр_1, &Параметр_2, ...).
 - Applied the list-parameter expansion both to LLM query synthesis and to learned/semantic skill runtime before query review and MCP execution.
