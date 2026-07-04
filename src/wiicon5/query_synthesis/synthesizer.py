@@ -30,9 +30,11 @@ from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.one_c_query_review import (
     OneCQueryReviewer,
     dimensions_for,
+    matching_parenthesis_position,
     metadata_for_source,
     parse_sources,
     resources_for,
+    split_top_level_commas,
 )
 from wiicon5.query.reference_value_resolver import ReferenceValueResolver
 from wiicon5.query_synthesis.sufficiency import (
@@ -1371,18 +1373,142 @@ def postprocess_1c_query(query: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
-    text = normalize_single_parameter_in_list_operator(text)
+    text = normalize_direct_parameter_in_list_operator(text)
+    text = move_virtual_balance_in_list_param_filters_to_where(text)
     text = remove_redundant_reference_joins(text)
     return text
 
 
-def normalize_single_parameter_in_list_operator(query: str) -> str:
+def normalize_direct_parameter_in_list_operator(query: str) -> str:
     return re.sub(
-        r"\bВ\s*\(\s*&(?P<param>[A-Za-zА-Яа-яЁё0-9_]+)\s*\)",
-        r"В &\g<param>",
+        r"\bВ\s+&(?P<param>[A-Za-zА-Яа-яЁё0-9_]+)",
+        r"В (&\g<param>)",
         query,
         flags=re.IGNORECASE,
     )
+
+
+def move_virtual_balance_in_list_param_filters_to_where(query: str) -> str:
+    pattern = re.compile(
+        r"РегистрНакопления\.[A-Za-zА-Яа-яЁё0-9_]+\.Остатки\s*\(",
+        flags=re.IGNORECASE,
+    )
+    result_parts: List[str] = []
+    moved_conditions: List[str] = []
+    position = 0
+    for match in pattern.finditer(query):
+        open_position = query.find("(", match.start(), match.end())
+        if open_position < 0:
+            continue
+        close_position = matching_parenthesis_position(query, open_position)
+        if close_position is None:
+            continue
+        alias_match = re.match(
+            r"\s+КАК\s+(?P<alias>[A-Za-zА-Яа-яЁё0-9_]+)",
+            query[close_position + 1 :],
+            flags=re.IGNORECASE,
+        )
+        if alias_match is None:
+            continue
+        args = split_top_level_commas(query[open_position + 1 : close_position])
+        if len(args) < 2:
+            continue
+        remaining_condition, external_conditions = split_virtual_in_list_param_conditions(
+            args[1],
+            alias=alias_match.group("alias"),
+        )
+        if not external_conditions:
+            continue
+        result_parts.append(query[position:match.start()])
+        result_parts.append(query[match.start() : open_position])
+        result_parts.append(render_balance_virtual_args(args[0], remaining_condition))
+        position = close_position + 1
+        moved_conditions.extend(external_conditions)
+    if not moved_conditions:
+        return query
+    result_parts.append(query[position:])
+    return add_where_conditions("".join(result_parts), moved_conditions)
+
+
+def split_virtual_in_list_param_conditions(condition: str, *, alias: str) -> tuple[str, List[str]]:
+    remaining: List[str] = []
+    external: List[str] = []
+    for part in split_top_level_and(condition):
+        match = re.fullmatch(
+            r"(?:[A-Za-zА-Яа-яЁё0-9_]+\.)?(?P<field>[A-Za-zА-Яа-яЁё0-9_]+)\s+В\s*\(\s*&(?P<param>[A-Za-zА-Яа-яЁё0-9_]+)\s*\)",
+            part.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            remaining.append(part.strip())
+            continue
+        external.append(f"{alias}.{match.group('field')} В (&{match.group('param')})")
+    return " И ".join(item for item in remaining if item), external
+
+
+def split_top_level_and(condition: str) -> List[str]:
+    result: List[str] = []
+    current: List[str] = []
+    depth = 0
+    position = 0
+    while position < len(condition):
+        char = condition[position]
+        if char == "(":
+            depth += 1
+            current.append(char)
+            position += 1
+            continue
+        if char == ")" and depth:
+            depth -= 1
+            current.append(char)
+            position += 1
+            continue
+        if depth == 0:
+            match = re.match(r"\s+И\s+", condition[position:], flags=re.IGNORECASE)
+            if match is not None:
+                result.append("".join(current).strip())
+                current = []
+                position += len(match.group(0))
+                continue
+        current.append(char)
+        position += 1
+    result.append("".join(current).strip())
+    return [item for item in result if item]
+
+
+def render_balance_virtual_args(period: str, condition: str) -> str:
+    clean_period = period.strip()
+    clean_condition = condition.strip()
+    if clean_condition:
+        return f"({clean_period}, {clean_condition})" if clean_period else f"(, {clean_condition})"
+    return f"({clean_period})" if clean_period else "()"
+
+
+def add_where_conditions(query: str, conditions: List[str]) -> str:
+    if not conditions:
+        return query
+    boundary = query_clause_boundary(query)
+    before = query[:boundary].rstrip()
+    after = query[boundary:]
+    condition_text = "\n    И ".join(conditions)
+    where_match = re.search(r"\bГДЕ\b", before, flags=re.IGNORECASE)
+    if where_match is not None:
+        return f"{before}\n    И {condition_text}{after}"
+    return f"{before}\nГДЕ\n    {condition_text}{after}"
+
+
+def query_clause_boundary(query: str) -> int:
+    boundaries = []
+    for pattern in (
+        r"\bСГРУППИРОВАТЬ\s+ПО\b",
+        r"\bУПОРЯДОЧИТЬ\s+ПО\b",
+        r"\bИТОГИ\b",
+        r"\bОБЪЕДИНИТЬ\b",
+    ):
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if match is not None:
+            boundaries.append(match.start())
+    return min(boundaries) if boundaries else len(query)
 
 
 def normalize_1c_query_keywords(query: str) -> str:

@@ -1288,16 +1288,51 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Поступление.Дата УБЫВ", result)
         self.assertNotIn("УБЫВЬ", result)
 
-    def test_postprocess_normalizes_single_parameter_in_list_operator(self) -> None:
+    def test_postprocess_normalizes_direct_parameter_in_list_operator(self) -> None:
         query = (
             "ВЫБРАТЬ Остатки.Номенклатура КАК Номенклатура "
-            "ИЗ РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В (&РозничныеСклады)) КАК Остатки"
+            "ИЗ РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки "
+            "ГДЕ Остатки.Склад В &РозничныеСклады"
         )
 
         result = postprocess_1c_query(query)
 
-        self.assertIn("Склад В &РозничныеСклады", result)
-        self.assertNotIn("Склад В (&РозничныеСклады)", result)
+        self.assertIn("Остатки.Склад В (&РозничныеСклады)", result)
+        self.assertNotIn("Остатки.Склад В &РозничныеСклады", result)
+
+    def test_postprocess_moves_virtual_balance_list_param_filter_to_where(self) -> None:
+        query = (
+            "ВЫБРАТЬ ПЕРВЫЕ 1\n"
+            "    Остатки.Номенклатура КАК Номенклатура,\n"
+            "    СУММА(Остатки.ВНаличииОстаток) КАК КоличествоОстаток\n"
+            "ИЗ\n"
+            "    РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В (&РозничныеСклады)) КАК Остатки\n"
+            "СГРУППИРОВАТЬ ПО\n"
+            "    Остатки.Номенклатура"
+        )
+
+        result = postprocess_1c_query(query)
+
+        self.assertIn("РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки", result)
+        self.assertIn("ГДЕ\n    Остатки.Склад В (&РозничныеСклады)", result)
+        self.assertLess(result.index("ГДЕ"), result.index("СГРУППИРОВАТЬ ПО"))
+
+    def test_postprocess_moves_direct_virtual_balance_list_param_filter_to_where(self) -> None:
+        query = (
+            "ВЫБРАТЬ ПЕРВЫЕ 1\n"
+            "    Остатки.Номенклатура КАК Номенклатура,\n"
+            "    СУММА(Остатки.ВНаличииОстаток) КАК КоличествоОстаток\n"
+            "ИЗ\n"
+            "    РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В &РозничныеСклады) КАК Остатки\n"
+            "СГРУППИРОВАТЬ ПО\n"
+            "    Остатки.Номенклатура"
+        )
+
+        result = postprocess_1c_query(query)
+
+        self.assertIn("РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки", result)
+        self.assertIn("Остатки.Склад В (&РозничныеСклады)", result)
+        self.assertNotIn("Остатки(, Склад В", result)
 
     def test_synthesis_sends_normalized_sort_direction_to_mcp(self) -> None:
         llm = ScriptedLLMClient(
