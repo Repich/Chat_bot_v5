@@ -53,6 +53,13 @@ QUERYABLE_OBJECT_PREFIXES = (
     "Справочник.",
 )
 
+DIRECT_LOOKUP_OBJECT_PREFIXES = (
+    "Справочник.",
+    "Документ.",
+    "РегистрНакопления.",
+    "РегистрСведений.",
+)
+
 NON_QUERY_SOURCE_PREFIXES = (
     "ОбщийМодуль.",
     "Обработка.",
@@ -576,6 +583,12 @@ def collect_metadata_objects(
             direct = metadata_provider.get_object(term)
             if direct.raw:
                 candidates[direct.full_name] = direct
+        for full_name in direct_queryable_names_from_term(term):
+            if full_name in candidates:
+                continue
+            direct = metadata_provider.get_object(full_name)
+            if direct.raw and direct.full_name:
+                candidates[direct.full_name] = direct
         for item in metadata_provider.search_objects(term):
             if item.full_name and item.full_name not in candidates:
                 candidates[item.full_name] = item
@@ -632,6 +645,8 @@ def metadata_candidate_score(item: MetadataObject, search_terms: List[str]) -> i
             continue
         if normalized == full_name.lower():
             score += 120
+        elif normalized == full_name.rsplit(".", 1)[-1].lower():
+            score += 120
         elif normalized in text:
             score += 15
         else:
@@ -643,6 +658,17 @@ def metadata_candidate_score(item: MetadataObject, search_terms: List[str]) -> i
 
 def looks_like_full_1c_name(term: str) -> bool:
     return term.startswith(QUERYABLE_OBJECT_PREFIXES)
+
+
+def direct_queryable_names_from_term(term: str) -> List[str]:
+    normalized = term.strip().strip(".,!?;:()[]{}\"'")
+    if not normalized or looks_like_full_1c_name(normalized):
+        return []
+    if not normalized[:1].isupper():
+        return []
+    if not re.fullmatch(r"[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*", normalized):
+        return []
+    return [prefix + normalized for prefix in DIRECT_LOOKUP_OBJECT_PREFIXES]
 
 
 def detailed_enough(item: MetadataObject) -> bool:

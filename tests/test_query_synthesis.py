@@ -1203,6 +1203,15 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual([item.full_name for item in result], ["РегистрНакопления.ДенежныеСредстваНаличные"])
         self.assertIn("Сумма", result[0].fields)
 
+    def test_metadata_collection_tries_direct_queryable_name_for_object_terms(self) -> None:
+        provider = NoisyWarehouseSearchMetadataProvider()
+
+        result = collect_metadata_objects(provider, search_terms=["Склады"], max_objects=1)
+
+        self.assertEqual([item.full_name for item in result], ["Справочник.Склады"])
+        self.assertIn("ТипСклада", result[0].fields)
+        self.assertIn("Справочник.Склады", provider.get_calls)
+
     def test_should_expand_metadata_for_unverified_onboarding_source(self) -> None:
         self.assertTrue(
             should_expand_metadata(
@@ -1280,6 +1289,43 @@ class RankingMetadataProvider(MetadataProvider):
                 }
             )
         return metadata_object_from_payload({"ПолноеИмя": full_name})
+
+
+class NoisyWarehouseSearchMetadataProvider(MetadataProvider):
+    def __init__(self) -> None:
+        self.get_calls: List[str] = []
+
+    def search_objects(self, term: str) -> List[MetadataObject]:
+        return [
+            metadata_object_from_payload(
+                {
+                    "ПолноеИмя": "ОбщийМодуль.СкладыСервер",
+                    "Синоним": "Склады сервер",
+                }
+            ),
+            metadata_object_from_payload(
+                {
+                    "ПолноеИмя": "РегистрСведений.РетроБонусыПоставщиковСклады",
+                    "Синоним": "Ретро-бонусы поставщиков: склады",
+                }
+            ),
+        ]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.get_calls.append(full_name)
+        if full_name == "Справочник.Склады":
+            return metadata_object_from_payload(
+                {
+                    "ПолноеИмя": "Справочник.Склады",
+                    "Синоним": "Склады",
+                    "Реквизиты": [
+                        {"Имя": "Ссылка", "Тип": "СправочникСсылка.Склады"},
+                        {"Имя": "Наименование", "Тип": "Строка"},
+                        {"Имя": "ТипСклада", "Тип": "ПеречислениеСсылка.ТипыСкладов"},
+                    ],
+                }
+            )
+        return MetadataObject(full_name=full_name)
 
 
 class FinancialMetadataProvider(MetadataProvider):

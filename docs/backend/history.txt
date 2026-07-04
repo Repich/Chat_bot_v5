@@ -1,3 +1,9 @@
+5.0.0-alpha.16
+- Fixed metadata collection for object-like terms such as Склады: query synthesis now probes direct 1C object names like Справочник.Склады instead of relying only on broad metadata search results.
+- Boosted ranking for metadata objects whose simple name exactly matches a search term, so required catalogs are not displaced by registers and service objects.
+- Added query synthesis prompt guidance to avoid final queries with empty reference-list parameters and to run lookup queries first.
+- Added regression coverage for noisy metadata search results hiding a direct queryable catalog.
+
 5.0.0-alpha.15
 - Added language-level normalization for common 1C query sort direction mistakes before MCP execution: УБЫВЬ/УБЫВАНИЕ are normalized to УБЫВ.
 - Added prompt guidance that 1C descending sort uses УБЫВ, not УБЫВЬ, УБЫВАНИЕ, or SQL DESC.
