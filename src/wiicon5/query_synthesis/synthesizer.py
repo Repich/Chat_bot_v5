@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.intent.models import IntentResult
@@ -12,6 +13,7 @@ from wiicon5.llm.client import LLMClient, LLMProviderError
 from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpQueryRequest, normalize_mcp_rows
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.prompting import PromptCatalog
 from wiicon5.presentation.answer_formatter import format_cell, format_user_answer, rows_effectively_empty
 from wiicon5.presentation.llm_answer_formatter import LLMAnswerFormatter
 from wiicon5.query.one_c_query_safety import validate_read_only_query
@@ -22,65 +24,17 @@ from wiicon5.query_synthesis.sufficiency import (
     ResultSufficiencyReviewer,
     deterministic_partial_review,
 )
-
-
-DISCOVERY_PROMPT = (
-    "Ты агент WIICON ChatBot 5. Нужно ответить на вопрос пользователя по данным 1С неизвестной конфигурации. "
-    "Сначала предложи план поиска метаданных и гипотезу запроса. Не пиши финальный ответ пользователю. "
-    "Не подгоняй вопрос под существующие навыки или typed artifacts из failed planning; это диагностический контекст, "
-    "а не источник истины. Если goal/gaps конфликтуют с текстом пользователя, доверяй тексту пользователя и метаданным. "
-    "Верни строго JSON: metadata_search_terms (массив строк), hypothesis (строка), draft_query (строка, можно пусто). "
-    "Термины должны помогать найти объекты метаданных 1С: регистры, документы, справочники, измерения, ресурсы."
+from wiicon5.query_synthesis.term_expansion import (
+    CompositeMetadataTermExpansionPolicy,
+    MetadataTermExpansionPolicy,
 )
 
 
-QUERY_PROMPT = (
-    "Ты составляешь read-only запрос на языке запросов 1С по вопросу пользователя. "
-    "Конфигурация неизвестна, но тебе переданы найденные метаданные. "
-    "Не подгоняй запрос под старые навыки или typed artifacts из failed planning; goal/gaps используй только как подсказку об ошибке. "
-    "Если typed artifact противоречит пользовательскому вопросу, игнорируй artifact и строй запрос по смыслу вопроса. "
-    "Используй только объекты и поля, подтвержденные metadata_objects. "
-    "Для вопросов с рейтингом, топом, максимумом/минимумом, суммой, количеством или группировкой возвращай агрегирующий запрос, "
-    "а не сырой список документов. "
-    "Если используешь табличную часть документа, бери поля только из metadata_objects.table_parts или из отдельного metadata object "
-    "полного имени Документ.<Имя>.<ТабличнаяЧасть>. "
-    "Если previous_query_review сообщает source_not_confirmed_by_metadata, не повторяй этот источник; выбери другой источник "
-    "из metadata_objects или перестрой запрос через подтвержденный документ/регистр. "
-    "В типовых УТ/ERP документ поступления товаров часто называется ПриобретениеТоваровУслуг; если ПоступлениеТоваровУслуг "
-    "не подтвержден, а в metadata_objects есть ПриобретениеТоваровУслуг, используй подтвержденный объект. "
-    "Если previous_query_review сообщает document_table_part_without_document_ref, соедини табличную часть с шапкой документа "
-    "по <ТабличнаяЧасть>.Ссылка = <Документ>.Ссылка; для фактов продаж/движений обычно добавь фильтр <Документ>.Проведен. "
-    "Если previous_query_review сообщает reference_filter_string_param, не сравнивай ссылочное поле со строкой. "
-    "Либо сначала найди/передай ссылку, либо сравнивай реквизит ссылки, например <Алиас>.<Поле>.Наименование = &Параметр. "
-    "Если previous_query_review сообщает enum_value_not_confirmed_by_metadata, не придумывай ЗНАЧЕНИЕ(Перечисление.X.Y); "
-    "сначала получи реальные значения поля или перестрой запрос так, чтобы вернуть группировку по этому полю и его представлению. "
-    "Если previous_query_review сообщает accumulation_balance_invalid_parameters, помни: Остатки() принимает только "
-    "Остатки(<Период>, <Условие>), третьего параметра нет. "
-    "Если previous_query_review сообщает virtual_table_filter_field_not_dimension, не фильтруй Остатки() по этому полю; "
-    "используй подтвержденное измерение или таблицу движений регистра с фильтром Активность. "
-    "Если previous_query_review сообщает raw_accumulation_register_inactive_filter, замени НЕ <Алиас>.Активность "
-    "на положительный фильтр <Алиас>.Активность. "
-    "Если previous_successful_steps не пустой, это результаты уже выполненных read-only запросов. "
-    "Используй их как промежуточные артефакты: если там есть значение с _objectRef, передавай его параметром напрямую, "
-    "не преобразуй в строку и не ищи заново по представлению. "
-    "Если previous_result_insufficiency указывает недостающие факты, следующий запрос должен получить именно эти факты, "
-    "а не повторять уже найденный промежуточный объект. "
-    "После промежуточного результата запрещено повторять тот же query: такой запрос снова вернет тот же неполный артефакт. "
-    "Можно использовать виртуальные таблицы регистров накопления, например .Остатки(), если объект является регистром накопления "
-    "и в метаданных есть подходящие измерения/ресурсы. Для виртуальной таблицы Остатки ресурс Ресурс обычно читается как РесурсОстаток. "
-    "Запрещены любые операции изменения данных. Запрос должен начинаться с ВЫБРАТЬ. "
-    "Верни строго JSON: query (строка), params (объект), limit (число), reasoning (строка)."
-)
-
-
-METADATA_REPAIR_PROMPT = (
-    "Предыдущий read-only запрос 1С не выполнился из-за отсутствующей таблицы/поля или выполнился, "
-    "но вернул только промежуточный/недостаточный результат. "
-    "Нужно не чинить запрос напрямую, а предложить дополнительные термины поиска метаданных. "
-    "Используй текст пользователя, ошибку 1С, предыдущий запрос и уже найденные metadata_objects. "
-    "Добавляй синонимы из типовой терминологии 1С, например для долгов клиентов ищи также расчеты с клиентами/контрагентами. "
-    "Верни строго JSON: metadata_search_terms (массив строк), reasoning (строка)."
-)
+_DEFAULT_PROMPT_CATALOG = PromptCatalog()
+_DEFAULT_BOT_CONFIG = BotInstanceConfig.default()
+DISCOVERY_PROMPT = _DEFAULT_PROMPT_CATALOG.discovery_prompt(_DEFAULT_BOT_CONFIG)
+QUERY_PROMPT = _DEFAULT_PROMPT_CATALOG.query_prompt(_DEFAULT_BOT_CONFIG)
+METADATA_REPAIR_PROMPT = _DEFAULT_PROMPT_CATALOG.metadata_repair_prompt(_DEFAULT_BOT_CONFIG)
 
 QUERYABLE_OBJECT_PREFIXES = (
     "РегистрНакопления.",
@@ -136,6 +90,9 @@ class QuerySynthesisEngine:
         max_metadata_objects: int = 12,
         max_repair_attempts: int = 2,
         max_successful_steps: int = 3,
+        bot_config: Optional[BotInstanceConfig] = None,
+        prompt_catalog: Optional[PromptCatalog] = None,
+        term_expansion_policy: Optional[MetadataTermExpansionPolicy] = None,
     ) -> None:
         self.llm_client = llm_client
         self.metadata_provider = metadata_provider
@@ -146,6 +103,11 @@ class QuerySynthesisEngine:
         self.max_metadata_objects = max_metadata_objects
         self.max_repair_attempts = max_repair_attempts
         self.max_successful_steps = max_successful_steps
+        self.bot_config = bot_config or BotInstanceConfig.default()
+        self.prompt_catalog = prompt_catalog or PromptCatalog()
+        self.term_expansion_policy = term_expansion_policy or CompositeMetadataTermExpansionPolicy.from_bot_config(
+            self.bot_config
+        )
 
     def run(
         self,
@@ -160,7 +122,7 @@ class QuerySynthesisEngine:
         reset_metadata_request_log(self.metadata_provider)
         try:
             discovery = self.llm_client.complete_json(
-                system_prompt=DISCOVERY_PROMPT,
+                system_prompt=self.prompt_catalog.discovery_prompt(self.bot_config),
                 user_payload={
                     "message": message,
                     "intent": intent.to_dict(),
@@ -178,7 +140,7 @@ class QuerySynthesisEngine:
             return QuerySynthesisResult(ok=False, error=f"LLM discovery failed: {exc}", trace=trace)
 
         trace["discovery_response"] = discovery
-        search_terms = search_terms_from_discovery(discovery, intent, message)
+        search_terms = search_terms_from_discovery(discovery, intent, message, self.term_expansion_policy)
         metadata_objects = collect_metadata_objects(
             self.metadata_provider,
             search_terms=search_terms,
@@ -202,7 +164,7 @@ class QuerySynthesisEngine:
         for attempt in range(1, max_total_attempts + 1):
             try:
                 query_response = self.llm_client.complete_json(
-                    system_prompt=QUERY_PROMPT,
+                    system_prompt=self.prompt_catalog.query_prompt(self.bot_config),
                     user_payload={
                         "message": message,
                         "intent": intent.to_dict(),
@@ -548,7 +510,7 @@ class QuerySynthesisEngine:
             return []
         try:
             response = self.llm_client.complete_json(
-                system_prompt=METADATA_REPAIR_PROMPT,
+                system_prompt=self.prompt_catalog.metadata_repair_prompt(self.bot_config),
                 user_payload={
                     "message": message,
                     "intent": intent.to_dict(),
@@ -692,7 +654,12 @@ def reset_metadata_request_log(metadata_provider: MetadataProvider) -> None:
             return
 
 
-def search_terms_from_discovery(discovery: Dict[str, Any], intent: IntentResult, message: str) -> List[str]:
+def search_terms_from_discovery(
+    discovery: Dict[str, Any],
+    intent: IntentResult,
+    message: str,
+    term_expansion_policy: Optional[MetadataTermExpansionPolicy] = None,
+) -> List[str]:
     terms: List[str] = []
     for item in intent.domain_terms:
         add_unique(terms, str(item).strip())
@@ -701,36 +668,15 @@ def search_terms_from_discovery(discovery: Dict[str, Any], intent: IntentResult,
             add_unique(terms, word.strip())
     for item in discovery.get("metadata_search_terms", []) or []:
         add_unique(terms, str(item).strip())
-    return expand_metadata_search_terms(terms)[:30]
+    return expand_metadata_search_terms(terms, term_expansion_policy)[:30]
 
 
-def expand_metadata_search_terms(terms: List[str]) -> List[str]:
-    result = list(terms)
-    text = " ".join(terms).lower()
-    if "номенклатур" in text:
-        add_unique(result, "Справочник.Номенклатура")
-    if any(marker in text for marker in ["продаж", "прода", "реализац"]):
-        add_unique(result, "реализация")
-        add_unique(result, "Реализация товаров")
-        add_unique(result, "РеализацияТоваровУслуг")
-        add_unique(result, "Документ.РеализацияТоваровУслуг")
-        add_unique(result, "ВыручкаИСебестоимостьПродаж")
-        add_unique(result, "РегистрНакопления.ВыручкаИСебестоимостьПродаж")
-    if any(marker in text for marker in ["отгруз", "реализац", "клиент", "дебитор", "задолж", "долж"]):
-        add_unique(result, "РасчетыСКлиентами")
-        add_unique(result, "Расчеты с клиентами")
-        add_unique(result, "РегистрНакопления.РасчетыСКлиентами")
-        add_unique(result, "РегистрНакопления.РасчетыСКлиентамиПоДокументам")
-    if any(marker in text for marker in ["поставка", "поставк", "поступлен", "поставщик", "приобрет"]):
-        add_unique(result, "поступление")
-        add_unique(result, "приобретение")
-        add_unique(result, "Поступление товаров")
-        add_unique(result, "Приобретение товаров")
-        add_unique(result, "ПоступлениеТоваровУслуг")
-        add_unique(result, "ПриобретениеТоваровУслуг")
-        add_unique(result, "Документ.ПриобретениеТоваровУслуг")
-        add_unique(result, "РасчетыСПоставщиками")
-    return result
+def expand_metadata_search_terms(
+    terms: List[str],
+    term_expansion_policy: Optional[MetadataTermExpansionPolicy] = None,
+) -> List[str]:
+    policy = term_expansion_policy or CompositeMetadataTermExpansionPolicy.from_bot_config()
+    return policy.expand(terms)
 
 
 def metadata_object_summary(item: MetadataObject) -> Dict[str, Any]:

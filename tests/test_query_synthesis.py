@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from typing import Dict, List
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
+from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.conversation.memory import ConversationMemory
 from wiicon5.execution.artifacts import Artifact
@@ -29,6 +30,7 @@ from wiicon5.query_synthesis.synthesizer import (
     search_terms_from_discovery,
 )
 from wiicon5.query_synthesis.sufficiency import deterministic_partial_review
+from wiicon5.query_synthesis.term_expansion import CompositeMetadataTermExpansionPolicy
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
 from wiicon5.skills.learned import LearnedSkillStore
 from wiicon5.skills.registry import SkillRegistry
@@ -1076,6 +1078,16 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Документ.ПриобретениеТоваровУслуг", terms)
         self.assertIn("ПриобретениеТоваровУслуг", terms)
         self.assertIn("РасчетыСПоставщиками", terms)
+
+    def test_metadata_search_terms_can_disable_trade_domain_pack(self) -> None:
+        policy = CompositeMetadataTermExpansionPolicy.from_bot_config(
+            BotInstanceConfig(bot_id="clean", domain_hint_packs=["one_c_standard"])
+        )
+
+        terms = expand_metadata_search_terms(["последняя поставка", "поступление товаров"], policy)
+
+        self.assertNotIn("Документ.ПриобретениеТоваровУслуг", terms)
+        self.assertNotIn("РасчетыСПоставщиками", terms)
 
     def test_metadata_collection_prioritizes_queryable_objects_before_modules(self) -> None:
         provider = RankingMetadataProvider()

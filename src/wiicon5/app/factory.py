@@ -66,7 +66,7 @@ def build_agent(
     learned_skill_store = LearnedSkillStore(skills_dir=settings.skills_dir, registry=registry)
     return AgentOrchestrator(
         registry=registry,
-        decomposer=LLMGoalDecomposer(llm_client=effective_llm, registry=registry),
+        decomposer=LLMGoalDecomposer(llm_client=effective_llm, registry=registry, bot_config=settings.bot_instance),
         memory=effective_memory,
         baseline_intent_policy=BaselineIntentPolicy(domain_policy),
         domain_policy=domain_policy,
@@ -78,6 +78,7 @@ def build_agent(
             query_reviewer=query_reviewer,
             answer_formatter=LLMAnswerFormatter(effective_llm),
             result_reviewer=ResultSufficiencyReviewer(effective_llm),
+            bot_config=settings.bot_instance,
         ),
         learned_skill_store=learned_skill_store,
         trace_root=settings.runs_dir,

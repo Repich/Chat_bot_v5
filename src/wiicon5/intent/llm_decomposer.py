@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.intent.decomposer import DecompositionResult, GoalDecomposer
 from wiicon5.intent.models import ContextDependency, IntentResult, IntentType
@@ -10,14 +11,24 @@ from wiicon5.models import ArtifactRequirement, SemanticFilter
 from wiicon5.planner.aggregate_intent import AGGREGATE_TABLE_TYPE, repair_document_list_aggregate_goal
 from wiicon5.planner.domain_compatibility import meaningful_words, words_match
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.prompting import PromptCatalog
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.types import TypeSystem
 
 
 class LLMGoalDecomposer(GoalDecomposer):
-    def __init__(self, *, llm_client: LLMClient, registry: SkillRegistry) -> None:
+    def __init__(
+        self,
+        *,
+        llm_client: LLMClient,
+        registry: SkillRegistry,
+        bot_config: Optional[BotInstanceConfig] = None,
+        prompt_catalog: Optional[PromptCatalog] = None,
+    ) -> None:
         self.llm_client = llm_client
         self.registry = registry
+        self.bot_config = bot_config or BotInstanceConfig.default()
+        self.prompt_catalog = prompt_catalog or PromptCatalog()
 
     def decompose(self, message: str, context: ConversationContext) -> DecompositionResult:
         payload = {
@@ -28,27 +39,16 @@ class LLMGoalDecomposer(GoalDecomposer):
             "schema": decomposition_schema(),
         }
         try:
-            response = self.llm_client.complete_json(system_prompt=DECOMPOSITION_PROMPT, user_payload=payload)
+            response = self.llm_client.complete_json(
+                system_prompt=self.prompt_catalog.decomposition_prompt(self.bot_config),
+                user_payload=payload,
+            )
         except LLMProviderError as exc:
             return DecompositionResult(intent=unknown_intent(message, f"LLM unavailable: {exc}"))
         return parse_decomposition_response(message, response, self.registry)
 
 
-DECOMPOSITION_PROMPT = (
-    "Ты выполняешь только intent understanding и goal decomposition для WIICON ChatBot 5. "
-    "Не пиши запросы 1С. Не выбирай конкретные объекты или поля конфигурации. "
-    "Разложи пользовательский вопрос на требуемые typed artifacts и semantic filters. "
-    "Используй available_skills как каталог уже существующих атомарных навыков; если вопрос решается навыком, "
-    "обязательно включи в goal.required_artifacts выходной артефакт этого навыка. "
-    "В goal.required_artifacts нельзя использовать технические базовые типы EntityRefList, TypedTable, EntityRef или Answer; "
-    "выбирай конкретный бизнес-тип из available_artifact_types, например WarehouseRefList, DocumentRefList, DocumentListTable, StockBalanceTable. "
-    "Если готового навыка нет, все равно укажи конкретный желаемый бизнес-артефакт, а не ближайший существующий навык. "
-    "Для вопросов с агрегацией, рейтингом, топом, максимумом/минимумом, суммами или группировкой не используй DocumentListTable: "
-    f"выбирай {AGGREGATE_TABLE_TYPE}, если более точного типа нет. "
-    "Если вопрос не относится к WIICON/WIIC/1C данным, верни intent_type=out_of_scope и goal=null. "
-    "Если нужен контекст предыдущего диалога, укажи context_dependencies. "
-    "Верни строго JSON по schema."
-)
+DECOMPOSITION_PROMPT = PromptCatalog().decomposition_prompt(BotInstanceConfig.default())
 
 
 def decomposition_schema() -> Dict[str, Any]:
