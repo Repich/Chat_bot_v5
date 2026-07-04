@@ -117,8 +117,12 @@ def extract_json_object(text: str) -> Dict[str, Any]:
     match = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if not match:
         raise LLMProviderError("LLM response does not contain a JSON object.")
-    parsed = json.loads(match.group(0))
+    raw_json = match.group(0)
+    try:
+        parsed = json.loads(raw_json)
+    except ValueError as exc:
+        preview = raw_json[:500].replace("\n", "\\n")
+        raise LLMProviderError(f"LLM response contains invalid JSON object: {preview}") from exc
     if not isinstance(parsed, dict):
         raise LLMProviderError("Extracted JSON root must be an object.")
     return parsed
-

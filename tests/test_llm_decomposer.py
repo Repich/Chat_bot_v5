@@ -172,6 +172,12 @@ class LLMDecomposerTests(unittest.TestCase):
 
         self.assertEqual(parsed, {"ok": True})
 
+    def test_extract_json_object_wraps_invalid_json_as_provider_error(self) -> None:
+        with self.assertRaises(LLMProviderError) as raised:
+            extract_json_object('```json\n{"query": "ВЫБРАТЬ"\n "params": {}}\n```')
+
+        self.assertIn("invalid JSON object", str(raised.exception))
+
 
 class FailingLLMClient(ScriptedLLMClient):
     def __init__(self) -> None:

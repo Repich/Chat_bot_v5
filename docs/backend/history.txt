@@ -1,3 +1,7 @@
+5.0.0-alpha.14
+- Fixed malformed LLM JSON handling: invalid JSON fragments extracted from model responses now raise LLMProviderError instead of leaking raw JSONDecodeError messages to users.
+- Added regression coverage for malformed model JSON such as missing comma delimiters in extracted response objects.
+
 5.0.0-alpha.13
 - Added /api/conversations to list active in-memory chat sessions with message counts and previews for the web client.
 
