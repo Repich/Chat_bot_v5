@@ -1,3 +1,10 @@
+5.0.0-alpha.10
+- Added offline configuration dump onboarding that produces candidate metadata index, semantic dictionary, register usage map, query patterns, binding candidates, manifest, and report without approving skills automatically.
+- Added CLI wrappers for onboarding on macOS/Linux and Windows.
+- Added trace-to-regression-case tooling and a regression case validator as the first step toward trace-driven learning.
+- Added SkillComposer explainability trace with selected and rejected candidate skills, scores, reasons, and rejection reasons.
+- Added tests for onboarding outputs, regression case generation/validation, and composer trace writing.
+
 5.0.0-alpha.9
 - Extracted clarification resolution into a dedicated policy layer so AgentOrchestrator no longer contains the document-amount follow-up scenario.
 - Added BotInstanceConfig/BotInstanceContext and moved general/out-of-scope answer texts plus baseline markers into bot instance/domain policies.

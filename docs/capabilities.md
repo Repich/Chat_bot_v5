@@ -85,6 +85,17 @@
 - Торговые подсказки УТ/ERP подключены к local WIICON-профилю, но не являются
   обязательной частью ядра.
 
+### Onboarding И Regression
+
+- Можно построить onboarding candidates из файловой выгрузки конфигурации:
+  metadata index, semantic dictionary, register usage map, query patterns и
+  binding candidates.
+- Onboarding не создает approved skills автоматически.
+- Trace можно преобразовать в regression case.
+- Regression runner пока валидирует case pack и готовит основу для будущего
+  replay.
+- Composer пишет explainability trace по выбору навыков.
+
 ### Web-Клиент
 
 Локальный web-клиент умеет:

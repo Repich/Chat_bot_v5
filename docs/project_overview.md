@@ -62,7 +62,7 @@ runtime навыков, пайплайн синтеза запросов, инт
 
 ## Текущий Статус
 
-Текущая версия: `5.0.0-alpha.9`.
+Текущая версия: `5.0.0-alpha.10`.
 
 Реализована основа:
 
@@ -84,6 +84,11 @@ runtime навыков, пайплайн синтеза запросов, инт
 - подключаемые prompt/domain packs для правил 1С и торговых подсказок;
 - learned skills в статусе candidate с evidence и metadata dependency contract;
 - вычисляемый fingerprint конфигурации при режиме `WIICON5_CONFIG_FINGERPRINT=auto`.
+- onboarding pipeline по выгрузке конфигурации, который создает candidates,
+  metadata index, semantic dictionary, register usage map и query patterns без
+  автоматического утверждения skills/bindings;
+- regression case tooling из trace;
+- composer explainability trace с выбранными и отклоненными candidate skills.
 
 Проект остается alpha-версией. Архитектура проверяется на реальных вопросах и
 корректируется по трассам, когда видно неправильную границу ответственности.

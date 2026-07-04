@@ -90,6 +90,41 @@ python3 scripts/mcp_smoke.py \
 
 Windows wrappers находятся в `scripts/*.cmd`.
 
+## Onboarding Выгрузки Конфигурации
+
+Построить candidates из файловой выгрузки 1С:
+
+```bash
+python3 scripts/onboard_config.py \
+  --config-dump ./config_dump \
+  --bot-instance ./bot_instances/client_a \
+  --mcp-url http://127.0.0.1:6003
+```
+
+Результаты появятся в:
+
+```text
+bot_instances/client_a/onboarding/
+```
+
+Это candidates, а не утвержденные skills/bindings.
+
+## Regression Cases
+
+Создать case из trace:
+
+```bash
+python3 scripts/trace_to_case.py runs/agent_... \
+  --cases-dir bot_instances/local/regression \
+  --expected-ok
+```
+
+Проверить набор cases:
+
+```bash
+python3 scripts/run_regression.py --cases bot_instances/local/regression
+```
+
 ## Тесты
 
 Запустить все тесты:

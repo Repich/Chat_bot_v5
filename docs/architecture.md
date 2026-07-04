@@ -215,6 +215,49 @@ metadata dependency contract еще существуют.
 `cfg_<hash>`. Ручной fingerprint остается доступен для локальных сценариев и
 совместимости с текущими bindings.
 
+### Onboarding
+
+Код:
+
+- `src/wiicon5/onboarding/...`
+- `src/wiicon5/cli/onboard_config.py`
+- `scripts/onboard_config.py`
+
+Onboarding читает выгрузку конфигурации в файлах и создает только candidates:
+
+- `metadata_index.sqlite`;
+- `candidate_bindings.json`;
+- `candidate_semantic_roles.json`;
+- `candidate_query_patterns.jsonl`;
+- `register_usage_map.json`;
+- `onboarding_report.md`.
+
+Этот слой не утверждает skills/bindings автоматически. Его задача - дать агенту
+и разработчику карту конфигурации, словарь и кандидаты для последующей проверки.
+
+### Regression Learning Loop
+
+Код:
+
+- `src/wiicon5/regression/...`
+- `scripts/trace_to_case.py`
+- `scripts/run_regression.py`
+
+Trace можно превратить в regression case. Текущий runner валидирует формат и
+ожидания cases; автоматический replay через LLM/MCP будет следующим слоем.
+
+### Skill Composer Explainability
+
+`SkillComposer` теперь возвращает `search_trace`, а orchestrator пишет его в
+`skill_search/composer_trace.json`. В trace видно:
+
+- какой artifact требовался;
+- какой skill выбран;
+- какие candidates рассматривались;
+- score;
+- reasons;
+- rejection_reason.
+
 ### Проверка Запросов 1С
 
 Reviewer ловит предсказуемые ошибки до выполнения через MCP:
