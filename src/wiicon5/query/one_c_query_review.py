@@ -140,7 +140,7 @@ class OneCQueryReviewer:
                 )
                 continue
             if source.object_type == "РегистрНакопления":
-                review_accumulation_source(source, refs, query, metadata, issues, warnings)
+                review_accumulation_source(source, refs, query, params, metadata, issues, warnings)
             elif source.object_type == "Документ":
                 review_document_source(source, refs, query, issues, warnings)
             if metadata is not None:
@@ -161,6 +161,7 @@ def review_accumulation_source(
     source: QuerySourceRef,
     refs: Set[str],
     query: str,
+    params: Mapping[str, Any],
     metadata: Optional[MetadataObject],
     issues: List[QueryReviewIssue],
     warnings: List[QueryReviewIssue],
@@ -183,6 +184,7 @@ def review_accumulation_source(
                     )
                 )
             condition = args[1] if len(args) > 1 else ""
+            review_virtual_condition_reference_params(condition, metadata, params, issues, source)
             dimension_fields = dimensions_for(metadata)
             for field_name in virtual_condition_fields(condition):
                 if dimension_fields and field_name not in dimension_fields:
@@ -326,6 +328,35 @@ def review_reference_string_params(
         )
 
 
+def review_virtual_condition_reference_params(
+    condition: str,
+    metadata: Optional[MetadataObject],
+    params: Mapping[str, Any],
+    issues: List[QueryReviewIssue],
+    source: QuerySourceRef,
+) -> None:
+    if metadata is None or not condition.strip():
+        return
+    for field_name, param_names in virtual_condition_reference_param_filters(condition).items():
+        if not is_reference_field(metadata, field_name):
+            continue
+        bad_params = [name for name in param_names if is_plain_string_param(params.get(name))]
+        if not bad_params:
+            continue
+        issues.append(
+            QueryReviewIssue(
+                code="reference_filter_string_param",
+                message=(
+                    f"Поле {field_name} в условии виртуальной таблицы "
+                    f"{source.object_full_name}.{source.virtual_table}() имеет ссылочный тип, но сравнивается "
+                    f"со строковым параметром {', '.join('&' + name for name in bad_params)}. "
+                    "Сначала получи ссылку на объект или сравнивай подтвержденный реквизит ссылки, например .Наименование."
+                ),
+                evidence=["metadata_objects", "query_params"],
+            )
+        )
+
+
 def review_unconfirmed_enum_literals(
     source: QuerySourceRef,
     query: str,
@@ -457,6 +488,42 @@ def reference_param_filters(query: str, alias: str) -> Dict[str, List[str]]:
     return result
 
 
+def virtual_condition_reference_param_filters(condition: str) -> Dict[str, List[str]]:
+    result: Dict[str, List[str]] = {}
+    equality_pattern = re.compile(
+        r"(?<![.&])\b(?P<field>[A-Za-zА-Яа-яЁё0-9_]+)\s*=\s*&(?P<param>[A-Za-zА-Яа-яЁё0-9_]+)",
+        flags=re.IGNORECASE,
+    )
+    for match in equality_pattern.finditer(condition):
+        if not is_top_level_position(condition, match.start("field")):
+            continue
+        add_param_ref(result, match.group("field"), match.group("param"))
+
+    in_pattern = re.compile(
+        r"(?<![.&])\b(?P<field>[A-Za-zА-Яа-яЁё0-9_]+)\s+В\s*\((?P<params>[^)]*)\)",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for match in in_pattern.finditer(condition):
+        if not is_top_level_position(condition, match.start("field")):
+            continue
+        raw_params = match.group("params")
+        if re.search(r"\bВЫБРАТЬ\b", raw_params, flags=re.IGNORECASE):
+            continue
+        for param_name in re.findall(r"&([A-Za-zА-Яа-яЁё0-9_]+)", raw_params):
+            add_param_ref(result, match.group("field"), param_name)
+    return result
+
+
+def is_top_level_position(value: str, position: int) -> bool:
+    depth = 0
+    for char in value[:position]:
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+    return depth == 0
+
+
 def add_param_ref(result: Dict[str, List[str]], field_name: str, param_name: str) -> None:
     values = result.setdefault(field_name, [])
     if param_name not in values:
@@ -489,7 +556,11 @@ def field_type_text(metadata: MetadataObject, field_name: str) -> str:
 
 
 def is_plain_string_param(value: Any) -> bool:
-    return isinstance(value, str) and bool(value.strip())
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return any(isinstance(item, str) and bool(item.strip()) for item in value)
+    return False
 
 
 def parse_sources(query: str) -> List[QuerySourceRef]:

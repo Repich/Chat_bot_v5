@@ -1,3 +1,7 @@
+5.0.0-alpha.20
+- Rejected plain string parameters and string-list parameters for reference fields inside accumulation virtual table conditions, such as Остатки(, Склад = &Склад), so query synthesis must resolve references or use verified reference attributes before MCP execution.
+- Extended regression coverage for the retail top-stock repair path to catch string warehouse parameters inside virtual table conditions.
+
 5.0.0-alpha.19
 - Fixed 1C query source parsing for accumulation virtual tables whose parameters contain nested subqueries, so the reviewer validates both the main register source and nested reference sources.
 - Added goal-aware semantic query review for top/max stock-style aggregate questions: a query over balances scoped by multiple warehouses must aggregate to product grain with SUM and GROUP BY instead of returning the first register row.

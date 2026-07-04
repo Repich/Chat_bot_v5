@@ -562,6 +562,20 @@ class QuerySynthesisTests(unittest.TestCase):
                         Остатки.Номенклатура КАК Номенклатура,
                         СУММА(Остатки.КоличествоОстаток) КАК Остаток
                     ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад = &Склад) КАК Остатки
+                    СГРУППИРОВАТЬ ПО
+                        Остатки.Номенклатура
+                    УПОРЯДОЧИТЬ ПО
+                        Остаток УБЫВ
+                    """,
+                    params={"Склад": "Розничный магазин"},
+                ),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Остатки.Номенклатура КАК Номенклатура,
+                        СУММА(Остатки.КоличествоОстаток) КАК Остаток
+                    ИЗ
                         РегистрНакопления.ТоварыНаСкладах.Остатки(
                             ,
                             Склад В (
@@ -608,6 +622,10 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(
             result.trace["attempts"][2]["goal_semantic_review"]["issues"][0]["code"],
             "aggregate_grain_not_confirmed",
+        )
+        self.assertEqual(
+            result.trace["attempts"][3]["query_review"]["issues"][0]["code"],
+            "reference_filter_string_param",
         )
         final_query = mcp.query_calls[0].query
         self.assertIn("Справочник.Склады", final_query)

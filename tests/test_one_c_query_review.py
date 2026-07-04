@@ -202,6 +202,46 @@ class OneCQueryReviewerTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("reference_filter_string_param", [issue.code for issue in result.issues])
 
+    def test_rejects_reference_string_param_inside_balance_virtual_condition(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Номенклатура КАК Номенклатура,
+                СУММА(Остатки.КоличествоОстаток) КАК Остаток
+            ИЗ
+                РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад = &Склад) КАК Остатки
+            СГРУППИРОВАТЬ ПО
+                Остатки.Номенклатура
+            """,
+            params={"Склад": "Розничный магазин"},
+            metadata_objects=[stock_register_metadata()],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("reference_filter_string_param", [issue.code for issue in result.issues])
+
+    def test_rejects_reference_string_list_param_inside_balance_virtual_condition(self) -> None:
+        reviewer = OneCQueryReviewer()
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Остатки.Номенклатура КАК Номенклатура,
+                СУММА(Остатки.КоличествоОстаток) КАК Остаток
+            ИЗ
+                РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад В (&Склады)) КАК Остатки
+            СГРУППИРОВАТЬ ПО
+                Остатки.Номенклатура
+            """,
+            params={"Склады": ["Розничный магазин"]},
+            metadata_objects=[stock_register_metadata()],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("reference_filter_string_param", [issue.code for issue in result.issues])
+
     def test_accepts_reference_field_name_attribute_compared_to_string_param(self) -> None:
         reviewer = OneCQueryReviewer()
 
@@ -432,6 +472,20 @@ def money_register_metadata():
             "Синоним": "Денежные средства",
             "Измерения": [{"Имя": "Касса", "Тип": "СправочникСсылка.Кассы"}],
             "Ресурсы": [{"Имя": "Сумма", "Тип": "Число(15, 2)"}],
+        }
+    )
+
+
+def stock_register_metadata():
+    return metadata_object_from_payload(
+        {
+            "ПолноеИмя": "РегистрНакопления.ТоварыНаСкладах",
+            "Синоним": "Товары на складах",
+            "Измерения": [
+                {"Имя": "Номенклатура", "Тип": "СправочникСсылка.Номенклатура"},
+                {"Имя": "Склад", "Тип": "СправочникСсылка.Склады"},
+            ],
+            "Ресурсы": [{"Имя": "Количество", "Тип": "Число"}],
         }
     )
 
