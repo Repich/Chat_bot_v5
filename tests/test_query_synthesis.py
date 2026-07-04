@@ -955,11 +955,23 @@ class QuerySynthesisTests(unittest.TestCase):
             first = orchestrator.handle(first_question, session_id="s1")
             second = orchestrator.handle(second_question, session_id="s1")
 
-            learned_path = skills_dir / "learned" / "learned_financial_metrics.json"
+            learned_path = skills_dir / "learned" / "candidates" / "learned_financial_metrics.json"
             learned_exists = learned_path.exists()
+            learned_payload = json.loads(learned_path.read_text(encoding="utf-8")) if learned_exists else {}
+            evidence_path = skills_dir / "learned" / "evidence" / "learned_financial_metrics" / "creation_trace.json"
+            evidence_exists = evidence_path.exists()
 
         self.assertEqual(first.source, "query_synthesis_ok")
         self.assertTrue(learned_exists)
+        self.assertTrue(evidence_exists)
+        self.assertEqual(learned_payload["status"], "candidate")
+        self.assertIn("metadata_dependency_contract", learned_payload["implementation"])
+        self.assertEqual(
+            learned_payload["implementation"]["metadata_dependency_contract"][0]["object"],
+            "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+        )
+        self.assertEqual(learned_payload["implementation"]["evidence"]["successful_runs"], 1)
+        self.assertFalse(learned_payload["implementation"]["evidence"]["human_confirmed"])
         self.assertIsNotNone(registry.get("learned_financial_metrics"))
         self.assertEqual(second.source, "skill_execution_ok")
         assert second.plan is not None

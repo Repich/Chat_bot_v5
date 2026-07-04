@@ -1,0 +1,114 @@
+{
+  "skill_id": "learned_financial_metrics",
+  "version": "0.1.0",
+  "kind": "data_acquisition",
+  "status": "candidate",
+  "description": "Learned query skill for получить, выручку, прибыль, 2025, выручка.",
+  "capabilities": [
+    "learned_query",
+    "retrieve_metrics",
+    "получить",
+    "выручку",
+    "прибыль",
+    "2025",
+    "выручка",
+    "produce:FinancialMetricsTable"
+  ],
+  "inputs": [
+    {
+      "name": "filters",
+      "type": "SemanticFilterList",
+      "required": false,
+      "description": "Semantic filters such as year or period granularity."
+    },
+    {
+      "name": "limit",
+      "type": "Integer",
+      "required": false,
+      "description": "Maximum rows to return",
+      "default": 100
+    }
+  ],
+  "outputs": [
+    {
+      "name": "table",
+      "type": "FinancialMetricsTable",
+      "required": true,
+      "description": "Learned metric table"
+    }
+  ],
+  "tags": [
+    "learned",
+    "metrics",
+    "получить",
+    "выручку",
+    "прибыль",
+    "2025",
+    "выручка"
+  ],
+  "supported_filter_roles": [
+    "year",
+    "period",
+    "period_granularity",
+    "group_by",
+    "metric"
+  ],
+  "implementation_strategy": "learned_query",
+  "implementation": {
+    "kind": "period_metric_aggregate",
+    "source": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+    "alias": "ВыручкаИСебестоимостьПродаж",
+    "period_field": "Период",
+    "metrics": [
+      {
+        "label": "Выручка",
+        "expression": "СУММА(ВыручкаИСебестоимостьПродаж.СуммаВыручкиБезНДС)"
+      },
+      {
+        "label": "Прибыль",
+        "expression": "СУММА(ВыручкаИСебестоимостьПродаж.СуммаВыручкиБезНДС - ВыручкаИСебестоимостьПродаж.СтоимостьБезНДС)"
+      }
+    ],
+    "limit": 100,
+    "metadata_dependencies": [
+      "РегистрНакопления.ВыручкаИСебестоимостьПродаж"
+    ],
+    "metadata_dependency_contract": [
+      {
+        "object": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+        "required_fields": {
+          "Период": "unknown",
+          "СуммаВыручкиБезНДС": "unknown",
+          "СтоимостьБезНДС": "unknown",
+          "Активность": "unknown"
+        },
+        "virtual_table": null,
+        "field_roles": {
+          "period": "Период",
+          "Выручка": "СуммаВыручкиБезНДС",
+          "Прибыль": "СуммаВыручкиБезНДС, СтоимостьБезНДС",
+          "activity": "Активность"
+        }
+      }
+    ],
+    "metric_terms": [
+      "получить",
+      "выручку",
+      "прибыль",
+      "2025",
+      "выручка"
+    ],
+    "activity_filter": true,
+    "activity_field": "Активность",
+    "evidence": {
+      "created_from_trace": "",
+      "question": "Покажи выручку и прибыль за 2025 год",
+      "final_query_hash": "",
+      "result_sample_hash": "",
+      "sufficiency_review": {},
+      "human_confirmed": false,
+      "successful_runs": 1
+    }
+  },
+  "semantic_role": "financial_metrics"
+}

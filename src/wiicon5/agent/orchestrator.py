@@ -370,6 +370,7 @@ class AgentOrchestrator:
             intent=intent,
             goal=goal,
             synthesis_result=synthesis_result,
+            created_from_trace=str(run_trace.path),
         )
         if learned is not None:
             run_trace.write_json("learning/learned_skill.json", learned.to_dict())

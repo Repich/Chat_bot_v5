@@ -12,6 +12,12 @@ logs/
 runs/
 skills/bindings/
 skills/learned/
+!skills/learned/
+!skills/learned/candidates/
+!skills/learned/candidates/*.json
+!skills/learned/evidence/
+!skills/learned/evidence/*/
+!skills/learned/evidence/*/creation_trace.json
 dist/
 build/
 *.egg-info/

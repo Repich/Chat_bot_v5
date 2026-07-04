@@ -19,12 +19,15 @@ class LearnedSkillWriteResult:
     skill: SkillContract
     path: Path
     created: bool
+    evidence_path: Optional[Path] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "skill_id": self.skill.skill_id,
             "path": str(self.path),
             "created": self.created,
+            "status": self.skill.status.value,
+            "evidence_path": str(self.evidence_path) if self.evidence_path else "",
             "output_types": [output.type for output in self.skill.outputs],
         }
 
@@ -33,6 +36,8 @@ class LearnedSkillStore:
     def __init__(self, *, skills_dir: Path, registry: SkillRegistry) -> None:
         self.skills_dir = skills_dir
         self.learned_dir = skills_dir / "learned"
+        self.candidates_dir = self.learned_dir / "candidates"
+        self.evidence_dir = self.learned_dir / "evidence"
         self.registry = registry
 
     def learn_from_synthesis(
@@ -41,6 +46,7 @@ class LearnedSkillStore:
         intent: IntentResult,
         goal: Optional[GoalDecomposition],
         synthesis_result: QuerySynthesisResult,
+        created_from_trace: str = "",
     ) -> Optional[LearnedSkillWriteResult]:
         if not synthesis_result.ok:
             return None
@@ -51,13 +57,43 @@ class LearnedSkillStore:
         spec = learned_period_metric_spec(query=query, intent=intent, trace=synthesis_result.trace)
         if spec is None:
             return None
+        spec = enrich_spec_with_lifecycle(
+            spec,
+            intent=intent,
+            trace=synthesis_result.trace,
+            created_from_trace=created_from_trace,
+        )
         skill = skill_from_spec(spec, intent=intent, goal=goal)
-        self.learned_dir.mkdir(parents=True, exist_ok=True)
-        path = self.learned_dir / f"{skill.skill_id}.json"
+        self.candidates_dir.mkdir(parents=True, exist_ok=True)
+        path = self.candidates_dir / f"{skill.skill_id}.json"
         created = not path.exists()
         path.write_text(json.dumps(skill.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        evidence_path = self.write_evidence(skill, spec, synthesis_result.trace, created_from_trace)
         self.registry.add(skill)
-        return LearnedSkillWriteResult(skill=skill, path=path, created=created)
+        return LearnedSkillWriteResult(skill=skill, path=path, created=created, evidence_path=evidence_path)
+
+    def write_evidence(
+        self,
+        skill: SkillContract,
+        spec: Dict[str, Any],
+        trace: Dict[str, Any],
+        created_from_trace: str,
+    ) -> Path:
+        skill_evidence_dir = self.evidence_dir / skill.skill_id
+        skill_evidence_dir.mkdir(parents=True, exist_ok=True)
+        creation_path = skill_evidence_dir / "creation_trace.json"
+        payload = {
+            "skill_id": skill.skill_id,
+            "created_from_trace": created_from_trace,
+            "evidence": spec.get("evidence", {}),
+            "metadata_dependency_contract": spec.get("metadata_dependency_contract", []),
+            "final_query": (trace.get("final_query") or {}),
+        }
+        creation_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        successful_path = skill_evidence_dir / "successful_runs.jsonl"
+        with successful_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        return creation_path
 
 
 def learned_period_metric_spec(*, query: str, intent: IntentResult, trace: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -94,6 +130,90 @@ def learned_period_metric_spec(*, query: str, intent: IntentResult, trace: Dict[
     return spec
 
 
+def enrich_spec_with_lifecycle(
+    spec: Dict[str, Any],
+    *,
+    intent: IntentResult,
+    trace: Dict[str, Any],
+    created_from_trace: str,
+) -> Dict[str, Any]:
+    result = dict(spec)
+    final_query = dict(trace.get("final_query") or {})
+    query = str(final_query.get("query") or "")
+    result["metadata_dependency_contract"] = metadata_dependency_contract(result, query=query)
+    result["evidence"] = {
+        "created_from_trace": created_from_trace,
+        "question": intent.business_goal,
+        "final_query_hash": hash_payload(final_query),
+        "result_sample_hash": hash_payload(trace.get("successful_steps", [])),
+        "sufficiency_review": latest_sufficiency_review(trace),
+        "human_confirmed": False,
+        "successful_runs": 1,
+    }
+    return result
+
+
+def metadata_dependency_contract(spec: Dict[str, Any], *, query: str) -> List[Dict[str, Any]]:
+    source = str(spec.get("source") or "")
+    if not source:
+        return []
+    alias = str(spec.get("alias") or "Источник")
+    period_field = str(spec.get("period_field") or "")
+    metrics = spec.get("metrics") if isinstance(spec.get("metrics"), list) else []
+    required_fields = {field: "unknown" for field in source_field_names(query, alias)}
+    if period_field:
+        required_fields.setdefault(period_field, "unknown")
+    field_roles: Dict[str, str] = {}
+    if period_field:
+        field_roles["period"] = period_field
+    for metric in metrics:
+        if isinstance(metric, dict) and metric.get("label"):
+            label = str(metric.get("label"))
+            fields = source_field_names(str(metric.get("expression") or ""), alias)
+            if fields:
+                field_roles[label] = ", ".join(fields)
+    if spec.get("activity_filter"):
+        activity_field = str(spec.get("activity_field") or "Активность")
+        required_fields.setdefault(activity_field, "unknown")
+        field_roles["activity"] = activity_field
+    return [
+        {
+            "object": source,
+            "required_fields": required_fields,
+            "virtual_table": virtual_table_name(source),
+            "field_roles": field_roles,
+        }
+    ]
+
+
+def source_field_names(text: str, alias: str) -> List[str]:
+    fields: List[str] = []
+    for match in re.finditer(rf"\b{re.escape(alias)}\.([A-Za-zА-Яа-яЁё0-9_]+)\b", text):
+        field = match.group(1)
+        if field not in fields:
+            fields.append(field)
+    return sorted(fields)
+
+
+def virtual_table_name(source: str) -> Optional[str]:
+    match = re.search(r"\.(ОстаткиИОбороты|Остатки|Обороты)\s*\(", source)
+    return match.group(1) if match else None
+
+
+def latest_sufficiency_review(trace: Dict[str, Any]) -> Dict[str, Any]:
+    attempts = trace.get("attempts")
+    if not isinstance(attempts, list):
+        return {}
+    for attempt in reversed(attempts):
+        if isinstance(attempt, dict) and isinstance(attempt.get("result_sufficiency"), dict):
+            return dict(attempt["result_sufficiency"])
+    return {}
+
+
+def hash_payload(payload: Any) -> str:
+    return hashlib.sha1(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
 def fixed_query_spec(*, final_query: Dict[str, Any], trace: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "kind": "fixed_query",
@@ -123,7 +243,7 @@ def skill_from_spec(
             "skill_id": skill_id,
             "version": "0.1.0",
             "kind": SkillKind.DATA.value,
-            "status": SkillStatus.VERIFIED.value,
+            "status": SkillStatus.CANDIDATE.value,
             "description": f"Learned query skill for {description_terms}.",
             "capabilities": [
                 "learned_query",
