@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
+from wiicon5.onboarding.status import OnboardingManager
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -17,7 +18,11 @@ BACKEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "backend" / "history.txt"
 FRONTEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "frontend" / "history.txt"
 
 
-def make_handler(agent: AgentOrchestrator) -> Type[BaseHTTPRequestHandler]:
+def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager | None = None) -> Type[BaseHTTPRequestHandler]:
+    effective_onboarding_manager = onboarding_manager or OnboardingManager(
+        bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
+    )
+
     class Wiicon5Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -41,6 +46,9 @@ def make_handler(agent: AgentOrchestrator) -> Type[BaseHTTPRequestHandler]:
                     },
                 )
                 return
+            if path == "/api/admin/onboarding/status":
+                self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
+                return
             if path == "/history/backend":
                 self._send_text(200, read_text_file(BACKEND_HISTORY_FILE))
                 return
@@ -53,7 +61,24 @@ def make_handler(agent: AgentOrchestrator) -> Type[BaseHTTPRequestHandler]:
             self._send_json(404, {"ok": False, "error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/chat":
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/admin/onboarding/run":
+                try:
+                    payload = self._read_json()
+                    config_dump = str(payload.get("config_dump") or "").strip()
+                    if not config_dump:
+                        self._send_json(400, {"ok": False, "error": "config_dump is required"})
+                        return
+                    status = effective_onboarding_manager.start(
+                        config_dump=Path(config_dump).expanduser(),
+                        mcp_url=str(payload.get("mcp_url") or "").strip() or None,
+                        background=True,
+                    )
+                    self._send_json(202, {"ok": True, "status": status.to_dict()})
+                except Exception as exc:
+                    self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+            if parsed.path != "/chat":
                 self._send_json(404, {"ok": False, "error": "not_found"})
                 return
             try:
@@ -141,8 +166,14 @@ def seed_context_from_payload(agent: AgentOrchestrator, session_id: str, payload
     )
 
 
-def run_http_server(agent: AgentOrchestrator, *, host: str, port: int) -> None:
-    server = HTTPServer((host, port), make_handler(agent))
+def run_http_server(
+    agent: AgentOrchestrator,
+    *,
+    host: str,
+    port: int,
+    onboarding_manager: OnboardingManager | None = None,
+) -> None:
+    server = HTTPServer((host, port), make_handler(agent, onboarding_manager=onboarding_manager))
     try:
         server.serve_forever()
     finally:
@@ -166,6 +197,10 @@ CHAT_HTML = """<!doctype html>
       --accent: #0f766e;
       --accent-strong: #0b5f59;
       --danger: #b42318;
+      --warning-bg: #fff7ed;
+      --warning-line: #fed7aa;
+      --ok-bg: #ecfdf5;
+      --ok-line: #a7f3d0;
       --code: #111827;
     }
     * { box-sizing: border-box; }
@@ -191,6 +226,23 @@ CHAT_HTML = """<!doctype html>
       padding: 14px 18px;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
+    }
+    .training-banner {
+      display: none;
+      border-bottom: 1px solid var(--warning-line);
+      background: var(--warning-bg);
+      padding: 10px 18px;
+      color: #7c2d12;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .training-banner.visible {
+      display: block;
+    }
+    .training-banner.trained {
+      border-color: var(--ok-line);
+      background: var(--ok-bg);
+      color: #064e3b;
     }
     h1 {
       margin: 0;
@@ -404,6 +456,24 @@ CHAT_HTML = """<!doctype html>
       border: 1px solid var(--line);
     }
     .danger { color: var(--danger); }
+    .admin-panel {
+      display: grid;
+      gap: 8px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+    .admin-title {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .admin-status {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
     @media (max-width: 760px) {
       body { overflow: hidden; }
       header { align-items: flex-start; flex-direction: column; }
@@ -428,6 +498,7 @@ CHAT_HTML = """<!doctype html>
       </div>
       <div class="status"><span class="dot"></span><span id="status">готов</span></div>
     </header>
+    <div id="trainingBanner" class="training-banner"></div>
     <main>
       <aside>
         <label>Session ID
@@ -443,6 +514,14 @@ CHAT_HTML = """<!doctype html>
         <div id="historyPanel" class="history-panel">
           <p id="historyTitle" class="history-title"></p>
           <pre id="historyText"></pre>
+        </div>
+        <div class="admin-panel">
+          <p class="admin-title">Первоначальное обучение</p>
+          <label>Выгрузка конфигурации
+            <input id="configDumpPath" placeholder="/path/to/1c/config">
+          </label>
+          <button id="startOnboardingButton" class="secondary" type="button">Запустить обучение</button>
+          <div id="onboardingStatus" class="admin-status">Статус не загружен.</div>
         </div>
         <label>ProductRef JSON
           <textarea id="productRef" spellcheck="false"></textarea>
@@ -475,7 +554,12 @@ CHAT_HTML = """<!doctype html>
     const historyPanel = document.getElementById("historyPanel");
     const historyTitle = document.getElementById("historyTitle");
     const historyText = document.getElementById("historyText");
+    const trainingBanner = document.getElementById("trainingBanner");
+    const configDumpPath = document.getElementById("configDumpPath");
+    const startOnboardingButton = document.getElementById("startOnboardingButton");
+    const onboardingStatus = document.getElementById("onboardingStatus");
     let pending = false;
+    let onboardingPollTimer = null;
     const baseTitle = document.title;
     let unreadCount = 0;
     let titleBlinkTimer = null;
@@ -562,6 +646,82 @@ CHAT_HTML = """<!doctype html>
         appVersion.textContent = data.version || "unknown";
       } catch (error) {
         appVersion.textContent = "unknown";
+      }
+    }
+
+    function renderOnboardingStatus(status) {
+      const state = status && status.state ? status.state : "unknown";
+      const trained = Boolean(status && status.trained);
+      const running = Boolean(status && status.running);
+      const message = status && status.message ? status.message : "Статус обучения неизвестен.";
+      if (status && status.config_dump && !configDumpPath.value.trim()) {
+        configDumpPath.value = status.config_dump;
+      }
+      startOnboardingButton.disabled = running;
+      const details = [];
+      details.push(message);
+      if (status && status.objects_count) details.push("Объектов: " + status.objects_count);
+      if (status && status.query_patterns_count) details.push("Шаблонов запросов: " + status.query_patterns_count);
+      if (status && status.binding_candidates_count) details.push("Кандидатов binding: " + status.binding_candidates_count);
+      if (status && status.error) details.push("Ошибка: " + status.error);
+      onboardingStatus.textContent = details.join("\\n");
+
+      trainingBanner.classList.add("visible");
+      trainingBanner.classList.toggle("trained", trained);
+      if (trained) {
+        trainingBanner.textContent = "Первоначальное обучение выполнено. Агент использует локальный индекс конфигурации как дополнительный источник метаданных.";
+      } else if (running) {
+        trainingBanner.textContent = "Идет первоначальное обучение. До завершения агент может отвечать медленнее и ошибаться в выборе объектов конфигурации.";
+      } else {
+        trainingBanner.textContent = "Первоначальное обучение еще не выполнено. Возможны неверные ответы: агент пока опирается только на MCP-поиск и текущий диалог.";
+      }
+      setStatus(running ? "обучение" : "готов");
+      return {state, running};
+    }
+
+    async function loadOnboardingStatus() {
+      try {
+        const response = await fetch("/api/admin/onboarding/status", {cache: "no-store"});
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "HTTP " + response.status);
+        const rendered = renderOnboardingStatus(data.status || {});
+        if (rendered.running && !onboardingPollTimer) {
+          onboardingPollTimer = window.setInterval(loadOnboardingStatus, 3000);
+        }
+        if (!rendered.running && onboardingPollTimer) {
+          window.clearInterval(onboardingPollTimer);
+          onboardingPollTimer = null;
+        }
+      } catch (error) {
+        trainingBanner.classList.add("visible");
+        trainingBanner.textContent = "Статус первоначального обучения не удалось загрузить.";
+        onboardingStatus.textContent = String(error && error.message ? error.message : error);
+      }
+    }
+
+    async function startOnboarding() {
+      const path = configDumpPath.value.trim();
+      if (!path) {
+        onboardingStatus.textContent = "Укажите путь к файловой выгрузке конфигурации.";
+        configDumpPath.focus();
+        return;
+      }
+      startOnboardingButton.disabled = true;
+      setStatus("запуск обучения");
+      try {
+        const response = await fetch("/api/admin/onboarding/run", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({config_dump: path})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "HTTP " + response.status);
+        renderOnboardingStatus(data.status || {});
+        if (!onboardingPollTimer) onboardingPollTimer = window.setInterval(loadOnboardingStatus, 3000);
+      } catch (error) {
+        onboardingStatus.textContent = String(error && error.message ? error.message : error);
+        startOnboardingButton.disabled = false;
+        setStatus("готов");
       }
     }
 
@@ -672,6 +832,7 @@ CHAT_HTML = """<!doctype html>
     reloadHistoryButton.addEventListener("click", () => loadConversation());
     backendHistoryButton.addEventListener("click", () => showHistory("backend"));
     frontendHistoryButton.addEventListener("click", () => showHistory("frontend"));
+    startOnboardingButton.addEventListener("click", () => startOnboarding());
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {
       localStorage.setItem(SESSION_STORAGE_KEY, sessionId.value.trim() || "web-test");
@@ -682,6 +843,7 @@ CHAT_HTML = """<!doctype html>
     });
 
     loadVersion();
+    loadOnboardingStatus();
     loadConversation();
   </script>
 </body>

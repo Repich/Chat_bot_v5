@@ -5,6 +5,7 @@ from pathlib import Path
 
 from wiicon5.app.config import Settings
 from wiicon5.app.factory import build_agent
+from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.web.server import run_http_server
 
 
@@ -18,11 +19,11 @@ def main() -> int:
     root = Path(args.root).resolve()
     settings = Settings.from_env(root=root)
     agent = build_agent(settings)
+    onboarding_manager = OnboardingManager(bot_instance_root=settings.bot_context.root, mcp_url=settings.mcp_url)
     print(f"WIICON5 listening on http://{args.host}:{args.port}/chat")
-    run_http_server(agent, host=args.host, port=args.port)
+    run_http_server(agent, host=args.host, port=args.port, onboarding_manager=onboarding_manager)
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
