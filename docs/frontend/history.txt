@@ -1,3 +1,8 @@
+5.0.0-alpha.6
+- Added Enter-to-send in the chat input; Shift+Enter still inserts a new line.
+- Added unread assistant/error notification by blinking the browser tab title while the tab/window is not active.
+- The unread title indicator clears when the browser tab becomes visible or focused.
+
 5.0.0-alpha.2
 - Kept the message composer visible while long dialogs scroll.
 - Added visible bot version in the header.

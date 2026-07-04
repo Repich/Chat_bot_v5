@@ -476,6 +476,10 @@ CHAT_HTML = """<!doctype html>
     const historyTitle = document.getElementById("historyTitle");
     const historyText = document.getElementById("historyText");
     let pending = false;
+    const baseTitle = document.title;
+    let unreadCount = 0;
+    let titleBlinkTimer = null;
+    let titleBlinkOn = false;
 
     const savedSessionId = localStorage.getItem(SESSION_STORAGE_KEY);
     if (savedSessionId) sessionId.value = savedSessionId;
@@ -487,6 +491,33 @@ CHAT_HTML = """<!doctype html>
 
     function setStatus(text) {
       statusText.textContent = text;
+    }
+
+    function shouldMarkUnread() {
+      return document.hidden || !document.hasFocus();
+    }
+
+    function startTitleBlink() {
+      if (titleBlinkTimer) return;
+      titleBlinkTimer = window.setInterval(() => {
+        titleBlinkOn = !titleBlinkOn;
+        document.title = titleBlinkOn ? `(${unreadCount}) Новое сообщение` : baseTitle;
+      }, 900);
+    }
+
+    function markUnread() {
+      unreadCount += 1;
+      startTitleBlink();
+    }
+
+    function clearUnread() {
+      unreadCount = 0;
+      titleBlinkOn = false;
+      if (titleBlinkTimer) {
+        window.clearInterval(titleBlinkTimer);
+        titleBlinkTimer = null;
+      }
+      document.title = baseTitle;
     }
 
     function appendMessage(kind, title, text, raw, scroll = true) {
@@ -511,6 +542,9 @@ CHAT_HTML = """<!doctype html>
       }
       messages.append(node);
       if (scroll) messages.scrollTop = messages.scrollHeight;
+      if ((kind === "assistant" || kind === "error") && shouldMarkUnread()) {
+        markUnread();
+      }
     }
 
     function showEmpty(text) {
@@ -589,6 +623,14 @@ CHAT_HTML = """<!doctype html>
       return value;
     }
 
+    input.addEventListener("keydown", (event) => {
+      if (event.isComposing) return;
+      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+      event.preventDefault();
+      if (pending) return;
+      form.requestSubmit();
+    });
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (pending) return;
@@ -633,6 +675,10 @@ CHAT_HTML = """<!doctype html>
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {
       localStorage.setItem(SESSION_STORAGE_KEY, sessionId.value.trim() || "web-test");
+    });
+    window.addEventListener("focus", clearUnread);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) clearUnread();
     });
 
     loadVersion();
