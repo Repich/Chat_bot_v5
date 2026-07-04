@@ -219,6 +219,33 @@ def deterministic_partial_review(
                 next_query_goal="Получить фактическую задолженность или долговую метрику по найденному субъекту/документу.",
                 reasoning="Для долгового вопроса нужна долговая метрика, а не произвольная сумма.",
             )
+        if asks_debt(lowered_question) and has_subject and not has_amount and needs_amount_vs_debt_clarification(
+            lowered_question
+        ):
+            return ResultSufficiencyReview(
+                sufficient=False,
+                partial=True,
+                missing_facts=[
+                    "Найден субъект или документ, но неясно, нужна сумма документа или фактическая задолженность."
+                ],
+                next_query_goal=(
+                    "После уточнения либо получить/вернуть сумму документа, либо получить фактическую "
+                    "задолженность по регистрам расчетов."
+                ),
+                needs_clarification=True,
+                clarification_question=(
+                    "Уточните, что именно показать: сумму последней отгрузки по документу "
+                    "или фактическую задолженность клиента после оплат и зачетов?"
+                ),
+                clarification_options=[
+                    "Сумму последней отгрузки по документу",
+                    "Фактическую задолженность клиента",
+                ],
+                reasoning=(
+                    "Фраза с 'должен/должны за документ' может означать сумму документа или задолженность. "
+                    "Нельзя выбирать показатель без пользователя."
+                ),
+            )
         if not (has_subject and has_amount):
             return ResultSufficiencyReview(
                 sufficient=False,

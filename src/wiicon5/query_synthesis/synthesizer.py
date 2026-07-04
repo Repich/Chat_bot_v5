@@ -12,7 +12,7 @@ from wiicon5.llm.client import LLMClient, LLMProviderError
 from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpQueryRequest, normalize_mcp_rows
 from wiicon5.planner.goal import GoalDecomposition
-from wiicon5.presentation.answer_formatter import format_user_answer, rows_effectively_empty
+from wiicon5.presentation.answer_formatter import format_cell, format_user_answer, rows_effectively_empty
 from wiicon5.presentation.llm_answer_formatter import LLMAnswerFormatter
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
@@ -853,15 +853,57 @@ def clarification_message(
     rows: List[Dict[str, Any]],
 ) -> str:
     question_text = sufficiency.clarification_question or "Уточните, какой показатель нужно показать?"
-    parts = [question_text]
+    parts = []
+    partial_summary = humanized_partial_result(question=question, rows=rows)
+    if partial_summary:
+        parts.append(partial_summary)
+    parts.append(question_text)
     if sufficiency.clarification_options:
-        parts.append("Варианты: " + "; ".join(sufficiency.clarification_options) + ".")
-    if rows and not rows_effectively_empty(rows):
-        parts.append(
-            "Уже найден промежуточный результат: "
-            + format_user_answer(question=question, columns=columns, rows=rows[:1])
-        )
+        parts.append("Можно ответить: " + "; ".join(sufficiency.clarification_options) + ".")
+    elif rows and not rows_effectively_empty(rows):
+        parts.append(format_user_answer(question=question, columns=columns, rows=rows[:1]))
     return "\n\n".join(parts)
+
+
+def humanized_partial_result(*, question: str, rows: List[Dict[str, Any]]) -> str:
+    if not rows or not isinstance(rows[0], dict) or rows_effectively_empty(rows[:1]):
+        return ""
+    row = rows[0]
+    subject_column = first_present_column(row, ["Контрагент", "Клиент", "Партнер", "Партнёр", "Поставщик"])
+    amount_column = first_amount_column(row)
+    subject = format_cell(row.get(subject_column))
+    document_column = first_present_column(row, ["Ссылка", "Документ", "Document", "document"])
+    document = format_cell(row.get(document_column)) if document_column else ""
+    if subject_column and document and "отгруз" in question.lower() and not amount_column:
+        return f"Я нашел последнюю отгрузку: {document}. Контрагент: {subject}."
+    if not subject_column or not amount_column:
+        return ""
+    amount = format_cell(row.get(amount_column))
+    if not subject or not amount:
+        return ""
+    subject_label = subject_column.lower()
+    amount_label = "сумма документа" if amount_column == "СуммаДокумента" else amount_column.lower()
+    if "отгруз" in question.lower():
+        return f"Я нашел последнюю отгрузку: {subject_label} {subject}, {amount_label} {amount}."
+    return f"Я нашел данные: {subject_label} {subject}, {amount_label} {amount}."
+
+
+def first_present_column(row: Dict[str, Any], columns: List[str]) -> str:
+    for column in columns:
+        if row.get(column) not in (None, ""):
+            return column
+    return ""
+
+
+def first_amount_column(row: Dict[str, Any]) -> str:
+    preferred = ["СуммаДокумента", "Сумма", "СуммаОтгрузки", "Amount"]
+    for column in preferred:
+        if row.get(column) not in (None, ""):
+            return column
+    for column, value in row.items():
+        if value not in (None, "") and ("сумм" in column.lower() or "amount" in column.lower()):
+            return column
+    return ""
 
 
 def compact_successful_steps(steps: List[Dict[str, Any]], *, include_rows: bool = False) -> List[Dict[str, Any]]:

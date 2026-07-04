@@ -2,7 +2,7 @@
 
 Skill-first self-improving agent for unknown 1C configurations.
 
-Current version: `5.0.0-alpha.6`.
+Current version: `5.0.0-alpha.7`.
 
 Version 5 starts from a new architecture. Business questions are decomposed into
 typed artifacts, then solved through a graph of atomic skills. Data skills bind

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from wiicon5.audit.trace_writer import RunTrace, TraceWriter
 from wiicon5.conversation.context import ConversationContext
@@ -14,6 +14,7 @@ from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.intent.relevance_gate import RelevanceGate
 from wiicon5.models import SkillGap, SkillPlan
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.presentation.answer_formatter import format_cell
 from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
 from wiicon5.skills.composer import SkillComposer
 from wiicon5.skills.learned import LearnedSkillStore
@@ -89,6 +90,32 @@ class AgentOrchestrator:
         user_message = context.append_message("user", message)
         run_trace = self.trace_writer.new_run(prefix="agent")
         self._write_input_trace(run_trace, message, context)
+
+        clarification_artifact = resolve_pending_clarification(message, context)
+        if clarification_artifact is not None:
+            intent = IntentResult(
+                intent_type=IntentType.CLARIFICATION,
+                business_goal=message,
+                requires_1c_data=False,
+                expected_output="short_answer",
+                domain_terms=["clarification"],
+                relevant=True,
+                reasoning="Resolved from the latest pending ClarificationRequest without another 1C query.",
+            )
+            result = AgentRunResult(
+                source="clarification_resolved",
+                message=str(clarification_artifact.value),
+                intent=intent,
+                final_artifact=clarification_artifact,
+                trace_path=str(run_trace.path),
+            )
+            run_trace.write_json(
+                "clarification/resolution.json",
+                {"message": message, "artifact": clarification_artifact.to_dict()},
+            )
+            run_trace.write_json("result/result.json", result.to_dict())
+            self._record_assistant_and_save(context, result)
+            return result
 
         baseline_intent = baseline_general_intent(message)
         if baseline_intent is not None:
@@ -359,6 +386,82 @@ def execution_result_to_dict(execution_result) -> Dict[str, object]:
         "artifacts": {key: artifact.to_dict() for key, artifact in execution_result.artifacts.items()},
         "trace": execution_result.trace,
     }
+
+
+def resolve_pending_clarification(message: str, context: ConversationContext) -> Optional[Artifact]:
+    clarification = latest_pending_clarification(context)
+    if clarification is None or not isinstance(clarification.value, dict):
+        return None
+    value = clarification.value
+    if not selects_document_amount_option(message, value):
+        return None
+    answer = document_amount_answer_from_clarification(value)
+    if not answer:
+        return None
+    return Artifact(name="answer", type="UserAnswer", value=answer, provenance=["clarification_request"])
+
+
+def latest_pending_clarification(context: ConversationContext) -> Optional[Artifact]:
+    for artifact in reversed(context.artifacts):
+        if artifact.type == "ClarificationRequest":
+            return artifact
+        if artifact.type in {"QueryResult", "UserAnswer"}:
+            return None
+    return None
+
+
+def selects_document_amount_option(message: str, clarification: Dict[str, Any]) -> bool:
+    text = message.lower()
+    if any(marker in text for marker in ["задолж", "долг", "долж", "фактичес"]):
+        return False
+    options = " ".join(str(item) for item in clarification.get("clarification_options", [])).lower()
+    has_document_amount_option = "сумм" in options and ("документ" in options or "отгруз" in options)
+    if not has_document_amount_option:
+        return False
+    if text.strip() in {"1", "первый", "первое", "первый вариант", "первое"}:
+        return True
+    return "сумм" in text and ("документ" in text or "отгруз" in text)
+
+
+def document_amount_answer_from_clarification(clarification: Dict[str, Any]) -> str:
+    partial = clarification.get("partial_result")
+    if not isinstance(partial, dict):
+        return ""
+    rows = partial.get("rows")
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        return ""
+    row = rows[0]
+    amount_column = first_amount_column(row)
+    if not amount_column:
+        return ""
+    amount = format_cell(row.get(amount_column))
+    if not amount:
+        return ""
+    subject_column = first_subject_column(row)
+    subject = format_cell(row.get(subject_column)) if subject_column else ""
+    original_question = str(clarification.get("question") or "").lower()
+    object_name = "последней отгрузки" if "отгруз" in original_question else "документа"
+    if subject:
+        return f"Сумма {object_name} по документу: {amount}. Контрагент: {subject}."
+    return f"Сумма {object_name} по документу: {amount}."
+
+
+def first_amount_column(row: Dict[str, Any]) -> str:
+    preferred = ["СуммаДокумента", "Сумма", "СуммаОтгрузки", "Amount"]
+    for column in preferred:
+        if row.get(column) not in (None, ""):
+            return column
+    for column, value in row.items():
+        if value not in (None, "") and ("сумм" in column.lower() or "amount" in column.lower()):
+            return column
+    return ""
+
+
+def first_subject_column(row: Dict[str, Any]) -> str:
+    for column in ["Контрагент", "Клиент", "Партнер", "Партнёр", "Поставщик"]:
+        if row.get(column) not in (None, ""):
+            return column
+    return ""
 
 
 def general_answer(intent: IntentResult) -> str:

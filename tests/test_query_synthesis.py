@@ -8,6 +8,8 @@ from typing import Dict, List
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ConversationContext
+from wiicon5.conversation.memory import ConversationMemory
+from wiicon5.execution.artifacts import Artifact
 from wiicon5.execution.runtime import SkillPlanExecutor, default_runners
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
@@ -233,6 +235,20 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("сумму последней отгрузки", review.clarification_question)
         self.assertGreaterEqual(len(review.clarification_options), 2)
 
+    def test_sufficiency_requests_clarification_for_ambiguous_debt_after_document_ref_only(self) -> None:
+        review = deterministic_partial_review(
+            question="Кто нам должен за последнюю отгрузку и сколько?",
+            columns=["Ссылка", "Контрагент"],
+            rows=[{"Ссылка": "Реализация 0000-000024", "Контрагент": "Омега"}],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertFalse(review.sufficient)
+        self.assertTrue(review.needs_clarification)
+        self.assertIn("сумму последней отгрузки", review.clarification_question)
+
     def test_synthesis_returns_clarification_for_ambiguous_debt_or_shipment_amount(self) -> None:
         customer_ref = {
             "_objectRef": True,
@@ -287,6 +303,8 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Уточните", result.message)
         self.assertIn("Сумму последней отгрузки", result.message)
         self.assertIn("Омега", result.message)
+        self.assertIn("Я нашел последнюю отгрузку", result.message)
+        self.assertNotIn("Контрагент | СуммаДокумента", result.message)
         self.assertEqual(len(mcp.query_calls), 1)
         self.assertEqual(result.context_artifacts[0].type, "ClarificationRequest")
         self.assertEqual(result.context_artifacts[0].value["partial_result"]["rows"][0]["СуммаДокумента"], 96900)
@@ -340,6 +358,60 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Уточните", result.message)
         self.assertEqual(result.context_artifacts[0].type, "ClarificationRequest")
         self.assertEqual(result_payload["source"], "needs_clarification")
+
+    def test_orchestrator_resolves_document_amount_clarification_without_new_query(self) -> None:
+        question = "Покажи сумму отгрузки по документу"
+        memory = ConversationMemory()
+        context = memory.get_or_create("s1")
+        context.add_artifact(
+            Artifact(
+                name="clarification_request",
+                type="ClarificationRequest",
+                value={
+                    "question": "Кто нам должен за последнюю отгрузку и сколько?",
+                    "clarification_question": (
+                        "Уточните, что именно показать: сумму последней отгрузки по документу "
+                        "или фактическую задолженность клиента после оплат и зачетов?"
+                    ),
+                    "clarification_options": [
+                        "Сумму последней отгрузки по документу",
+                        "Фактическую задолженность клиента",
+                    ],
+                    "partial_result": {
+                        "query": "ВЫБРАТЬ ...",
+                        "params": {},
+                        "columns": ["Контрагент", "СуммаДокумента"],
+                        "rows": [
+                            {
+                                "Контрагент": {
+                                    "_objectRef": True,
+                                    "УникальныйИдентификатор": "customer-1",
+                                    "ТипОбъекта": "СправочникСсылка.Контрагенты",
+                                    "Представление": "Омега",
+                                },
+                                "СуммаДокумента": 96900,
+                            }
+                        ],
+                    },
+                },
+                provenance=["test"],
+            )
+        )
+        decomposer = ScriptedGoalDecomposer({})
+        with TemporaryDirectory() as temp_dir:
+            orchestrator = AgentOrchestrator(
+                registry=SkillRegistry.load_from_dir(PROJECT_ROOT / "skills"),
+                decomposer=decomposer,
+                memory=memory,
+                trace_root=Path(temp_dir),
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+
+        self.assertEqual(result.source, "clarification_resolved")
+        self.assertIn("96900", result.message)
+        self.assertIn("Омега", result.message)
+        self.assertEqual(decomposer.calls, [])
 
     def test_synthesis_rejects_repeated_partial_query_and_asks_for_new_query(self) -> None:
         document_ref = document_object_ref(

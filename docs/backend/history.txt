@@ -1,3 +1,9 @@
+5.0.0-alpha.7
+- Made clarification prompts more human-readable by summarizing the found partial result as a sentence instead of a raw markdown table.
+- Added deterministic resolution for follow-up answers to a ClarificationRequest when the user selects the document amount option.
+- Prevented the agent from issuing a new 1C query for "show the shipment amount by document" when the amount is already present in the pending clarification artifact.
+- Added regression tests for resolving "Покажи сумму отгрузки по документу" from the saved clarification context.
+
 5.0.0-alpha.5
 - Added a clarification state for ambiguous business metrics: when a question can mean either a document amount or an accounting balance, the agent asks the user instead of silently choosing.
 - Query synthesis now returns source=needs_clarification through the orchestrator and stores a ClarificationRequest artifact with the partial MCP result for follow-up turns.
