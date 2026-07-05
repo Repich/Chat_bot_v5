@@ -1,3 +1,6 @@
+5.0.0-alpha.44
+- Workbench action responses may now include trace_path so the web UI/raw JSON can point support diagnostics to compact Workbench trace folders.
+
 5.0.0-alpha.43
 - Metadata object cards now include actions to use the object as a draft source and to place fields into group, metric, or filter slots of the guided draft builder.
 - Field selection remains generic and does not hard-code object-specific classifiers; consultants choose the business role through the builder.

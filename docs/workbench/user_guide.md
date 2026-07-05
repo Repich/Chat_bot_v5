@@ -68,6 +68,11 @@ source object, then choose `Group`, `Metric`, or `Filter` near a field. The
 button only fills the form; preview still validates the resulting draft against
 available metadata.
 
+Each create/update/preview/smoke/publish action returns `trace_path` in the raw
+JSON response. Use that folder when diagnosing Workbench behavior: it contains
+compact `request`, `draft_before`/`draft_after`, preview, smoke, validation, or
+publish payloads depending on the action.
+
 ## 4. Validate And Smoke
 
 Before publication:

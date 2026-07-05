@@ -22,6 +22,7 @@ from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.store import HumanSkillDraftStore
 from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
+from wiicon5.workbench.trace import WorkbenchTraceWriter
 from wiicon5.workbench.trace_import import TraceDraftImporter
 from wiicon5.web.admin_security import AdminSecurityConfig
 
@@ -85,6 +86,9 @@ def make_handler(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         draft_store=effective_draft_store,
         audit_log=effective_draft_store.audit,
+    )
+    effective_workbench_trace = WorkbenchTraceWriter(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root
     )
     effective_skill_lifecycle = skill_lifecycle or SkillLifecycleService(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
@@ -372,10 +376,23 @@ def make_handler(
             if parsed.path.startswith("/api/admin/workbench/drafts/"):
                 draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
                 actor = first_query_value(parse_qs(parsed.query), "actor") or "admin"
+                draft = effective_draft_store.get_draft(draft_id)
+                if draft is None:
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                trace = effective_workbench_trace.start(
+                    action="draft.delete",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request={"query": dict(parse_qs(parsed.query))},
+                )
+                trace.write_json("draft_before", draft.to_dict())
                 if not effective_draft_store.delete_draft(draft_id, actor=actor):
                     self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
                     return
-                self._send_json(200, {"ok": True, "draft_id": draft_id})
+                trace.write_json("delete_result", {"ok": True, "draft_id": draft_id})
+                self._send_json(200, {"ok": True, "draft_id": draft_id, "trace_path": str(trace.path)})
                 return
             self._send_json(404, {"ok": False, "error": "not_found"})
 
@@ -387,9 +404,16 @@ def make_handler(
                 if raw_query_edit_requested(draft_payload) and not effective_admin_security.allow_raw_query_edit:
                     self._send_json(403, {"ok": False, "error": "raw_query_edit_disabled"})
                     return
+                trace = effective_workbench_trace.start(
+                    action="draft.create",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    request=payload,
+                )
                 draft = HumanSkillDraft.from_dict(draft_payload)
                 created = effective_draft_store.create_draft(draft, actor=actor)
-                self._send_json(201, {"ok": True, "draft": created.to_dict()})
+                trace.write_json("draft_after", created.to_dict())
+                self._send_json(201, {"ok": True, "draft": created.to_dict(), "trace_path": str(trace.path)})
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
 
@@ -402,8 +426,18 @@ def make_handler(
                 if raw_query_edit_requested(changes) and not effective_admin_security.allow_raw_query_edit:
                     self._send_json(403, {"ok": False, "error": "raw_query_edit_disabled"})
                     return
+                before = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.update",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", before.to_dict())
                 updated = effective_draft_store.update_draft(draft_id, changes, actor=actor)
-                self._send_json(200, {"ok": True, "draft": updated.to_dict()})
+                trace.write_json("draft_after", updated.to_dict())
+                self._send_json(200, {"ok": True, "draft": updated.to_dict(), "trace_path": str(trace.path)})
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
             except Exception as exc:
@@ -510,7 +544,16 @@ def make_handler(
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "admin")
                 draft = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.preview",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", draft.to_dict())
                 preview = effective_preview_service.preview(draft)
+                trace.write_json("query_preview", preview.to_dict())
                 effective_draft_store.audit.append(
                     event_type="workbench.query.previewed",
                     actor=actor,
@@ -520,9 +563,10 @@ def make_handler(
                         "ok": preview.ok,
                         "issue_codes": [issue.code for issue in preview.issues],
                         "query_present": bool(preview.query),
+                        "trace_path": str(trace.path),
                     },
                 )
-                self._send_json(200, {"ok": True, "preview": preview.to_dict()})
+                self._send_json(200, {"ok": True, "preview": preview.to_dict(), "trace_path": str(trace.path)})
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
             except Exception as exc:
@@ -536,22 +580,36 @@ def make_handler(
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "admin")
                 draft = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.smoke",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", draft.to_dict())
                 effective_draft_store.audit.append(
                     event_type="workbench.smoke.started",
                     actor=actor,
                     object_type="human_skill_draft",
                     object_id=draft_id,
-                    payload={},
+                    payload={"trace_path": str(trace.path)},
                 )
                 smoke = smoke_service.run(draft)
+                trace.write_json("smoke_result", smoke.to_dict())
                 effective_draft_store.audit.append(
                     event_type="workbench.smoke.completed",
                     actor=actor,
                     object_type="human_skill_draft",
                     object_id=draft_id,
-                    payload={"ok": smoke.ok, "row_count": smoke.row_count, "smoke_id": smoke.smoke_id},
+                    payload={
+                        "ok": smoke.ok,
+                        "row_count": smoke.row_count,
+                        "smoke_id": smoke.smoke_id,
+                        "trace_path": str(trace.path),
+                    },
                 )
-                self._send_json(200, {"ok": True, "smoke": smoke.to_dict()})
+                self._send_json(200, {"ok": True, "smoke": smoke.to_dict(), "trace_path": str(trace.path)})
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
             except Exception as exc:
@@ -600,12 +658,25 @@ def make_handler(
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "admin")
                 draft = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.publish_candidate",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", draft.to_dict())
                 preflight = effective_candidate_publisher.validate(draft)
+                trace.write_json("validation_result", preflight.to_dict())
                 blocking_issues = [
                     issue for issue in preflight.issues if issue.code not in APPROVAL_GATE_CODES
                 ]
                 if blocking_issues:
-                    self._send_json(200, {"ok": True, "publication": preflight.to_dict()})
+                    trace.write_json("publish_result", preflight.to_dict())
+                    self._send_json(
+                        200,
+                        {"ok": True, "publication": preflight.to_dict(), "trace_path": str(trace.path)},
+                    )
                     return
                 effective_approval_store.approve(
                     draft_id,
@@ -617,6 +688,7 @@ def make_handler(
                     evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
                 )
                 published = effective_candidate_publisher.publish(draft)
+                trace.write_json("publish_result", published.to_dict())
                 if published.ok:
                     effective_draft_store.audit.append(
                         event_type="workbench.skill.published_candidate",
@@ -627,9 +699,10 @@ def make_handler(
                             "skill_id": published.skill.skill_id if published.skill else "",
                             "path": published.path,
                             "evidence_path": published.evidence_path,
+                            "trace_path": str(trace.path),
                         },
                     )
-                self._send_json(200, {"ok": True, "publication": published.to_dict()})
+                self._send_json(200, {"ok": True, "publication": published.to_dict(), "trace_path": str(trace.path)})
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
             except Exception as exc:

@@ -28,6 +28,7 @@ from wiicon5.mcp.client import DictMcpClient
 from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
 from wiicon5.regression.replay import RegressionCaseReplayResult, RegressionReplayResult, save_replay_result
 from wiicon5.workbench.audit import utc_now
+from wiicon5.workbench.trace import WorkbenchTraceWriter
 
 
 class WorkbenchModelTests(unittest.TestCase):
@@ -380,6 +381,27 @@ class ApprovalStoreTests(unittest.TestCase):
         self.assertEqual(latest.approval_id if latest else "", approved.approval_id)
         self.assertEqual([item.event_type for item in events], ["workbench.approval.recorded", "workbench.approval.recorded"])
         self.assertEqual(events[-1].object_id, "draft_stock")
+
+
+class WorkbenchTraceWriterTests(unittest.TestCase):
+    def test_trace_writer_persists_compact_json_files(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            writer = WorkbenchTraceWriter(bot_instance_root=Path(temp_dir) / "bot")
+            run = writer.start(
+                action="draft.preview",
+                actor="consultant",
+                object_type="human_skill_draft",
+                object_id="draft_1",
+                request={"secret": "x" * 3000},
+            )
+            path = run.write_json("query_preview", {"ok": True, "rows": [{"value": "A"}]})
+            request_payload = json.loads((run.path / "request.json").read_text(encoding="utf-8"))
+            preview_payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertTrue(run.run_id.startswith("workbench_draft.preview_"))
+        self.assertEqual(request_payload["action"], "draft.preview")
+        self.assertIn("<truncated>", request_payload["request"]["secret"])
+        self.assertTrue(preview_payload["ok"])
 
 
 class CandidatePublisherTests(unittest.TestCase):
