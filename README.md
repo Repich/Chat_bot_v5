@@ -3,7 +3,7 @@
 WIICON ChatBot 5 - экспериментальный самообучающийся агент для ответов на
 бизнес-вопросы по данным 1С через MCP-сервер.
 
-Текущая версия: `5.0.0-alpha.35`.
+Текущая версия: `5.0.0-alpha.36`.
 
 Проект не является набором жестко зашитых обработчиков под отдельные вопросы.
 Целевая модель: агент получает вопрос пользователя, учитывает контекст диалога,
@@ -28,6 +28,10 @@ WIICON ChatBot 5 - экспериментальный самообучающий
   технические границы разработки версии 5.
 - [Skill Workbench architecture](docs/architecture/skill_workbench.md):
   human-in-the-loop lifecycle для просмотра, проверки и публикации навыков.
+- [Skill Workbench overview](docs/workbench/overview.md): пользовательское
+  описание Workbench и основного lifecycle.
+- [Workbench user guide](docs/workbench/user_guide.md): как консультанту
+  просматривать кандидатов, черновики, smoke и promotion.
 
 История изменений:
 

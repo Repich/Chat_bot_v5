@@ -1,3 +1,7 @@
+5.0.0-alpha.36
+- Added user-facing Workbench documentation: overview, user guide, skill lifecycle, metadata explorer guide, and top-stock skill tutorial.
+- README now links the Workbench user documentation next to the architecture document.
+
 5.0.0-alpha.35
 - Added portable skill pack export/import for selected skills.
 - Export can include matching binding records; import writes skills only as bot-specific candidate skills and marks them with imported_pack evidence.
