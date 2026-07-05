@@ -1,3 +1,6 @@
+5.0.0-alpha.38
+- No backend API behavior changes. The existing skill lifecycle and regression replay admin endpoints are now exposed by the web Workbench client.
+
 5.0.0-alpha.37
 - Added WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT flag, disabled by default.
 - Manual draft create/update requests that contain trace_query/raw_query calculation payloads are now rejected unless raw-query editing is explicitly enabled.

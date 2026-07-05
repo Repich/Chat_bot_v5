@@ -1148,7 +1148,7 @@ CHAT_HTML = """<!doctype html>
       font-size: 13px;
       color: var(--muted);
     }
-    input, textarea {
+    input, textarea, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -1158,6 +1158,15 @@ CHAT_HTML = """<!doctype html>
       font-size: 14px;
       line-height: 1.35;
       padding: 9px 10px;
+    }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .checkbox-label input {
+      width: auto;
+      margin: 0;
     }
     textarea {
       min-height: 94px;
@@ -1427,6 +1436,47 @@ CHAT_HTML = """<!doctype html>
                 <button id="synthesisRejectButton" class="secondary" type="button">Reject</button>
               </div>
               <button id="synthesisIgnoreSimilarButton" class="secondary" type="button">Ignore similar</button>
+              <p class="admin-title">Lifecycle навыка</p>
+              <label>Skill ID
+                <input id="skillLifecycleIdInput" placeholder="skill_...">
+              </label>
+              <label>Причина изменения
+                <input id="skillLifecycleReasonInput" placeholder="Что проверено и почему меняем статус">
+              </label>
+              <label>Regression case IDs
+                <input id="skillRegressionCasesInput" placeholder="reg_case_1, reg_case_2">
+              </label>
+              <label>Target status
+                <select id="skillLifecycleTargetStatus">
+                  <option value="">По умолчанию</option>
+                  <option value="verified">verified</option>
+                  <option value="stable">stable</option>
+                  <option value="candidate">candidate</option>
+                </select>
+              </label>
+              <label>Successful runs
+                <input id="skillSuccessfulRunsInput" type="number" min="0" step="1" placeholder="0">
+              </label>
+              <label class="checkbox-label">
+                <input id="skillAdminApprovalInput" type="checkbox">
+                Admin approval
+              </label>
+              <div class="tool-row">
+                <button id="skillPromoteButton" class="secondary" type="button">Promote</button>
+                <button id="skillRollbackButton" class="secondary" type="button">Rollback</button>
+              </div>
+              <div class="tool-row">
+                <button id="skillDeprecateButton" class="secondary" type="button">Deprecate</button>
+                <button id="skillBlockButton" class="secondary" type="button">Block</button>
+              </div>
+              <p class="admin-title">Regression replay</p>
+              <label>Cases path
+                <input id="regressionCasesPathInput" placeholder="Пусто = bot_instance/regression">
+              </label>
+              <label>Session prefix
+                <input id="regressionSessionPrefixInput" value="web-regression">
+              </label>
+              <button id="runRegressionButton" class="secondary" type="button">Run regression</button>
               <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
             </div>
             <label>ProductRef JSON
@@ -1494,6 +1544,19 @@ CHAT_HTML = """<!doctype html>
     const synthesisCreateDraftButton = document.getElementById("synthesisCreateDraftButton");
     const synthesisRejectButton = document.getElementById("synthesisRejectButton");
     const synthesisIgnoreSimilarButton = document.getElementById("synthesisIgnoreSimilarButton");
+    const skillLifecycleIdInput = document.getElementById("skillLifecycleIdInput");
+    const skillLifecycleReasonInput = document.getElementById("skillLifecycleReasonInput");
+    const skillRegressionCasesInput = document.getElementById("skillRegressionCasesInput");
+    const skillLifecycleTargetStatus = document.getElementById("skillLifecycleTargetStatus");
+    const skillSuccessfulRunsInput = document.getElementById("skillSuccessfulRunsInput");
+    const skillAdminApprovalInput = document.getElementById("skillAdminApprovalInput");
+    const skillPromoteButton = document.getElementById("skillPromoteButton");
+    const skillRollbackButton = document.getElementById("skillRollbackButton");
+    const skillDeprecateButton = document.getElementById("skillDeprecateButton");
+    const skillBlockButton = document.getElementById("skillBlockButton");
+    const regressionCasesPathInput = document.getElementById("regressionCasesPathInput");
+    const regressionSessionPrefixInput = document.getElementById("regressionSessionPrefixInput");
+    const runRegressionButton = document.getElementById("runRegressionButton");
     const workbenchText = document.getElementById("workbenchText");
     let pending = false;
     let onboardingPollTimer = null;
@@ -1915,6 +1978,65 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    function splitCommaSeparated(value) {
+      return String(value || "")
+        .split(",")
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+
+    function skillLifecyclePayload() {
+      const targetStatus = skillLifecycleTargetStatus.value.trim();
+      const successfulRuns = Number.parseInt(skillSuccessfulRunsInput.value, 10);
+      const payload = {
+        actor: "web-admin",
+        reason: skillLifecycleReasonInput.value.trim()
+      };
+      if (targetStatus) payload.target_status = targetStatus;
+      const regressionCaseIds = splitCommaSeparated(skillRegressionCasesInput.value);
+      if (regressionCaseIds.length) payload.regression_case_ids = regressionCaseIds;
+      if (Number.isFinite(successfulRuns) && successfulRuns > 0) payload.successful_runs = successfulRuns;
+      if (skillAdminApprovalInput.checked) payload.admin_approval = true;
+      return payload;
+    }
+
+    async function postSkillLifecycleAction(action) {
+      const skillId = skillLifecycleIdInput.value.trim();
+      if (!skillId) {
+        skillLifecycleIdInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Выполняется lifecycle action...";
+      try {
+        const response = await fetch(`/api/admin/skills/${encodeURIComponent(skillId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(skillLifecyclePayload())
+        });
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Lifecycle action не выполнен: " + String(error.message || error);
+      }
+    }
+
+    async function runRegressionReplay() {
+      const cases = regressionCasesPathInput.value.trim();
+      const sessionPrefix = regressionSessionPrefixInput.value.trim() || "web-regression";
+      const payload = {actor: "web-admin", session_prefix: sessionPrefix};
+      if (cases) payload.cases = cases;
+      workbenchText.textContent = "Запуск regression replay...";
+      try {
+        const response = await fetch("/api/admin/regression/run", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Regression replay не выполнен: " + String(error.message || error);
+      }
+    }
+
     async function loadConversation() {
       const currentId = effectiveSessionId();
       rememberSession(currentId);
@@ -2069,6 +2191,11 @@ CHAT_HTML = """<!doctype html>
     synthesisRejectButton.addEventListener("click", () => postSynthesisCandidateAction("reject"));
     synthesisIgnoreSimilarButton.addEventListener("click", () => postSynthesisCandidateAction("ignore-similar"));
     publishDraftButton.addEventListener("click", () => postDraftAction("publish-candidate"));
+    skillPromoteButton.addEventListener("click", () => postSkillLifecycleAction("promote"));
+    skillRollbackButton.addEventListener("click", () => postSkillLifecycleAction("rollback"));
+    skillDeprecateButton.addEventListener("click", () => postSkillLifecycleAction("deprecate"));
+    skillBlockButton.addEventListener("click", () => postSkillLifecycleAction("block"));
+    runRegressionButton.addEventListener("click", () => runRegressionReplay());
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {
       rememberSession(effectiveSessionId());
