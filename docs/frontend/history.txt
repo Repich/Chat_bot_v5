@@ -1,3 +1,6 @@
+5.0.0-alpha.45
+- No frontend behavior changes. Release cleanup updated repository ignore rules for Workbench runtime evidence.
+
 5.0.0-alpha.44
 - Workbench action responses may now include trace_path so the web UI/raw JSON can point support diagnostics to compact Workbench trace folders.
 

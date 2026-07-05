@@ -1,3 +1,6 @@
+5.0.0-alpha.45
+- Release cleanup: explicitly ignored bot-specific Workbench runtime traces, smoke samples, and audit logs so local evidence files are not committed accidentally.
+
 5.0.0-alpha.44
 - Added Workbench trace runs under bot_instances/<bot_id>/runs/workbench_* for draft create/update/delete, preview, smoke, and candidate publication actions.
 - Preview, smoke, and publish admin responses now include trace_path, and related audit events link to the compact trace folder.
