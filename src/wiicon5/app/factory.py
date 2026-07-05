@@ -26,6 +26,7 @@ from wiicon5.query_synthesis.sufficiency import ResultSufficiencyReviewer
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
 from wiicon5.skills.learned import LearnedSkillStore
 from wiicon5.skills.registry import SkillRegistry
+from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 
 
 def build_agent(
@@ -35,7 +36,7 @@ def build_agent(
     mcp_client: Optional[McpClient] = None,
     memory: Optional[ConversationMemory] = None,
 ) -> AgentOrchestrator:
-    registry = SkillRegistry.load_from_dir(settings.skills_dir)
+    registry = SkillRegistry.load_from_dirs([settings.skills_dir, settings.bot_context.root / "skills"])
     effective_llm = llm_client or build_llm_client(settings)
     effective_mcp = mcp_client or HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds)
     domain_policy = DomainPolicy(settings.bot_instance)
@@ -68,6 +69,7 @@ def build_agent(
     )
     effective_memory = memory or ConversationMemory(default_config_fingerprint=config_profile.fingerprint)
     learned_skill_store = LearnedSkillStore(skills_dir=settings.skills_dir, registry=registry)
+    synthesis_candidate_store = SynthesisCandidateStore(bot_instance_root=settings.bot_context.root)
     return AgentOrchestrator(
         registry=registry,
         decomposer=LLMGoalDecomposer(llm_client=effective_llm, registry=registry, bot_config=settings.bot_instance),
@@ -86,6 +88,7 @@ def build_agent(
             onboarding_evidence_provider=OnboardingEvidenceProvider(settings.bot_context.root / "onboarding"),
         ),
         learned_skill_store=learned_skill_store,
+        synthesis_candidate_store=synthesis_candidate_store,
         trace_root=settings.runs_dir,
     )
 

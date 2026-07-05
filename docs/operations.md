@@ -158,6 +158,41 @@ python3 scripts/trace_to_case.py runs/agent_... \
 python3 scripts/run_regression.py --cases bot_instances/local/regression
 ```
 
+Выполнить replay cases через агента и сохранить результат в workspace бота:
+
+```bash
+python3 scripts/run_regression.py \
+  --cases bot_instances/local/regression \
+  --replay
+```
+
+Для перевода candidate skill в verified нужен успешный replay по связанным
+`case_id`; одного наличия regression case теперь недостаточно.
+
+## Skill Packs
+
+Экспортировать выбранные skills в переносимый pack:
+
+```bash
+python3 scripts/export_skill_pack.py \
+  --skills get_stock_balances get_warehouses \
+  --include-bindings \
+  --out releases/skill_pack_stock.json
+```
+
+Импортировать pack в bot workspace как candidate skills:
+
+```bash
+python3 scripts/import_skill_pack.py \
+  --file releases/skill_pack_stock.json \
+  --include-bindings \
+  --actor consultant
+```
+
+Импортированные skills не становятся `verified` автоматически. Они проходят тот
+же Workbench lifecycle: review, validation, smoke, approval, regression replay и
+promotion.
+
 ## Тесты
 
 Запустить все тесты:

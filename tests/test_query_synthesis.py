@@ -1117,7 +1117,7 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Основная касса", result.message)
         self.assertIn("domain:StockBalanceTable", gap_payload["gaps"][0]["missing"])
 
-    def test_orchestrator_persists_and_reuses_learned_period_metric_skill(self) -> None:
+    def test_orchestrator_persists_learned_period_metric_as_inactive_candidate(self) -> None:
         first_question = "Покажи выручку и прибыль за 2025 год"
         second_question = "Покажи выручку и прибыль за все годы по годам"
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills" / "atomic")
@@ -1166,7 +1166,6 @@ class QuerySynthesisTests(unittest.TestCase):
             )
 
             first = orchestrator.handle(first_question, session_id="s1")
-            second = orchestrator.handle(second_question, session_id="s1")
 
             learned_path = skills_dir / "learned" / "candidates" / "learned_financial_metrics.json"
             learned_exists = learned_path.exists()
@@ -1187,10 +1186,7 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertFalse(learned_payload["implementation"]["evidence"]["human_confirmed"])
         self.assertEqual(learned_payload["implementation"]["config_fingerprint"], "cfg")
         self.assertIsNotNone(registry.get("learned_financial_metrics"))
-        self.assertEqual(second.source, "skill_execution_ok")
-        assert second.plan is not None
-        self.assertIn("learned_financial_metrics", [node.skill_id for node in second.plan.nodes])
-        self.assertIn("ГОД(", mcp.query_calls[-1].query)
+        self.assertNotIn("learned_financial_metrics", [skill.skill_id for skill in registry.active()])
         self.assertEqual(len(llm.calls), 2)
 
     def test_learned_store_does_not_persist_non_generalized_fixed_query(self) -> None:

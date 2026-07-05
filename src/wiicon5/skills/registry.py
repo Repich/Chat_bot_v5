@@ -23,6 +23,14 @@ class SkillRegistry:
             registry.add(SkillContract.from_dict(data))
         return registry
 
+    @classmethod
+    def load_from_dirs(cls, roots: Iterable[Path]) -> "SkillRegistry":
+        registry = cls()
+        for root in roots:
+            for skill in cls.load_from_dir(root).all():
+                registry.add(skill)
+        return registry
+
     def add(self, skill: SkillContract) -> None:
         self._skills[skill.skill_id] = skill
 
@@ -36,7 +44,7 @@ class SkillRegistry:
         return [
             skill
             for skill in self._skills.values()
-            if skill.status not in {SkillStatus.BLOCKED, SkillStatus.DEPRECATED, SkillStatus.DRAFT}
+            if skill.status in {SkillStatus.VERIFIED, SkillStatus.STABLE}
         ]
 
     def by_output_type(self, artifact_type: str) -> List[SkillContract]:

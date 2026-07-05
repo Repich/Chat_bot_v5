@@ -1,3 +1,93 @@
+5.0.0-alpha.45
+- Release cleanup: explicitly ignored bot-specific Workbench runtime traces, smoke samples, and audit logs so local evidence files are not committed accidentally.
+
+5.0.0-alpha.44
+- Added Workbench trace runs under bot_instances/<bot_id>/runs/workbench_* for draft create/update/delete, preview, smoke, and candidate publication actions.
+- Preview, smoke, and publish admin responses now include trace_path, and related audit events link to the compact trace folder.
+- Trace files persist request, draft_before/draft_after, query_preview, smoke_result, validation_result, and publish_result payloads with compact truncation.
+
+5.0.0-alpha.43
+- No backend API behavior changes. The web Workbench now lets experts populate draft builder fields directly from Metadata Explorer cards.
+
+5.0.0-alpha.42
+- Workbench query preview can now use a real metadata lookup from Metadata Explorer/onboarding index instead of trusting only draft-provided confirmed fields.
+- Web Workbench preview/publish flows wire the preview service to the metadata explorer, so manual draft field choices are checked against available metadata before smoke/publish.
+- Added regression coverage for rejecting a draft field that is marked confirmed in the draft but is not confirmed by the actual metadata object.
+
+5.0.0-alpha.41
+- Documentation-only update for the web Workbench user flow; backend behavior is unchanged.
+
+5.0.0-alpha.40
+- No backend API behavior changes. The web Workbench now builds structured top_n_by_metric HumanSkillDraft payloads before submitting them through the existing draft API.
+
+5.0.0-alpha.39
+- No backend API behavior changes. The web Workbench now renders existing admin API responses as human-readable cards while preserving raw JSON.
+
+5.0.0-alpha.38
+- No backend API behavior changes. The existing skill lifecycle and regression replay admin endpoints are now exposed by the web Workbench client.
+
+5.0.0-alpha.37
+- Added WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT flag, disabled by default.
+- Manual draft create/update requests that contain trace_query/raw_query calculation payloads are now rejected unless raw-query editing is explicitly enabled.
+- Trace import and generated candidate flows remain separate review paths; raw query drafts still require validation, smoke, approval, regression replay, and promotion before runtime use.
+- Added settings, admin API, and documentation coverage for guarded advanced raw-query editing.
+
+5.0.0-alpha.36
+- Added user-facing Workbench documentation: overview, user guide, skill lifecycle, metadata explorer guide, and top-stock skill tutorial.
+- README now links the Workbench user documentation next to the architecture document.
+
+5.0.0-alpha.35
+- Added portable skill pack export/import for selected skills.
+- Export can include matching binding records; import writes skills only as bot-specific candidate skills and marks them with imported_pack evidence.
+- Imported skills do not become verified/stable and remain subject to Workbench validation, smoke, approval, regression replay, and promotion.
+- Added CLI wrappers for macOS/Linux and Windows: scripts/export_skill_pack.py/.cmd and scripts/import_skill_pack.py/.cmd.
+- Added audit events for imported skills and bindings plus tests for export, import, missing skill reporting, and duplicate protection.
+
+5.0.0-alpha.34
+- Added regression replay: regression cases can now be executed through the agent and checked for expected source, artifact type, columns, clarification behavior, and forbidden metadata objects.
+- Regression cases now carry stable case_id values, and replay results are saved under the bot instance regression results workspace.
+- Added CLI support for `scripts/run_regression.py --replay`, preserving the old validation-only mode by default.
+- Added admin endpoint `POST /api/admin/regression/run` to replay bot-instance regression cases and audit the run.
+- Candidate -> verified promotion now requires a successful replay result for every supplied regression case id, not just the presence of an id.
+- Added regression tests for replay success/failure checks, saved replay evidence, promotion replay gating, and web routing.
+
+5.0.0-alpha.33
+- Added bot-specific Skill Lifecycle service for candidate -> verified -> stable promotion, deprecate, block, and explicit rollback actions.
+- Lifecycle transitions update the skill JSON status/version, move the skill between status-specific bot workspace folders, append lifecycle evidence, and write Workbench audit events with before/after hashes.
+- Candidate -> verified now requires publication approval evidence plus at least one regression case id; verified -> stable requires either explicit admin approval or enough successful runs.
+- Runtime skill registry now treats only verified and stable skills as active by default; candidate skills remain visible in Workbench but are not planned silently.
+- Runtime agent construction now loads bot-specific skills alongside global seed skills, so promoted verified/stable skills can be used by the agent.
+- Added admin endpoints for /api/admin/skills/{skill_id}/promote, /deprecate, /block, and /rollback.
+- Added regression tests for lifecycle gates, audit/evidence persistence, registry active-status filtering, source-kind reporting, and web routing.
+
+5.0.0-alpha.32
+- Added Workbench synthesis candidates: successful query synthesis answers can now be collected as human-review candidates without auto-publishing a skill.
+- Candidate creation is gated by generic evidence checks: relevant 1C data intent, successful final query, non-empty result rows, nontrivial read-only query text, and duplicate question/query detection.
+- The orchestrator now writes synthesis-candidate evidence into the run trace when a successful generated query is captured for review.
+- Added admin API endpoints to list synthesis candidates, create a draft from a selected candidate, reject it, or mark similar generated queries as ignored.
+- Added regression tests for candidate creation gates, deduplication, reject/ignore actions, draft conversion, orchestrator integration, and web routing.
+
+5.0.0-alpha.31
+- Added a Workbench onboarding candidate service that normalizes candidate_bindings, candidate_semantic_roles, register_usage_map, and candidate_query_patterns into a human-review queue.
+- Added admin API endpoints to list onboarding candidates, reject candidates, and create HumanSkillDraft records from candidates.
+- Candidate rejection decisions are stored in the bot-specific Workbench workspace and audited.
+- Drafts created from onboarding candidates keep source_kind=onboarding_candidate and remain non-plannable until validation, smoke, and approval.
+- Added regression tests for candidate reading, missing files, reject persistence, draft creation, and web API routing.
+
+5.0.0-alpha.30
+- Added admin security settings for WIICON5_ADMIN_ENABLED, WIICON5_ADMIN_TOKEN, WIICON5_ADMIN_BIND_LOCAL_ONLY, and WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS.
+- Guarded /api/admin/* endpoints with localhost-only mode by default and optional Authorization Bearer / X-WIICON5-Admin-Token checks.
+- Restricted onboarding configuration dump paths to the configured allowlist before starting background training.
+- Added audit events for denied admin requests without storing secrets.
+- Added admin security regression tests for token enforcement, disabled admin mode, chat allowlist behavior, and config path rejection.
+
+5.0.0-alpha.29
+- Added append-only Workbench approval records under the bot instance workspace.
+- Candidate publication now has a dry-run validation phase and cannot write a SkillContract without successful smoke and human approval.
+- The publish-candidate API records a human approval event with actor/comment evidence before writing the bot-specific candidate skill.
+- Publication evidence now includes the approval record used for the candidate.
+- Added tests for approval history, rejected approval gating, and publish-candidate approval evidence.
+
 5.0.0-alpha.28
 - Fixed formatting of postprocessed queries when a virtual balance table filter is moved into an external WHERE clause: the next query clause now starts on a new line, so logged queries remain copyable.
 - Added regression coverage that prevents GROUP BY from being concatenated to the moved IN-list filter.

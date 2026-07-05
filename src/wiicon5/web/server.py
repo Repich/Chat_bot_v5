@@ -4,12 +4,27 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Dict, Type
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.onboarding.status import OnboardingManager
+from wiicon5.regression import load_cases, run_regression_replay, save_replay_result
+from wiicon5.workbench.approval import ApprovalStore
+from wiicon5.workbench.lifecycle import SkillLifecycleService
+from wiicon5.workbench.metadata_explorer import MetadataExplorerService
+from wiicon5.workbench.models import HumanSkillDraft
+from wiicon5.workbench.onboarding_candidates import OnboardingCandidateService
+from wiicon5.workbench.preview import QueryPreviewService
+from wiicon5.workbench.publish import APPROVAL_GATE_CODES, CandidatePublisher
+from wiicon5.workbench.skill_catalog import SkillCatalogService
+from wiicon5.workbench.smoke import McpSmokeTestService
+from wiicon5.workbench.store import HumanSkillDraftStore
+from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
+from wiicon5.workbench.trace import WorkbenchTraceWriter
+from wiicon5.workbench.trace_import import TraceDraftImporter
+from wiicon5.web.admin_security import AdminSecurityConfig
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -18,9 +33,66 @@ BACKEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "backend" / "history.txt"
 FRONTEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "frontend" / "history.txt"
 
 
-def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager | None = None) -> Type[BaseHTTPRequestHandler]:
+def make_handler(
+    agent: AgentOrchestrator,
+    onboarding_manager: OnboardingManager | None = None,
+    skill_catalog: SkillCatalogService | None = None,
+    metadata_explorer: MetadataExplorerService | None = None,
+    draft_store: HumanSkillDraftStore | None = None,
+    trace_importer: TraceDraftImporter | None = None,
+    preview_service: QueryPreviewService | None = None,
+    smoke_service: McpSmokeTestService | None = None,
+    approval_store: ApprovalStore | None = None,
+    candidate_publisher: CandidatePublisher | None = None,
+    admin_security: AdminSecurityConfig | None = None,
+    onboarding_candidate_service: OnboardingCandidateService | None = None,
+    synthesis_candidate_store: SynthesisCandidateStore | None = None,
+    skill_lifecycle: SkillLifecycleService | None = None,
+) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
+    )
+    effective_skill_catalog = skill_catalog or SkillCatalogService(
+        global_skills_dir=PROJECT_ROOT / "skills",
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+    )
+    effective_metadata_explorer = metadata_explorer or MetadataExplorerService.from_bot_instance(
+        effective_onboarding_manager.bot_instance_root
+    )
+    effective_draft_store = draft_store or HumanSkillDraftStore(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        bot_id=effective_onboarding_manager.bot_instance_root.name or "local",
+    )
+    effective_trace_importer = trace_importer or TraceDraftImporter(runs_root=PROJECT_ROOT / "runs")
+    effective_preview_service = preview_service or QueryPreviewService(
+        metadata_lookup=effective_metadata_explorer.metadata_object
+    )
+    effective_approval_store = approval_store or ApprovalStore(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        bot_id=effective_onboarding_manager.bot_instance_root.name or "local",
+        audit_log=effective_draft_store.audit,
+    )
+    effective_candidate_publisher = candidate_publisher or CandidatePublisher(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        preview_service=effective_preview_service,
+        approval_store=effective_approval_store,
+    )
+    effective_admin_security = admin_security or AdminSecurityConfig()
+    effective_onboarding_candidate_service = onboarding_candidate_service or OnboardingCandidateService(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        draft_store=effective_draft_store,
+    )
+    effective_synthesis_candidate_store = synthesis_candidate_store or SynthesisCandidateStore(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        draft_store=effective_draft_store,
+        audit_log=effective_draft_store.audit,
+    )
+    effective_workbench_trace = WorkbenchTraceWriter(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root
+    )
+    effective_skill_lifecycle = skill_lifecycle or SkillLifecycleService(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        audit_log=effective_draft_store.audit,
     )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
@@ -28,6 +100,8 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
             parsed = urlparse(self.path)
             path = parsed.path
             query = parse_qs(parsed.query)
+            if self._reject_admin_if_needed(path):
+                return
             if path == "/health":
                 self._send_json(200, {"ok": True, "service": "wiicon5"})
                 return
@@ -58,6 +132,107 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
             if path == "/api/admin/onboarding/status":
                 self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
                 return
+            if path == "/api/admin/workbench/onboarding/candidates":
+                limit = int_or_default(first_query_value(query, "limit"), 200)
+                type_filter = first_query_value(query, "type")
+                term = first_query_value(query, "q") or first_query_value(query, "term")
+                candidates = effective_onboarding_candidate_service.list_candidates(
+                    limit=limit,
+                    type_filter=type_filter,
+                    term=term,
+                )
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "candidates": [item.to_dict() for item in candidates],
+                        "summary": onboarding_candidate_summary(candidates),
+                    },
+                )
+                return
+            if path == "/api/admin/workbench/synthesis/candidates":
+                limit = int_or_default(first_query_value(query, "limit"), 200)
+                status = first_query_value(query, "status")
+                term = first_query_value(query, "q") or first_query_value(query, "term")
+                candidates = effective_synthesis_candidate_store.list_candidates(
+                    limit=limit,
+                    status=status,
+                    term=term,
+                )
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "candidates": [item.to_dict() for item in candidates],
+                        "summary": synthesis_candidate_summary(candidates),
+                    },
+                )
+                return
+            if path == "/api/admin/workbench/drafts":
+                self._send_json(
+                    200,
+                    {"ok": True, "drafts": [draft.to_dict() for draft in effective_draft_store.list_drafts()]},
+                )
+                return
+            if path.startswith("/api/admin/workbench/drafts/") and path.endswith("/approvals"):
+                draft_id = unquote(path.split("/")[-2])
+                draft = effective_draft_store.get_draft(draft_id)
+                if draft is None:
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                approvals = effective_approval_store.history_for_draft(draft_id)
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "draft_id": draft_id,
+                        "approvals": [item.to_dict() for item in approvals],
+                        "latest": approvals[-1].to_dict() if approvals else None,
+                    },
+                )
+                return
+            if path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(path.rsplit("/", 1)[-1])
+                draft = effective_draft_store.get_draft(draft_id)
+                if draft is None:
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                self._send_json(200, {"ok": True, "draft": draft.to_dict()})
+                return
+            if path == "/api/admin/workbench/audit":
+                object_id = first_query_value(query, "object_id")
+                events = (
+                    effective_draft_store.audit.filter_by_object(object_id)
+                    if object_id
+                    else effective_draft_store.audit.read()
+                )
+                self._send_json(200, {"ok": True, "events": [event.to_dict() for event in events]})
+                return
+            if path == "/api/admin/skills/catalog":
+                snapshot = effective_skill_catalog.snapshot()
+                self._send_json(200, {"ok": True, **snapshot.to_dict()})
+                return
+            if path.startswith("/api/admin/skills/catalog/"):
+                skill_id = unquote(path.rsplit("/", 1)[-1])
+                item = effective_skill_catalog.snapshot().get(skill_id)
+                if item is None:
+                    self._send_json(404, {"ok": False, "error": "skill_not_found", "skill_id": skill_id})
+                    return
+                self._send_json(200, {"ok": True, "skill": item.to_dict()})
+                return
+            if path == "/api/admin/metadata/search":
+                term = first_query_value(query, "q") or first_query_value(query, "term")
+                limit = int_or_default(first_query_value(query, "limit"), 20)
+                self._send_json(200, {"ok": True, **effective_metadata_explorer.search(term, limit=limit)})
+                return
+            if path == "/api/admin/metadata/object":
+                full_name = first_query_value(query, "full_name") or first_query_value(query, "name")
+                result = effective_metadata_explorer.get_object(full_name)
+                if not result.get("found"):
+                    self._send_json(404, {"ok": False, "error": "metadata_object_not_found", **result})
+                    return
+                self._send_json(200, {"ok": True, **result})
+                return
             if path == "/history/backend":
                 self._send_text(200, read_text_file(BACKEND_HISTORY_FILE))
                 return
@@ -71,6 +246,8 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
             if parsed.path == "/api/admin/onboarding/run":
                 try:
                     payload = self._read_json()
@@ -78,8 +255,25 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
                     if not config_dump:
                         self._send_json(400, {"ok": False, "error": "config_dump is required"})
                         return
+                    config_dump_path = Path(config_dump).expanduser()
+                    if not effective_admin_security.config_dump_allowed(config_dump_path):
+                        self._audit_admin_denied(
+                            path=parsed.path,
+                            error="config_dump_not_allowed",
+                            status_code=403,
+                            payload={"config_dump": str(config_dump_path)},
+                        )
+                        self._send_json(
+                            403,
+                            {
+                                "ok": False,
+                                "error": "config_dump_not_allowed",
+                                "message": "Configuration dump path is outside WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS.",
+                            },
+                        )
+                        return
                     status = effective_onboarding_manager.start(
-                        config_dump=Path(config_dump).expanduser(),
+                        config_dump=config_dump_path,
                         mcp_url=str(payload.get("mcp_url") or "").strip() or None,
                         background=True,
                     )
@@ -87,7 +281,59 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})
                 return
+            if parsed.path == "/api/admin/regression/run":
+                self._run_regression_replay()
+                return
             if parsed.path != "/chat":
+                if parsed.path == "/api/admin/workbench/drafts/from-trace":
+                    self._create_draft_from_trace()
+                    return
+                if parsed.path.startswith("/api/admin/workbench/onboarding/candidates/") and parsed.path.endswith("/create-draft"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._create_draft_from_onboarding_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/onboarding/candidates/") and parsed.path.endswith("/reject"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._reject_onboarding_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/synthesis/candidates/") and parsed.path.endswith("/create-draft"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._create_draft_from_synthesis_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/synthesis/candidates/") and parsed.path.endswith("/reject"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._reject_synthesis_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/synthesis/candidates/") and parsed.path.endswith("/ignore-similar"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._ignore_similar_synthesis_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/preview"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._preview_draft(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/smoke"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._smoke_draft(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/approve"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._approve_draft(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/reject"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._reject_draft(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/publish-candidate"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._publish_candidate(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/skills/"):
+                    self._change_skill_lifecycle(parsed.path)
+                    return
+                if parsed.path == "/api/admin/workbench/drafts":
+                    self._create_draft()
+                    return
                 self._send_json(404, {"ok": False, "error": "not_found"})
                 return
             try:
@@ -102,6 +348,467 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
                 self._send_json(200, {"ok": True, "result": result.to_dict()})
             except Exception as exc:  # Keep HTTP layer diagnostic rather than crashing the server.
                 self._send_json(500, {"ok": False, "error": str(exc)})
+
+        def do_PATCH(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
+            if parsed.path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                self._update_draft(draft_id)
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def do_PUT(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
+            if parsed.path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                self._update_draft(draft_id)
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
+            if parsed.path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                actor = first_query_value(parse_qs(parsed.query), "actor") or "admin"
+                draft = effective_draft_store.get_draft(draft_id)
+                if draft is None:
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                trace = effective_workbench_trace.start(
+                    action="draft.delete",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request={"query": dict(parse_qs(parsed.query))},
+                )
+                trace.write_json("draft_before", draft.to_dict())
+                if not effective_draft_store.delete_draft(draft_id, actor=actor):
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                trace.write_json("delete_result", {"ok": True, "draft_id": draft_id})
+                self._send_json(200, {"ok": True, "draft_id": draft_id, "trace_path": str(trace.path)})
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def _create_draft(self) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft_payload = payload.get("draft") if isinstance(payload.get("draft"), dict) else payload
+                if raw_query_edit_requested(draft_payload) and not effective_admin_security.allow_raw_query_edit:
+                    self._send_json(403, {"ok": False, "error": "raw_query_edit_disabled"})
+                    return
+                trace = effective_workbench_trace.start(
+                    action="draft.create",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    request=payload,
+                )
+                draft = HumanSkillDraft.from_dict(draft_payload)
+                created = effective_draft_store.create_draft(draft, actor=actor)
+                trace.write_json("draft_after", created.to_dict())
+                self._send_json(201, {"ok": True, "draft": created.to_dict(), "trace_path": str(trace.path)})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _update_draft(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                changes = payload.get("draft") if isinstance(payload.get("draft"), dict) else dict(payload)
+                changes.pop("actor", None)
+                if raw_query_edit_requested(changes) and not effective_admin_security.allow_raw_query_edit:
+                    self._send_json(403, {"ok": False, "error": "raw_query_edit_disabled"})
+                    return
+                before = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.update",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", before.to_dict())
+                updated = effective_draft_store.update_draft(draft_id, changes, actor=actor)
+                trace.write_json("draft_after", updated.to_dict())
+                self._send_json(200, {"ok": True, "draft": updated.to_dict(), "trace_path": str(trace.path)})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _create_draft_from_trace(self) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                trace_path = str(payload.get("trace_path") or "").strip()
+                if not trace_path:
+                    self._send_json(400, {"ok": False, "error": "trace_path is required"})
+                    return
+                draft = effective_trace_importer.draft_from_trace(Path(trace_path))
+                created = effective_draft_store.create_draft(draft, actor=actor)
+                self._send_json(201, {"ok": True, "draft": created.to_dict()})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _create_draft_from_onboarding_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_onboarding_candidate_service.create_draft(candidate_id, actor=actor)
+                self._send_json(201, {"ok": True, "draft": draft.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "onboarding_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _reject_onboarding_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                record = effective_onboarding_candidate_service.reject_candidate(
+                    candidate_id,
+                    actor=actor,
+                    comment=str(payload.get("comment") or ""),
+                )
+                self._send_json(200, {"ok": True, "rejection": record})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "onboarding_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _create_draft_from_synthesis_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_synthesis_candidate_store.create_draft(candidate_id, actor=actor)
+                self._send_json(201, {"ok": True, "draft": draft.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "synthesis_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _reject_synthesis_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                candidate = effective_synthesis_candidate_store.reject_candidate(
+                    candidate_id,
+                    actor=actor,
+                    comment=str(payload.get("comment") or ""),
+                )
+                self._send_json(200, {"ok": True, "candidate": candidate.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "synthesis_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _ignore_similar_synthesis_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                candidate = effective_synthesis_candidate_store.ignore_similar(
+                    candidate_id,
+                    actor=actor,
+                    comment=str(payload.get("comment") or ""),
+                )
+                self._send_json(200, {"ok": True, "candidate": candidate.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "synthesis_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _preview_draft(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.preview",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", draft.to_dict())
+                preview = effective_preview_service.preview(draft)
+                trace.write_json("query_preview", preview.to_dict())
+                effective_draft_store.audit.append(
+                    event_type="workbench.query.previewed",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    payload={
+                        "ok": preview.ok,
+                        "issue_codes": [issue.code for issue in preview.issues],
+                        "query_present": bool(preview.query),
+                        "trace_path": str(trace.path),
+                    },
+                )
+                self._send_json(200, {"ok": True, "preview": preview.to_dict(), "trace_path": str(trace.path)})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _smoke_draft(self, draft_id: str) -> None:
+            if smoke_service is None:
+                self._send_json(503, {"ok": False, "error": "smoke_test_not_configured"})
+                return
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.smoke",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", draft.to_dict())
+                effective_draft_store.audit.append(
+                    event_type="workbench.smoke.started",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    payload={"trace_path": str(trace.path)},
+                )
+                smoke = smoke_service.run(draft)
+                trace.write_json("smoke_result", smoke.to_dict())
+                effective_draft_store.audit.append(
+                    event_type="workbench.smoke.completed",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    payload={
+                        "ok": smoke.ok,
+                        "row_count": smoke.row_count,
+                        "smoke_id": smoke.smoke_id,
+                        "trace_path": str(trace.path),
+                    },
+                )
+                self._send_json(200, {"ok": True, "smoke": smoke.to_dict(), "trace_path": str(trace.path)})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _approve_draft(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                effective_draft_store.require_draft(draft_id)
+                approval = effective_approval_store.approve(
+                    draft_id,
+                    actor=actor,
+                    approval_level=str(payload.get("approval_level") or "candidate"),
+                    comment=str(payload.get("comment") or ""),
+                    smoke_id=str(payload.get("smoke_id") or ""),
+                    regression_case_id=str(payload.get("regression_case_id") or ""),
+                    evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
+                )
+                self._send_json(200, {"ok": True, "approval": approval.to_dict()})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _reject_draft(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                effective_draft_store.require_draft(draft_id)
+                approval = effective_approval_store.reject(
+                    draft_id,
+                    actor=actor,
+                    approval_level=str(payload.get("approval_level") or "candidate"),
+                    comment=str(payload.get("comment") or ""),
+                    evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
+                )
+                self._send_json(200, {"ok": True, "approval": approval.to_dict()})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _publish_candidate(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_draft_store.require_draft(draft_id)
+                trace = effective_workbench_trace.start(
+                    action="draft.publish_candidate",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    request=payload,
+                )
+                trace.write_json("draft_before", draft.to_dict())
+                preflight = effective_candidate_publisher.validate(draft)
+                trace.write_json("validation_result", preflight.to_dict())
+                blocking_issues = [
+                    issue for issue in preflight.issues if issue.code not in APPROVAL_GATE_CODES
+                ]
+                if blocking_issues:
+                    trace.write_json("publish_result", preflight.to_dict())
+                    self._send_json(
+                        200,
+                        {"ok": True, "publication": preflight.to_dict(), "trace_path": str(trace.path)},
+                    )
+                    return
+                effective_approval_store.approve(
+                    draft_id,
+                    actor=actor,
+                    approval_level="candidate",
+                    comment=str(payload.get("comment") or ""),
+                    smoke_id=str(payload.get("smoke_id") or ""),
+                    regression_case_id=str(payload.get("regression_case_id") or ""),
+                    evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
+                )
+                published = effective_candidate_publisher.publish(draft)
+                trace.write_json("publish_result", published.to_dict())
+                if published.ok:
+                    effective_draft_store.audit.append(
+                        event_type="workbench.skill.published_candidate",
+                        actor=actor,
+                        object_type="human_skill_draft",
+                        object_id=draft_id,
+                        payload={
+                            "skill_id": published.skill.skill_id if published.skill else "",
+                            "path": published.path,
+                            "evidence_path": published.evidence_path,
+                            "trace_path": str(trace.path),
+                        },
+                    )
+                self._send_json(200, {"ok": True, "publication": published.to_dict(), "trace_path": str(trace.path)})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _run_regression_replay(self) -> None:
+            try:
+                payload = self._read_json()
+                cases_value = str(payload.get("cases") or "").strip()
+                cases_path = (
+                    Path(cases_value).expanduser()
+                    if cases_value
+                    else effective_onboarding_manager.bot_instance_root / "regression"
+                )
+                if not effective_admin_security.config_dump_allowed(cases_path):
+                    self._audit_admin_denied(
+                        path="/api/admin/regression/run",
+                        error="regression_cases_not_allowed",
+                        status_code=403,
+                        payload={"cases": str(cases_path)},
+                    )
+                    self._send_json(
+                        403,
+                        {
+                            "ok": False,
+                            "error": "regression_cases_not_allowed",
+                            "message": "Regression cases path is outside WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS.",
+                        },
+                    )
+                    return
+                cases = load_cases(cases_path)
+                result = run_regression_replay(
+                    cases,
+                    agent,
+                    session_prefix=str(payload.get("session_prefix") or "regression"),
+                )
+                result_path = save_replay_result(
+                    result,
+                    effective_onboarding_manager.bot_instance_root / "regression" / "results",
+                )
+                effective_draft_store.audit.append(
+                    event_type="workbench.regression.replayed",
+                    actor=str(payload.get("actor") or "admin"),
+                    object_type="regression",
+                    object_id=result.run_id,
+                    payload={"ok": result.ok, "count": result.count, "path": str(result_path)},
+                )
+                self._send_json(200, {"ok": result.ok, "regression": result.to_dict(), "path": str(result_path)})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _change_skill_lifecycle(self, path: str) -> None:
+            parts = path.strip("/").split("/")
+            if len(parts) != 5 or parts[:3] != ["api", "admin", "skills"]:
+                self._send_json(404, {"ok": False, "error": "not_found"})
+                return
+            skill_id = unquote(parts[3])
+            requested_action = parts[4]
+            action = ""
+            if requested_action == "promote":
+                action = "promote"
+            elif requested_action == "deprecate":
+                action = "deprecate"
+            elif requested_action == "block":
+                action = "block"
+            elif requested_action == "rollback":
+                action = "rollback"
+            else:
+                self._send_json(404, {"ok": False, "error": "not_found"})
+                return
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "")
+                reason = str(payload.get("reason") or payload.get("comment") or "")
+                if action == "promote":
+                    result = effective_skill_lifecycle.promote(
+                        skill_id,
+                        actor=actor,
+                        reason=reason,
+                        target_status=str(payload.get("target_status") or ""),
+                        regression_case_ids=[
+                            str(item)
+                            for item in payload.get("regression_case_ids", [])
+                            if str(item).strip()
+                        ]
+                        if isinstance(payload.get("regression_case_ids"), list)
+                        else [],
+                        successful_runs=int_or_default(payload.get("successful_runs"), 0),
+                        admin_approval=bool(payload.get("admin_approval", False)),
+                    )
+                elif action == "deprecate":
+                    result = effective_skill_lifecycle.deprecate(skill_id, actor=actor, reason=reason)
+                elif action == "block":
+                    result = effective_skill_lifecycle.block(skill_id, actor=actor, reason=reason)
+                else:
+                    result = effective_skill_lifecycle.rollback(
+                        skill_id,
+                        actor=actor,
+                        reason=reason,
+                        target_status=str(payload.get("target_status") or ""),
+                        admin_approval=bool(payload.get("admin_approval", False)),
+                    )
+                status_code = 200 if result.ok else lifecycle_error_status(result)
+                self._send_json(status_code, {"ok": result.ok, "lifecycle": result.to_dict()})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
 
         def _read_json(self) -> Dict[str, Any]:
             content_length = int(self.headers.get("Content-Length", "0"))
@@ -138,6 +845,45 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
             self.end_headers()
             self.wfile.write(raw)
 
+        def _reject_admin_if_needed(self, path: str) -> bool:
+            result = effective_admin_security.authorize(
+                path=path,
+                headers=self.headers,
+                client_host=str(self.client_address[0]) if self.client_address else "",
+            )
+            if result.ok:
+                return False
+            self._audit_admin_denied(path=path, error=result.error, status_code=result.status_code)
+            self._send_json(
+                result.status_code,
+                {"ok": False, "error": result.error, "message": result.message},
+            )
+            return True
+
+        def _audit_admin_denied(
+            self,
+            *,
+            path: str,
+            error: str,
+            status_code: int,
+            payload: Dict[str, Any] | None = None,
+        ) -> None:
+            try:
+                effective_draft_store.audit.append(
+                    event_type="workbench.admin.denied",
+                    actor="http",
+                    object_type="http_request",
+                    object_id=path,
+                    payload={
+                        "error": error,
+                        "status_code": status_code,
+                        "client_host": str(self.client_address[0]) if self.client_address else "",
+                        **(payload or {}),
+                    },
+                )
+            except Exception:
+                return None
+
         def log_message(self, format: str, *args: Any) -> None:
             return None
 
@@ -163,6 +909,33 @@ def first_query_value(query: Dict[str, list[str]], name: str) -> str:
     return values[0].strip() if values else ""
 
 
+def int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def lifecycle_error_status(result) -> int:
+    codes = {issue.code for issue in result.issues}
+    if "skill_not_found" in codes:
+        return 404
+    if "missing_actor" in codes or "missing_reason" in codes:
+        return 400
+    return 409
+
+
+def raw_query_edit_requested(payload: Dict[str, Any]) -> bool:
+    calculation = payload.get("calculation")
+    if not isinstance(calculation, dict):
+        return False
+    kind = str(calculation.get("kind") or "").strip()
+    raw = calculation.get("raw") if isinstance(calculation.get("raw"), dict) else {}
+    if kind in {"trace_query", "raw_query"}:
+        return True
+    return bool(raw.get("query"))
+
+
 def conversation_summary(context) -> Dict[str, Any]:
     latest = context.messages[-1] if context.messages else None
     preview = latest.content if latest else ""
@@ -172,6 +945,22 @@ def conversation_summary(context) -> Dict[str, Any]:
         "updated_at": latest.ts if latest else "",
         "preview": preview[:140],
     }
+
+
+def onboarding_candidate_summary(candidates) -> Dict[str, Any]:
+    by_type: Dict[str, int] = {}
+    by_status: Dict[str, int] = {}
+    for candidate in candidates:
+        by_type[candidate.type] = by_type.get(candidate.type, 0) + 1
+        by_status[candidate.status] = by_status.get(candidate.status, 0) + 1
+    return {"total": len(candidates), "by_type": by_type, "by_status": by_status}
+
+
+def synthesis_candidate_summary(candidates) -> Dict[str, Any]:
+    by_status: Dict[str, int] = {}
+    for candidate in candidates:
+        by_status[candidate.status] = by_status.get(candidate.status, 0) + 1
+    return {"total": len(candidates), "by_status": by_status}
 
 
 def seed_context_from_payload(agent: AgentOrchestrator, session_id: str, payload: Dict[str, Any]) -> None:
@@ -192,8 +981,18 @@ def run_http_server(
     host: str,
     port: int,
     onboarding_manager: OnboardingManager | None = None,
+    smoke_service: McpSmokeTestService | None = None,
+    admin_security: AdminSecurityConfig | None = None,
 ) -> None:
-    server = HTTPServer((host, port), make_handler(agent, onboarding_manager=onboarding_manager))
+    server = HTTPServer(
+        (host, port),
+        make_handler(
+            agent,
+            onboarding_manager=onboarding_manager,
+            smoke_service=smoke_service,
+            admin_security=admin_security,
+        ),
+    )
     try:
         server.serve_forever()
     finally:
@@ -424,7 +1223,7 @@ CHAT_HTML = """<!doctype html>
       font-size: 13px;
       color: var(--muted);
     }
-    input, textarea {
+    input, textarea, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -434,6 +1233,15 @@ CHAT_HTML = """<!doctype html>
       font-size: 14px;
       line-height: 1.35;
       padding: 9px 10px;
+    }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .checkbox-label input {
+      width: auto;
+      margin: 0;
     }
     textarea {
       min-height: 94px;
@@ -584,6 +1392,88 @@ CHAT_HTML = """<!doctype html>
       line-height: 1.35;
       white-space: pre-wrap;
     }
+    .workbench-summary {
+      display: grid;
+      gap: 8px;
+    }
+    .workbench-heading {
+      margin: 4px 0 0;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .summary-card {
+      display: grid;
+      gap: 5px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .summary-card-title {
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .summary-card-subtitle {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+    .summary-line {
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr);
+      gap: 6px;
+      overflow-wrap: anywhere;
+    }
+    .summary-label {
+      color: var(--muted);
+      font-weight: 650;
+    }
+    .summary-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .summary-tag {
+      max-width: 100%;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+    .summary-action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .summary-action {
+      min-width: 0;
+      min-height: 28px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .summary-action:hover { background: #eef8f6; }
+    .field-picker {
+      display: grid;
+      gap: 6px;
+      padding-top: 4px;
+    }
+    .field-picker-row {
+      display: grid;
+      gap: 5px;
+      padding-top: 6px;
+      border-top: 1px solid var(--line);
+    }
     @media (max-width: 760px) {
       body { overflow: hidden; }
       header { align-items: flex-start; flex-direction: column; }
@@ -652,6 +1542,180 @@ CHAT_HTML = """<!doctype html>
               <button id="startOnboardingButton" class="secondary" type="button">Запустить обучение</button>
               <div id="onboardingStatus" class="admin-status">Статус не загружен.</div>
             </div>
+            <div id="workbenchPanel" class="admin-panel">
+              <p class="admin-title">Skill Workbench</p>
+              <div class="tool-row">
+                <button id="skillCatalogButton" class="secondary" type="button">Навыки</button>
+                <button id="draftListButton" class="secondary" type="button">Черновики</button>
+              </div>
+              <button id="onboardingCandidatesButton" class="secondary" type="button">Onboarding candidates</button>
+              <button id="synthesisCandidatesButton" class="secondary" type="button">Agent candidates</button>
+              <label>Поиск метаданных
+                <input id="metadataSearchInput" placeholder="Склады, Номенклатура, Регистр">
+              </label>
+              <button id="metadataSearchButton" class="secondary" type="button">Искать метаданные</button>
+              <label>Metadata full_name
+                <input id="metadataObjectInput" placeholder="РегистрНакопления.ТоварыНаСкладах">
+              </label>
+              <button id="metadataObjectButton" class="secondary" type="button">Открыть объект</button>
+              <label>Draft ID
+                <input id="draftIdInput" placeholder="draft_...">
+              </label>
+              <button id="draftDetailsButton" class="secondary" type="button">Открыть draft</button>
+              <label>Новый draft
+                <input id="draftTitleInput" placeholder="Название навыка">
+              </label>
+              <label>Пример вопроса
+                <input id="draftExampleQuestionInput" placeholder="Какой вопрос должен закрывать навык">
+              </label>
+              <label>Описание
+                <input id="draftDescriptionInput" placeholder="Бизнес-смысл навыка">
+              </label>
+              <div class="tool-row">
+                <label>Источник alias
+                  <input id="draftSourceAliasInput" value="Источник">
+                </label>
+                <label>Источник 1С
+                  <input id="draftSourceObjectInput" placeholder="РегистрНакопления...Остатки">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Группировка role
+                  <input id="draftGroupRoleInput" placeholder="product">
+                </label>
+                <label>Группировка field
+                  <input id="draftGroupFieldInput" placeholder="Номенклатура">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Метрика role
+                  <input id="draftMeasureRoleInput" placeholder="stock_balance">
+                </label>
+                <label>Метрика field
+                  <input id="draftMeasureFieldInput" placeholder="ВНаличииОстаток">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Метрика label
+                  <input id="draftMeasureLabelInput" placeholder="Остаток">
+                </label>
+                <label>Агрегация
+                  <select id="draftAggregateSelect">
+                    <option value="sum">sum</option>
+                    <option value="count">count</option>
+                    <option value="max">max</option>
+                    <option value="min">min</option>
+                  </select>
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Фильтр role
+                  <input id="draftFilterRoleInput" placeholder="warehouse_type">
+                </label>
+                <label>Фильтр field
+                  <input id="draftFilterFieldInput" placeholder="Склад.ТипСклада">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Фильтр parameter
+                  <input id="draftFilterParameterInput" placeholder="ТипСклада">
+                </label>
+                <label>Фильтр operator
+                  <select id="draftFilterOperatorSelect">
+                    <option value="equals">equals</option>
+                    <option value="not_equals">not_equals</option>
+                    <option value="in">in</option>
+                    <option value="contains">contains</option>
+                  </select>
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Limit
+                  <input id="draftLimitInput" type="number" min="1" max="100" step="1" placeholder="10">
+                </label>
+                <label class="checkbox-label">
+                  <input id="draftFieldsConfirmedInput" type="checkbox">
+                  Fields confirmed
+                </label>
+              </div>
+              <label>Draft JSON
+                <textarea id="draftJsonInput" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
+              </label>
+              <div class="tool-row">
+                <button id="createDraftButton" class="secondary" type="button">Создать</button>
+                <button id="previewDraftButton" class="secondary" type="button">Preview</button>
+              </div>
+              <div class="tool-row">
+                <button id="smokeDraftButton" class="secondary" type="button">Smoke</button>
+                <button id="publishDraftButton" class="secondary" type="button">Candidate</button>
+              </div>
+              <label>Комментарий approval
+                <input id="approvalCommentInput" placeholder="Что проверено человеком">
+              </label>
+              <div class="tool-row">
+                <button id="approveDraftButton" class="secondary" type="button">Approve</button>
+                <button id="rejectDraftButton" class="secondary" type="button">Reject</button>
+              </div>
+              <label>Candidate ID
+                <input id="candidateIdInput" placeholder="onb_...">
+              </label>
+              <div class="tool-row">
+                <button id="candidateCreateDraftButton" class="secondary" type="button">Create draft</button>
+                <button id="candidateRejectButton" class="secondary" type="button">Reject</button>
+              </div>
+              <label>Agent candidate ID
+                <input id="synthesisCandidateIdInput" placeholder="syn_...">
+              </label>
+              <div class="tool-row">
+                <button id="synthesisCreateDraftButton" class="secondary" type="button">Create draft</button>
+                <button id="synthesisRejectButton" class="secondary" type="button">Reject</button>
+              </div>
+              <button id="synthesisIgnoreSimilarButton" class="secondary" type="button">Ignore similar</button>
+              <p class="admin-title">Lifecycle навыка</p>
+              <label>Skill ID
+                <input id="skillLifecycleIdInput" placeholder="skill_...">
+              </label>
+              <button id="skillDetailsButton" class="secondary" type="button">Открыть skill</button>
+              <label>Причина изменения
+                <input id="skillLifecycleReasonInput" placeholder="Что проверено и почему меняем статус">
+              </label>
+              <label>Regression case IDs
+                <input id="skillRegressionCasesInput" placeholder="reg_case_1, reg_case_2">
+              </label>
+              <label>Target status
+                <select id="skillLifecycleTargetStatus">
+                  <option value="">По умолчанию</option>
+                  <option value="verified">verified</option>
+                  <option value="stable">stable</option>
+                  <option value="candidate">candidate</option>
+                </select>
+              </label>
+              <label>Successful runs
+                <input id="skillSuccessfulRunsInput" type="number" min="0" step="1" placeholder="0">
+              </label>
+              <label class="checkbox-label">
+                <input id="skillAdminApprovalInput" type="checkbox">
+                Admin approval
+              </label>
+              <div class="tool-row">
+                <button id="skillPromoteButton" class="secondary" type="button">Promote</button>
+                <button id="skillRollbackButton" class="secondary" type="button">Rollback</button>
+              </div>
+              <div class="tool-row">
+                <button id="skillDeprecateButton" class="secondary" type="button">Deprecate</button>
+                <button id="skillBlockButton" class="secondary" type="button">Block</button>
+              </div>
+              <p class="admin-title">Regression replay</p>
+              <label>Cases path
+                <input id="regressionCasesPathInput" placeholder="Пусто = bot_instance/regression">
+              </label>
+              <label>Session prefix
+                <input id="regressionSessionPrefixInput" value="web-regression">
+              </label>
+              <button id="runRegressionButton" class="secondary" type="button">Run regression</button>
+              <div id="workbenchSummary" class="workbench-summary"></div>
+              <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
+            </div>
             <label>ProductRef JSON
               <textarea id="productRef" spellcheck="false"></textarea>
             </label>
@@ -694,6 +1758,64 @@ CHAT_HTML = """<!doctype html>
     const configDumpPath = document.getElementById("configDumpPath");
     const startOnboardingButton = document.getElementById("startOnboardingButton");
     const onboardingStatus = document.getElementById("onboardingStatus");
+    const skillCatalogButton = document.getElementById("skillCatalogButton");
+    const draftListButton = document.getElementById("draftListButton");
+    const onboardingCandidatesButton = document.getElementById("onboardingCandidatesButton");
+    const synthesisCandidatesButton = document.getElementById("synthesisCandidatesButton");
+    const metadataSearchInput = document.getElementById("metadataSearchInput");
+    const metadataSearchButton = document.getElementById("metadataSearchButton");
+    const metadataObjectInput = document.getElementById("metadataObjectInput");
+    const metadataObjectButton = document.getElementById("metadataObjectButton");
+    const draftIdInput = document.getElementById("draftIdInput");
+    const draftDetailsButton = document.getElementById("draftDetailsButton");
+    const draftTitleInput = document.getElementById("draftTitleInput");
+    const draftExampleQuestionInput = document.getElementById("draftExampleQuestionInput");
+    const draftDescriptionInput = document.getElementById("draftDescriptionInput");
+    const draftSourceAliasInput = document.getElementById("draftSourceAliasInput");
+    const draftSourceObjectInput = document.getElementById("draftSourceObjectInput");
+    const draftGroupRoleInput = document.getElementById("draftGroupRoleInput");
+    const draftGroupFieldInput = document.getElementById("draftGroupFieldInput");
+    const draftMeasureRoleInput = document.getElementById("draftMeasureRoleInput");
+    const draftMeasureFieldInput = document.getElementById("draftMeasureFieldInput");
+    const draftMeasureLabelInput = document.getElementById("draftMeasureLabelInput");
+    const draftAggregateSelect = document.getElementById("draftAggregateSelect");
+    const draftFilterRoleInput = document.getElementById("draftFilterRoleInput");
+    const draftFilterFieldInput = document.getElementById("draftFilterFieldInput");
+    const draftFilterParameterInput = document.getElementById("draftFilterParameterInput");
+    const draftFilterOperatorSelect = document.getElementById("draftFilterOperatorSelect");
+    const draftLimitInput = document.getElementById("draftLimitInput");
+    const draftFieldsConfirmedInput = document.getElementById("draftFieldsConfirmedInput");
+    const draftJsonInput = document.getElementById("draftJsonInput");
+    const createDraftButton = document.getElementById("createDraftButton");
+    const previewDraftButton = document.getElementById("previewDraftButton");
+    const smokeDraftButton = document.getElementById("smokeDraftButton");
+    const publishDraftButton = document.getElementById("publishDraftButton");
+    const approvalCommentInput = document.getElementById("approvalCommentInput");
+    const approveDraftButton = document.getElementById("approveDraftButton");
+    const rejectDraftButton = document.getElementById("rejectDraftButton");
+    const candidateIdInput = document.getElementById("candidateIdInput");
+    const candidateCreateDraftButton = document.getElementById("candidateCreateDraftButton");
+    const candidateRejectButton = document.getElementById("candidateRejectButton");
+    const synthesisCandidateIdInput = document.getElementById("synthesisCandidateIdInput");
+    const synthesisCreateDraftButton = document.getElementById("synthesisCreateDraftButton");
+    const synthesisRejectButton = document.getElementById("synthesisRejectButton");
+    const synthesisIgnoreSimilarButton = document.getElementById("synthesisIgnoreSimilarButton");
+    const skillLifecycleIdInput = document.getElementById("skillLifecycleIdInput");
+    const skillLifecycleReasonInput = document.getElementById("skillLifecycleReasonInput");
+    const skillRegressionCasesInput = document.getElementById("skillRegressionCasesInput");
+    const skillLifecycleTargetStatus = document.getElementById("skillLifecycleTargetStatus");
+    const skillSuccessfulRunsInput = document.getElementById("skillSuccessfulRunsInput");
+    const skillAdminApprovalInput = document.getElementById("skillAdminApprovalInput");
+    const skillDetailsButton = document.getElementById("skillDetailsButton");
+    const skillPromoteButton = document.getElementById("skillPromoteButton");
+    const skillRollbackButton = document.getElementById("skillRollbackButton");
+    const skillDeprecateButton = document.getElementById("skillDeprecateButton");
+    const skillBlockButton = document.getElementById("skillBlockButton");
+    const regressionCasesPathInput = document.getElementById("regressionCasesPathInput");
+    const regressionSessionPrefixInput = document.getElementById("regressionSessionPrefixInput");
+    const runRegressionButton = document.getElementById("runRegressionButton");
+    const workbenchSummary = document.getElementById("workbenchSummary");
+    const workbenchText = document.getElementById("workbenchText");
     let pending = false;
     let onboardingPollTimer = null;
     const baseTitle = document.title;
@@ -962,6 +2084,652 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    function asDisplayText(value) {
+      if (value === null || value === undefined || value === "") return "";
+      if (Array.isArray(value)) return value.map(asDisplayText).filter(Boolean).join(", ");
+      if (typeof value === "object") {
+        if (value["Представление"]) return String(value["Представление"]);
+        if (value.name) return String(value.name);
+        if (value.full_name) return String(value.full_name);
+        return JSON.stringify(value);
+      }
+      return String(value);
+    }
+
+    function appendWorkbenchHeading(text) {
+      const heading = document.createElement("p");
+      heading.className = "workbench-heading";
+      heading.textContent = text;
+      workbenchSummary.append(heading);
+      return heading;
+    }
+
+    function createSummaryCard(title, subtitle = "") {
+      const card = document.createElement("div");
+      card.className = "summary-card";
+      const titleNode = document.createElement("div");
+      titleNode.className = "summary-card-title";
+      titleNode.textContent = asDisplayText(title) || "Без названия";
+      card.append(titleNode);
+      if (subtitle) {
+        const subtitleNode = document.createElement("div");
+        subtitleNode.className = "summary-card-subtitle";
+        subtitleNode.textContent = asDisplayText(subtitle);
+        card.append(subtitleNode);
+      }
+      return card;
+    }
+
+    function appendSummaryLine(card, label, value) {
+      const text = asDisplayText(value);
+      if (!text) return;
+      const row = document.createElement("div");
+      row.className = "summary-line";
+      const labelNode = document.createElement("span");
+      labelNode.className = "summary-label";
+      labelNode.textContent = label;
+      const valueNode = document.createElement("span");
+      valueNode.textContent = text;
+      row.append(labelNode, valueNode);
+      card.append(row);
+    }
+
+    function appendSummaryTags(card, label, values) {
+      const items = Array.isArray(values) ? values.map(asDisplayText).filter(Boolean) : splitCommaSeparated(values);
+      if (!items.length) return;
+      const row = document.createElement("div");
+      row.className = "summary-line";
+      const labelNode = document.createElement("span");
+      labelNode.className = "summary-label";
+      labelNode.textContent = label;
+      const tags = document.createElement("span");
+      tags.className = "summary-tags";
+      items.slice(0, 12).forEach(item => {
+        const tag = document.createElement("span");
+        tag.className = "summary-tag";
+        tag.textContent = item;
+        tags.append(tag);
+      });
+      if (items.length > 12) {
+        const extra = document.createElement("span");
+        extra.className = "summary-tag";
+        extra.textContent = "+" + String(items.length - 12);
+        tags.append(extra);
+      }
+      row.append(labelNode, tags);
+      card.append(row);
+    }
+
+    function renderSummaryList(title, items, renderer, emptyText = "Нет данных.") {
+      appendWorkbenchHeading(title);
+      if (!Array.isArray(items) || !items.length) {
+        const card = createSummaryCard(emptyText);
+        workbenchSummary.append(card);
+        return;
+      }
+      items.slice(0, 20).forEach(item => workbenchSummary.append(renderer(item)));
+      if (items.length > 20) {
+        const card = createSummaryCard("Показаны первые 20 элементов", "Полный список доступен в JSON ниже.");
+        workbenchSummary.append(card);
+      }
+    }
+
+    function renderSkillCard(skill) {
+      const card = createSummaryCard(skill.title || skill.skill_id, skill.description || skill.skill_id);
+      appendSummaryLine(card, "Статус", skill.status);
+      appendSummaryLine(card, "Источник", skill.source || skill.source_kind);
+      appendSummaryLine(card, "Тип", skill.kind);
+      appendSummaryTags(card, "Outputs", skill.outputs);
+      appendSummaryTags(card, "Filters", skill.supported_filter_roles);
+      appendSummaryLine(card, "Path", skill.source_path);
+      return card;
+    }
+
+    function renderDraftCard(draft) {
+      const card = createSummaryCard(draft.title || draft.draft_id, draft.description || draft.draft_id);
+      appendSummaryLine(card, "Статус", draft.status);
+      appendSummaryLine(card, "Источник", draft.source_kind || draft.source);
+      appendSummaryTags(card, "Вопросы", draft.example_questions);
+      appendSummaryTags(card, "Объекты", (draft.data_sources || []).map(item => item.object_full_name || item.full_name || item.object));
+      appendSummaryTags(card, "Поля", (draft.field_mappings || []).map(item => `${item.role || "field"}: ${item.object_full_name || ""}.${item.field_name || ""}`));
+      return card;
+    }
+
+    function renderCandidateCard(candidate) {
+      const card = createSummaryCard(candidate.title || candidate.candidate_id, candidate.question || candidate.source_question || candidate.type);
+      appendSummaryLine(card, "Статус", candidate.status);
+      appendSummaryLine(card, "Тип", candidate.type || candidate.candidate_type);
+      appendSummaryLine(card, "Role", candidate.semantic_role || candidate.role);
+      appendSummaryLine(card, "Объект", candidate.object_full_name || candidate.object || candidate.metadata_object);
+      appendSummaryLine(card, "Confidence", candidate.confidence);
+      appendSummaryTags(card, "Evidence", candidate.evidence);
+      return card;
+    }
+
+    function renderMetadataObjectCard(object) {
+      const card = createSummaryCard(object.full_name || object.name, object.synonym || object.kind);
+      appendSummaryLine(card, "Тип", object.kind || object.object_kind);
+      appendSummaryLine(card, "Trust", object.trust || object.source);
+      const actionRow = document.createElement("div");
+      actionRow.className = "summary-action-row";
+      const sourceButton = document.createElement("button");
+      sourceButton.className = "summary-action";
+      sourceButton.type = "button";
+      sourceButton.textContent = "Use as source";
+      sourceButton.addEventListener("click", () => applyMetadataSource(object.full_name || object.name || ""));
+      actionRow.append(sourceButton);
+      card.append(actionRow);
+      appendSummaryTags(card, "Fields", (object.fields || []).map(item => `${item.name || ""}${item.category ? " (" + item.category + ")" : ""}`));
+      appendSummaryTags(card, "Hints", (object.field_hints || []).map(item => item.name || item.field_name));
+      appendMetadataFieldPicker(card, object);
+      return card;
+    }
+
+    function appendMetadataFieldPicker(card, object) {
+      const fields = Array.isArray(object.fields) ? object.fields : [];
+      if (!fields.length) return;
+      const picker = document.createElement("div");
+      picker.className = "field-picker";
+      fields.slice(0, 20).forEach(field => {
+        const fieldName = field && field.name ? String(field.name) : "";
+        if (!fieldName) return;
+        const row = document.createElement("div");
+        row.className = "field-picker-row";
+        const caption = document.createElement("div");
+        caption.className = "summary-card-subtitle";
+        const flags = [];
+        if (field.category) flags.push(field.category);
+        if (field.type) flags.push(field.type);
+        if (field.confirmed === false) flags.push("hint");
+        caption.textContent = flags.length ? `${fieldName} - ${flags.join(", ")}` : fieldName;
+        const actions = document.createElement("div");
+        actions.className = "summary-action-row";
+        [
+          ["group", "Group"],
+          ["measure", "Metric"],
+          ["filter", "Filter"]
+        ].forEach(([target, label]) => {
+          const button = document.createElement("button");
+          button.className = "summary-action";
+          button.type = "button";
+          button.textContent = label;
+          button.addEventListener("click", () => applyMetadataField(object.full_name || object.name || "", fieldName, target));
+          actions.append(button);
+        });
+        row.append(caption, actions);
+        picker.append(row);
+      });
+      if (fields.length > 20) {
+        const note = document.createElement("div");
+        note.className = "summary-card-subtitle";
+        note.textContent = "Показаны первые 20 полей. Полный список доступен в JSON ниже.";
+        picker.append(note);
+      }
+      card.append(picker);
+    }
+
+    function renderLifecycleCard(lifecycle) {
+      const skill = lifecycle.skill || {};
+      const card = createSummaryCard(skill.title || skill.skill_id || "Lifecycle result");
+      appendSummaryLine(card, "Before", lifecycle.before_status);
+      appendSummaryLine(card, "After", lifecycle.after_status);
+      appendSummaryLine(card, "OK", lifecycle.ok);
+      appendSummaryTags(card, "Issues", (lifecycle.issues || []).map(item => item.message || item.code || item));
+      return card;
+    }
+
+    function renderRegressionCard(regression, path) {
+      const card = createSummaryCard("Regression replay", path || regression.run_id);
+      appendSummaryLine(card, "OK", regression.ok);
+      appendSummaryLine(card, "Всего", regression.count);
+      appendSummaryLine(card, "Passed", regression.passed);
+      appendSummaryLine(card, "Failed", regression.failed);
+      appendSummaryTags(card, "Cases", (regression.results || []).map(item => `${item.case_id || "case"}: ${item.ok ? "ok" : "failed"}`));
+      return card;
+    }
+
+    function renderWorkbenchSummary(payload) {
+      workbenchSummary.replaceChildren();
+      if (!payload || typeof payload !== "object") return;
+      if (Array.isArray(payload.skills)) {
+        if (payload.skills[0] && payload.skills[0].skill_id && !skillLifecycleIdInput.value.trim()) {
+          skillLifecycleIdInput.value = payload.skills[0].skill_id;
+        }
+        renderSummaryList("Навыки", payload.skills, renderSkillCard);
+      }
+      if (payload.skill) {
+        if (payload.skill.skill_id) skillLifecycleIdInput.value = payload.skill.skill_id;
+        renderSummaryList("Карточка навыка", [payload.skill], renderSkillCard);
+      }
+      if (Array.isArray(payload.drafts)) {
+        renderSummaryList("Черновики", payload.drafts, renderDraftCard);
+      }
+      if (payload.draft) {
+        if (payload.draft.draft_id) draftIdInput.value = payload.draft.draft_id;
+        renderSummaryList("Карточка draft", [payload.draft], renderDraftCard);
+      }
+      if (Array.isArray(payload.candidates)) {
+        renderSummaryList("Кандидаты", payload.candidates, renderCandidateCard);
+      }
+      if (Array.isArray(payload.objects)) {
+        if (payload.objects[0] && payload.objects[0].full_name && !metadataObjectInput.value.trim()) {
+          metadataObjectInput.value = payload.objects[0].full_name;
+        }
+        renderSummaryList("Метаданные", payload.objects, renderMetadataObjectCard);
+      }
+      if (payload.object) {
+        if (payload.object.full_name) metadataObjectInput.value = payload.object.full_name;
+        renderSummaryList("Карточка объекта", [payload.object], renderMetadataObjectCard);
+      }
+      if (payload.lifecycle) {
+        renderSummaryList("Lifecycle", [payload.lifecycle], renderLifecycleCard);
+      }
+      if (payload.regression) {
+        renderSummaryList("Regression replay", [payload.regression], item => renderRegressionCard(item, payload.path));
+      }
+      if (!workbenchSummary.children.length) {
+        appendWorkbenchHeading("Технический результат");
+        workbenchSummary.append(createSummaryCard("Сводка недоступна для этого типа ответа", "Полный JSON показан ниже."));
+      }
+    }
+
+    function showWorkbench(payload) {
+      renderWorkbenchSummary(payload);
+      workbenchText.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    function applyMetadataSource(fullName) {
+      const value = String(fullName || "").trim();
+      if (!value) return;
+      draftSourceObjectInput.value = value;
+      if (!draftSourceAliasInput.value.trim()) draftSourceAliasInput.value = "Источник";
+      workbenchText.textContent = "Источник 1С подставлен в draft builder: " + value;
+    }
+
+    function applyMetadataField(fullName, fieldName, target) {
+      applyMetadataSource(fullName);
+      const field = String(fieldName || "").trim();
+      if (!field) return;
+      if (target === "group") {
+        draftGroupFieldInput.value = field;
+        if (!draftGroupRoleInput.value.trim()) draftGroupRoleInput.value = field;
+      } else if (target === "measure") {
+        draftMeasureFieldInput.value = field;
+        if (!draftMeasureRoleInput.value.trim()) draftMeasureRoleInput.value = field;
+        if (!draftMeasureLabelInput.value.trim()) draftMeasureLabelInput.value = field;
+      } else if (target === "filter") {
+        draftFilterFieldInput.value = field;
+        if (!draftFilterRoleInput.value.trim()) draftFilterRoleInput.value = field;
+        if (!draftFilterParameterInput.value.trim()) draftFilterParameterInput.value = field;
+      }
+      workbenchText.textContent = "Поле подставлено в draft builder: " + field + " -> " + target;
+    }
+
+    async function loadSkillCatalog() {
+      workbenchText.textContent = "Загрузка каталога навыков...";
+      try {
+        const response = await fetch("/api/admin/skills/catalog", {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить каталог навыков: " + String(error.message || error);
+      }
+    }
+
+    async function loadSkillDetails() {
+      const skillId = skillLifecycleIdInput.value.trim();
+      if (!skillId) {
+        skillLifecycleIdInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Загрузка карточки навыка...";
+      try {
+        const response = await fetch(`/api/admin/skills/catalog/${encodeURIComponent(skillId)}`, {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить карточку навыка: " + String(error.message || error);
+      }
+    }
+
+    async function loadDraftList() {
+      workbenchText.textContent = "Загрузка черновиков...";
+      try {
+        const response = await fetch("/api/admin/workbench/drafts", {cache: "no-store"});
+        const data = await response.json();
+        if (data.ok && Array.isArray(data.drafts) && data.drafts[0]) {
+          draftIdInput.value = data.drafts[0].draft_id || draftIdInput.value;
+        }
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить черновики: " + String(error.message || error);
+      }
+    }
+
+    async function loadDraftDetails() {
+      const draftId = draftIdInput.value.trim();
+      if (!draftId) {
+        draftIdInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Загрузка карточки draft...";
+      try {
+        const response = await fetch(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}`, {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить карточку draft: " + String(error.message || error);
+      }
+    }
+
+    async function loadOnboardingCandidates() {
+      workbenchText.textContent = "Загрузка onboarding candidates...";
+      try {
+        const response = await fetch("/api/admin/workbench/onboarding/candidates", {cache: "no-store"});
+        const data = await response.json();
+        if (data.ok && Array.isArray(data.candidates) && data.candidates[0]) {
+          candidateIdInput.value = data.candidates[0].candidate_id || candidateIdInput.value;
+        }
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить onboarding candidates: " + String(error.message || error);
+      }
+    }
+
+    async function loadSynthesisCandidates() {
+      workbenchText.textContent = "Загрузка agent candidates...";
+      try {
+        const response = await fetch("/api/admin/workbench/synthesis/candidates", {cache: "no-store"});
+        const data = await response.json();
+        if (data.ok && Array.isArray(data.candidates) && data.candidates[0]) {
+          synthesisCandidateIdInput.value = data.candidates[0].candidate_id || synthesisCandidateIdInput.value;
+        }
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить agent candidates: " + String(error.message || error);
+      }
+    }
+
+    async function searchMetadata() {
+      const term = metadataSearchInput.value.trim();
+      if (!term) {
+        metadataSearchInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Поиск метаданных...";
+      try {
+        const response = await fetch("/api/admin/metadata/search?q=" + encodeURIComponent(term), {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось выполнить поиск: " + String(error.message || error);
+      }
+    }
+
+    async function loadMetadataObject() {
+      const fullName = metadataObjectInput.value.trim();
+      if (!fullName) {
+        metadataObjectInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Загрузка объекта метаданных...";
+      try {
+        const response = await fetch("/api/admin/metadata/object?full_name=" + encodeURIComponent(fullName), {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить объект метаданных: " + String(error.message || error);
+      }
+    }
+
+    function buildTopMetricDraftFromForm() {
+      const sourceObject = draftSourceObjectInput.value.trim();
+      const groupField = draftGroupFieldInput.value.trim();
+      const measureField = draftMeasureFieldInput.value.trim();
+      if (!sourceObject && !groupField && !measureField) return null;
+      if (!sourceObject || !groupField || !measureField) {
+        throw new Error("Для конструктора draft укажите источник 1С, поле группировки и поле метрики.");
+      }
+      const title = draftTitleInput.value.trim() || draftExampleQuestionInput.value.trim();
+      if (!title) throw new Error("Укажите название draft или пример вопроса.");
+      const alias = draftSourceAliasInput.value.trim() || "Источник";
+      const groupRole = draftGroupRoleInput.value.trim() || "dimension";
+      const measureRole = draftMeasureRoleInput.value.trim() || "metric";
+      const measureLabel = draftMeasureLabelInput.value.trim() || measureRole;
+      const filterRole = draftFilterRoleInput.value.trim();
+      const filterField = draftFilterFieldInput.value.trim();
+      const filterParameter = draftFilterParameterInput.value.trim() || filterRole;
+      const limit = Number.parseInt(draftLimitInput.value, 10);
+      const confirmed = draftFieldsConfirmedInput.checked;
+      const fieldMappings = [
+        {
+          role: groupRole,
+          source_alias: alias,
+          field_name: groupField,
+          required: true,
+          confirmed
+        },
+        {
+          role: measureRole,
+          source_alias: alias,
+          field_name: measureField,
+          required: true,
+          confirmed
+        }
+      ];
+      const filters = [];
+      if (filterRole || filterField) {
+        if (!filterRole || !filterField) {
+          throw new Error("Для фильтра укажите role и field.");
+        }
+        fieldMappings.push({
+          role: filterRole,
+          source_alias: alias,
+          field_name: filterField,
+          required: false,
+          confirmed
+        });
+        filters.push({
+          role: filterRole,
+          operator: draftFilterOperatorSelect.value || "equals",
+          value_source: "input",
+          parameter: filterParameter || filterRole,
+          required: false
+        });
+      }
+      return {
+        title,
+        description: draftDescriptionInput.value.trim(),
+        status: "draft",
+        example_questions: [draftExampleQuestionInput.value.trim() || title],
+        business_entities: [groupRole, measureRole].concat(filterRole ? [filterRole] : []),
+        data_sources: [
+          {
+            alias,
+            object_name: sourceObject,
+            object_kind: "",
+            purpose: "primary",
+            trust: confirmed ? "verified" : "manual",
+            evidence: [
+              {
+                source: "workbench_ui",
+                reference: "manual_top_n_by_metric_form",
+                trust: confirmed ? "verified" : "manual"
+              }
+            ]
+          }
+        ],
+        field_mappings: fieldMappings,
+        calculation: {
+          kind: "top_n_by_metric",
+          source_alias: alias,
+          filters,
+          group_by: [groupRole],
+          measures: [
+            {
+              role: measureRole,
+              expression: measureRole,
+              aggregate: draftAggregateSelect.value || "sum",
+              label: measureLabel
+            }
+          ],
+          sort: [{field: measureLabel, direction: "desc"}],
+          limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 10
+        },
+        presentation: {
+          columns: [groupRole, measureLabel],
+          answer_template: "",
+          empty_result_text: "Данных не найдено.",
+          notes: ""
+        },
+        tags: ["workbench_ui", "top_n_by_metric"],
+        notes: "",
+        source_kind: "manual"
+      };
+    }
+
+    function draftPayloadFromForm() {
+      const raw = draftJsonInput.value.trim();
+      if (raw) return JSON.parse(raw);
+      const builtDraft = buildTopMetricDraftFromForm();
+      if (builtDraft) return builtDraft;
+      const title = draftTitleInput.value.trim();
+      if (!title) throw new Error("Укажите название draft или JSON.");
+      return {
+        title,
+        description: draftDescriptionInput.value.trim(),
+        example_questions: [draftExampleQuestionInput.value.trim() || title],
+        source_kind: "manual"
+      };
+    }
+
+    async function createWorkbenchDraft() {
+      try {
+        const response = await fetch("/api/admin/workbench/drafts", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin", draft: draftPayloadFromForm()})
+        });
+        const data = await response.json();
+        if (data.ok && data.draft && data.draft.draft_id) draftIdInput.value = data.draft.draft_id;
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось создать draft: " + String(error.message || error);
+      }
+    }
+
+    async function postDraftAction(action, extra = {}) {
+      const draftId = draftIdInput.value.trim();
+      if (!draftId) {
+        draftIdInput.focus();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin", ...extra})
+        });
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Действие Workbench не выполнено: " + String(error.message || error);
+      }
+    }
+
+    async function postCandidateAction(action) {
+      const candidateId = candidateIdInput.value.trim();
+      if (!candidateId) {
+        candidateIdInput.focus();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/admin/workbench/onboarding/candidates/${encodeURIComponent(candidateId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin", comment: approvalCommentInput.value.trim()})
+        });
+        const data = await response.json();
+        if (data.ok && data.draft && data.draft.draft_id) draftIdInput.value = data.draft.draft_id;
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Действие onboarding candidate не выполнено: " + String(error.message || error);
+      }
+    }
+
+    async function postSynthesisCandidateAction(action) {
+      const candidateId = synthesisCandidateIdInput.value.trim();
+      if (!candidateId) {
+        synthesisCandidateIdInput.focus();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/admin/workbench/synthesis/candidates/${encodeURIComponent(candidateId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin", comment: approvalCommentInput.value.trim()})
+        });
+        const data = await response.json();
+        if (data.ok && data.draft && data.draft.draft_id) draftIdInput.value = data.draft.draft_id;
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Действие agent candidate не выполнено: " + String(error.message || error);
+      }
+    }
+
+    function splitCommaSeparated(value) {
+      return String(value || "")
+        .split(",")
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+
+    function skillLifecyclePayload() {
+      const targetStatus = skillLifecycleTargetStatus.value.trim();
+      const successfulRuns = Number.parseInt(skillSuccessfulRunsInput.value, 10);
+      const payload = {
+        actor: "web-admin",
+        reason: skillLifecycleReasonInput.value.trim()
+      };
+      if (targetStatus) payload.target_status = targetStatus;
+      const regressionCaseIds = splitCommaSeparated(skillRegressionCasesInput.value);
+      if (regressionCaseIds.length) payload.regression_case_ids = regressionCaseIds;
+      if (Number.isFinite(successfulRuns) && successfulRuns > 0) payload.successful_runs = successfulRuns;
+      if (skillAdminApprovalInput.checked) payload.admin_approval = true;
+      return payload;
+    }
+
+    async function postSkillLifecycleAction(action) {
+      const skillId = skillLifecycleIdInput.value.trim();
+      if (!skillId) {
+        skillLifecycleIdInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Выполняется lifecycle action...";
+      try {
+        const response = await fetch(`/api/admin/skills/${encodeURIComponent(skillId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(skillLifecyclePayload())
+        });
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Lifecycle action не выполнен: " + String(error.message || error);
+      }
+    }
+
+    async function runRegressionReplay() {
+      const cases = regressionCasesPathInput.value.trim();
+      const sessionPrefix = regressionSessionPrefixInput.value.trim() || "web-regression";
+      const payload = {actor: "web-admin", session_prefix: sessionPrefix};
+      if (cases) payload.cases = cases;
+      workbenchText.textContent = "Запуск regression replay...";
+      try {
+        const response = await fetch("/api/admin/regression/run", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Regression replay не выполнен: " + String(error.message || error);
+      }
+    }
+
     async function loadConversation() {
       const currentId = effectiveSessionId();
       rememberSession(currentId);
@@ -1096,6 +2864,34 @@ CHAT_HTML = """<!doctype html>
     backendHistoryButton.addEventListener("click", () => showHistory("backend"));
     frontendHistoryButton.addEventListener("click", () => showHistory("frontend"));
     startOnboardingButton.addEventListener("click", () => startOnboarding());
+    skillCatalogButton.addEventListener("click", () => loadSkillCatalog());
+    skillDetailsButton.addEventListener("click", () => loadSkillDetails());
+    draftListButton.addEventListener("click", () => loadDraftList());
+    draftDetailsButton.addEventListener("click", () => loadDraftDetails());
+    onboardingCandidatesButton.addEventListener("click", () => loadOnboardingCandidates());
+    synthesisCandidatesButton.addEventListener("click", () => loadSynthesisCandidates());
+    metadataSearchButton.addEventListener("click", () => searchMetadata());
+    metadataObjectButton.addEventListener("click", () => loadMetadataObject());
+    createDraftButton.addEventListener("click", () => createWorkbenchDraft());
+    previewDraftButton.addEventListener("click", () => postDraftAction("preview"));
+    smokeDraftButton.addEventListener("click", () => postDraftAction("smoke"));
+    approveDraftButton.addEventListener("click", () => postDraftAction("approve", {
+      comment: approvalCommentInput.value.trim()
+    }));
+    rejectDraftButton.addEventListener("click", () => postDraftAction("reject", {
+      comment: approvalCommentInput.value.trim()
+    }));
+    candidateCreateDraftButton.addEventListener("click", () => postCandidateAction("create-draft"));
+    candidateRejectButton.addEventListener("click", () => postCandidateAction("reject"));
+    synthesisCreateDraftButton.addEventListener("click", () => postSynthesisCandidateAction("create-draft"));
+    synthesisRejectButton.addEventListener("click", () => postSynthesisCandidateAction("reject"));
+    synthesisIgnoreSimilarButton.addEventListener("click", () => postSynthesisCandidateAction("ignore-similar"));
+    publishDraftButton.addEventListener("click", () => postDraftAction("publish-candidate"));
+    skillPromoteButton.addEventListener("click", () => postSkillLifecycleAction("promote"));
+    skillRollbackButton.addEventListener("click", () => postSkillLifecycleAction("rollback"));
+    skillDeprecateButton.addEventListener("click", () => postSkillLifecycleAction("deprecate"));
+    skillBlockButton.addEventListener("click", () => postSkillLifecycleAction("block"));
+    runRegressionButton.addEventListener("click", () => runRegressionReplay());
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {
       rememberSession(effectiveSessionId());

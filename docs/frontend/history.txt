@@ -1,3 +1,45 @@
+5.0.0-alpha.45
+- No frontend behavior changes. Release cleanup updated repository ignore rules for Workbench runtime evidence.
+
+5.0.0-alpha.44
+- Workbench action responses may now include trace_path so the web UI/raw JSON can point support diagnostics to compact Workbench trace folders.
+
+5.0.0-alpha.43
+- Metadata object cards now include actions to use the object as a draft source and to place fields into group, metric, or filter slots of the guided draft builder.
+- Field selection remains generic and does not hard-code object-specific classifiers; consultants choose the business role through the builder.
+
+5.0.0-alpha.42
+- No frontend UI changes. Workbench preview results may now show metadata-review errors based on actual metadata lookup instead of draft-only confirmation.
+
+5.0.0-alpha.41
+- Updated Workbench user documentation for the summary panel, skill/draft/object cards, lifecycle controls, regression replay, and guided top_n_by_metric draft creation.
+
+5.0.0-alpha.40
+- Added a guided top_n_by_metric draft builder to the Workbench UI so a consultant can create a HumanSkillDraft without writing JSON.
+- The builder captures source object, grouping field, metric field, optional filter field, aggregation, limit, and field confirmation state.
+- Raw Draft JSON remains available as an advanced override, but the default manual creation path now produces structured draft payloads.
+
+5.0.0-alpha.39
+- Added a human-readable Workbench summary panel above raw JSON results.
+- Skill catalogs, skill cards, drafts, candidates, metadata objects, lifecycle results, and regression replay now render concise business/technical cards.
+- Added Workbench actions to open a specific skill, draft, or metadata object by id/full_name.
+
+5.0.0-alpha.38
+- Added Skill Workbench controls for skill lifecycle actions: promote, rollback, deprecate, and block.
+- Added a web control to run regression replay from the Workbench settings panel.
+- Lifecycle actions can now include a reason, regression case ids, target status, successful run count, and explicit admin approval flag.
+
+5.0.0-alpha.32
+- Added Workbench controls for agent-generated query synthesis candidates.
+- The web client can load the synthesis candidate queue, create a draft from a selected candidate, reject a candidate, or ignore similar generated queries.
+
+5.0.0-alpha.31
+- Added Skill Workbench controls to load onboarding candidates, create a draft from a selected candidate, and reject a candidate.
+
+5.0.0-alpha.29
+- Added Workbench controls for approval comments plus explicit approve/reject actions.
+- Workbench candidate publication now sends approval comments through the admin API.
+
 5.0.0-alpha.13
 - Fixed the training banner layout so a completed onboarding message no longer consumes the main viewport.
 - Expanded the chat area to use the available screen width and height.

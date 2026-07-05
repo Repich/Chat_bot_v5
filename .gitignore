@@ -11,6 +11,9 @@ venv/
 logs/
 runs/
 bot_instances/*/onboarding/
+bot_instances/*/runs/
+bot_instances/*/workbench/smoke/
+bot_instances/*/workbench/audit/
 skills/bindings/
 skills/learned/
 !skills/learned/

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from wiicon5.models import SkillKind, SkillStatus
+from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
 from wiicon5.skills.registry import SkillRegistry
 
 
@@ -30,6 +30,36 @@ class SkillContractTests(unittest.TestCase):
         candidates = registry.by_output_type("WarehouseRefList")
 
         self.assertEqual([skill.skill_id for skill in candidates], ["get_warehouses"])
+
+    def test_registry_does_not_plan_candidate_skills_by_default(self) -> None:
+        registry = SkillRegistry(
+            [
+                SkillContract(
+                    skill_id="candidate_stock",
+                    version="0.1.0",
+                    kind=SkillKind.DATA,
+                    status=SkillStatus.CANDIDATE,
+                    description="Candidate skill",
+                    capabilities=["candidate_stock"],
+                    inputs=[],
+                    outputs=[Port(name="rows", type="StockBalanceTable")],
+                ),
+                SkillContract(
+                    skill_id="verified_stock",
+                    version="0.1.0",
+                    kind=SkillKind.DATA,
+                    status=SkillStatus.VERIFIED,
+                    description="Verified skill",
+                    capabilities=["verified_stock"],
+                    inputs=[],
+                    outputs=[Port(name="rows", type="StockBalanceTable")],
+                ),
+            ]
+        )
+
+        candidates = registry.by_output_type("StockBalanceTable")
+
+        self.assertEqual([skill.skill_id for skill in candidates], ["verified_stock"])
 
     def test_transfer_document_count_skill_loads(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")

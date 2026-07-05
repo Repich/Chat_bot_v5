@@ -205,6 +205,20 @@ Runtime не применяет learned skill к другой конфигура
 не совпадает. Если доступен metadata provider, runtime проверяет, что поля из
 metadata dependency contract еще существуют.
 
+### Skill Workbench
+
+Подробная архитектура human-in-the-loop процесса описана в
+[`docs/architecture/skill_workbench.md`](architecture/skill_workbench.md).
+Workbench не является JSON-редактором навыков. Он вводит управляемый lifecycle:
+человек создает или проверяет `HumanSkillDraft`, система валидирует источники и
+поля, генерирует безопасный preview query, запускает smoke test через MCP,
+сохраняет evidence и только после approval публикует bot-specific candidate
+skill.
+
+Ключевое ограничение: candidate skills не становятся runtime-active по умолчанию,
+а onboarding hints и LLM reasoning не считаются подтвержденными metadata fields
+без MCP/XML evidence.
+
 ### Configuration Profile
 
 Код:
@@ -265,8 +279,10 @@ XML-derived поля получают `trust=verified`, а поля, найде�
 - `scripts/trace_to_case.py`
 - `scripts/run_regression.py`
 
-Trace можно превратить в regression case. Текущий runner валидирует формат и
-ожидания cases; автоматический replay через LLM/MCP будет следующим слоем.
+Trace можно превратить в regression case. Runner поддерживает два режима:
+валидацию формата case pack и replay через агента. Replay проверяет source,
+тип artifact, ожидаемые колонки, уточнения и запрещенные объекты метаданных.
+Promotion candidate -> verified требует успешный replay для связанных case id.
 
 ### Skill Composer Explainability
 
