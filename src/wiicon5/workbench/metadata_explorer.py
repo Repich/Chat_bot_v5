@@ -107,6 +107,9 @@ class MetadataExplorerService:
             "requests": list(getattr(self.provider, "last_requests", [])) if self.provider is not None else [],
         }
 
+    def metadata_object(self, full_name: str) -> MetadataObject:
+        return self._get_object(full_name.strip())
+
     def _search_objects(self, term: str) -> List[MetadataObject]:
         if self.provider is not None:
             return self.provider.search_objects(term)

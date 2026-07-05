@@ -308,6 +308,33 @@ class QueryPreviewServiceTests(unittest.TestCase):
         self.assertIn("СГРУППИРОВАТЬ ПО", preview.query)
         self.assertEqual(preview.issues, [])
 
+    def test_preview_uses_real_metadata_lookup_when_available(self) -> None:
+        draft = top_n_stock_draft()
+        metadata = MetadataObject(
+            full_name="РегистрНакопления.ТоварыНаСкладах",
+            fields=["Номенклатура", "Количество"],
+            field_details={
+                "Номенклатура": {
+                    "name": "Номенклатура",
+                    "_category": "dimension",
+                    "_source": "metadata_xml",
+                    "_trust": "verified",
+                },
+                "Количество": {
+                    "name": "Количество",
+                    "_category": "resource",
+                    "_source": "metadata_xml",
+                    "_trust": "verified",
+                },
+            },
+            raw={"_source": "metadata_xml", "_trust": "verified"},
+        )
+
+        preview = QueryPreviewService(metadata_lookup=lambda _: metadata).preview(draft)
+
+        self.assertFalse(preview.ok)
+        self.assertIn("field_not_confirmed_by_metadata", [issue.code for issue in preview.issues])
+
     def test_preview_reports_actionable_issue_for_unsupported_recipe(self) -> None:
         draft = HumanSkillDraft(title="Trace draft", calculation=CalculationRecipe(kind="trace_query"))
 

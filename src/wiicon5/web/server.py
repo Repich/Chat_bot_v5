@@ -63,7 +63,9 @@ def make_handler(
         bot_id=effective_onboarding_manager.bot_instance_root.name or "local",
     )
     effective_trace_importer = trace_importer or TraceDraftImporter(runs_root=PROJECT_ROOT / "runs")
-    effective_preview_service = preview_service or QueryPreviewService()
+    effective_preview_service = preview_service or QueryPreviewService(
+        metadata_lookup=effective_metadata_explorer.metadata_object
+    )
     effective_approval_store = approval_store or ApprovalStore(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         bot_id=effective_onboarding_manager.bot_instance_root.name or "local",

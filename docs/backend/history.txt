@@ -1,3 +1,8 @@
+5.0.0-alpha.42
+- Workbench query preview can now use a real metadata lookup from Metadata Explorer/onboarding index instead of trusting only draft-provided confirmed fields.
+- Web Workbench preview/publish flows wire the preview service to the metadata explorer, so manual draft field choices are checked against available metadata before smoke/publish.
+- Added regression coverage for rejecting a draft field that is marked confirmed in the draft but is not confirmed by the actual metadata object.
+
 5.0.0-alpha.41
 - Documentation-only update for the web Workbench user flow; backend behavior is unchanged.
 

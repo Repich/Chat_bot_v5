@@ -49,7 +49,8 @@ A draft should describe business meaning, not code:
 - presentation columns and notes.
 
 Hints from onboarding are useful, but final query fields must be confirmed by
-MCP or verified XML metadata.
+MCP or verified XML metadata. When metadata is available, preview checks the
+draft against that metadata instead of trusting the draft fields alone.
 
 For the first supported manual scenario, use the guided `top_n_by_metric` form:
 

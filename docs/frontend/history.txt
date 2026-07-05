@@ -1,3 +1,6 @@
+5.0.0-alpha.42
+- No frontend UI changes. Workbench preview results may now show metadata-review errors based on actual metadata lookup instead of draft-only confirmation.
+
 5.0.0-alpha.41
 - Updated Workbench user documentation for the summary panel, skill/draft/object cards, lifecycle controls, regression replay, and guided top_n_by_metric draft creation.
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from wiicon5.knowledge.metadata import MetadataObject
 from wiicon5.models import ValidationIssue
@@ -34,8 +34,14 @@ class QueryPreviewResult:
 
 
 class QueryPreviewService:
-    def __init__(self, *, reviewer: Optional[OneCQueryReviewer] = None) -> None:
+    def __init__(
+        self,
+        *,
+        reviewer: Optional[OneCQueryReviewer] = None,
+        metadata_lookup: Optional[Callable[[str], MetadataObject]] = None,
+    ) -> None:
         self.reviewer = reviewer or OneCQueryReviewer()
+        self.metadata_lookup = metadata_lookup
 
     def preview(self, draft: HumanSkillDraft) -> QueryPreviewResult:
         issues = validate_recipe(draft)
@@ -43,7 +49,7 @@ class QueryPreviewService:
             return QueryPreviewResult(ok=False, issues=issues)
         query, params, limit = build_top_n_by_metric_query(draft)
         safety = validate_read_only_query(query, params)
-        metadata_objects = metadata_objects_from_draft(draft)
+        metadata_objects = metadata_objects_from_draft(draft, metadata_lookup=self.metadata_lookup)
         review = self.reviewer.review(query=query, params=params, metadata_objects=metadata_objects)
         all_issues = list(safety.issues)
         all_issues.extend(
@@ -150,9 +156,17 @@ def build_top_n_by_metric_query(draft: HumanSkillDraft) -> tuple[str, Dict[str, 
     return "\n".join(query_parts), params, limit
 
 
-def metadata_objects_from_draft(draft: HumanSkillDraft) -> List[MetadataObject]:
+def metadata_objects_from_draft(
+    draft: HumanSkillDraft,
+    *,
+    metadata_lookup: Optional[Callable[[str], MetadataObject]] = None,
+) -> List[MetadataObject]:
     result: List[MetadataObject] = []
     for source in draft.data_sources:
+        metadata = lookup_metadata_object(source.object_name, metadata_lookup=metadata_lookup)
+        if metadata is not None:
+            result.append(metadata)
+            continue
         fields = [mapping.field_name for mapping in draft.field_mappings if mapping.source_alias == source.alias]
         details = {
             mapping.field_name: {
@@ -178,6 +192,22 @@ def metadata_objects_from_draft(draft: HumanSkillDraft) -> List[MetadataObject]:
             )
         )
     return result
+
+
+def lookup_metadata_object(
+    source_name: str,
+    *,
+    metadata_lookup: Optional[Callable[[str], MetadataObject]],
+) -> Optional[MetadataObject]:
+    if metadata_lookup is None:
+        return None
+    try:
+        metadata = metadata_lookup(normalize_metadata_source(source_name))
+    except Exception:
+        return None
+    if metadata.raw or metadata.fields or metadata.synonym:
+        return metadata
+    return None
 
 
 def source_by_alias(draft: HumanSkillDraft, alias: str):
