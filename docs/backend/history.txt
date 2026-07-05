@@ -1,3 +1,10 @@
+5.0.0-alpha.30
+- Added admin security settings for WIICON5_ADMIN_ENABLED, WIICON5_ADMIN_TOKEN, WIICON5_ADMIN_BIND_LOCAL_ONLY, and WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS.
+- Guarded /api/admin/* endpoints with localhost-only mode by default and optional Authorization Bearer / X-WIICON5-Admin-Token checks.
+- Restricted onboarding configuration dump paths to the configured allowlist before starting background training.
+- Added audit events for denied admin requests without storing secrets.
+- Added admin security regression tests for token enforcement, disabled admin mode, chat allowlist behavior, and config path rejection.
+
 5.0.0-alpha.29
 - Added append-only Workbench approval records under the bot instance workspace.
 - Candidate publication now has a dry-run validation phase and cannot write a SkillContract without successful smoke and human approval.

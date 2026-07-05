@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Tuple
 
 from wiicon5.bot_instance import BotInstanceConfig, BotInstanceContext
 
@@ -22,6 +22,10 @@ class Settings:
     config_fingerprint: str
     bot_instance: BotInstanceConfig
     bot_context: BotInstanceContext
+    admin_enabled: bool = True
+    admin_token: str = ""
+    admin_bind_local_only: bool = True
+    admin_allowed_config_roots: Tuple[Path, ...] = ()
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None, root: Optional[Path] = None) -> "Settings":
@@ -44,6 +48,13 @@ class Settings:
             config_fingerprint=values.get("WIICON5_CONFIG_FINGERPRINT", "local"),
             bot_instance=bot_instance,
             bot_context=BotInstanceContext(config=bot_instance, root=bot_root),
+            admin_enabled=bool_from_env(values.get("WIICON5_ADMIN_ENABLED"), default=True),
+            admin_token=values.get("WIICON5_ADMIN_TOKEN", ""),
+            admin_bind_local_only=bool_from_env(values.get("WIICON5_ADMIN_BIND_LOCAL_ONLY"), default=True),
+            admin_allowed_config_roots=path_list_from_env(
+                values.get("WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS"),
+                default=(base, Path.home()),
+            ),
         )
 
     def validate_for_llm(self) -> None:
@@ -60,6 +71,23 @@ def path_from_env(value: Optional[str], default: Path) -> Path:
     if not value:
         return default
     return Path(value).expanduser()
+
+
+def path_list_from_env(value: Optional[str], *, default: Tuple[Path, ...]) -> Tuple[Path, ...]:
+    if not value:
+        return tuple(default)
+    paths = []
+    for item in value.split(os.pathsep):
+        normalized = item.strip()
+        if normalized:
+            paths.append(Path(normalized).expanduser())
+    return tuple(paths)
+
+
+def bool_from_env(value: Optional[str], *, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on", "да"}
 
 
 def merged_env(root: Path, explicit_env: Optional[Mapping[str, str]]) -> Mapping[str, str]:

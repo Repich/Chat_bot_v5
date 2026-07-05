@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -33,6 +34,30 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.bindings_dir, root / "skills" / "bindings")
         self.assertEqual(settings.bot_instance.bot_id, "local")
         self.assertEqual(settings.bot_context.root, root / "bot_instances" / "local")
+        self.assertTrue(settings.admin_enabled)
+        self.assertEqual(settings.admin_token, "")
+        self.assertTrue(settings.admin_bind_local_only)
+        self.assertIn(root, settings.admin_allowed_config_roots)
+
+    def test_settings_loads_admin_security_options(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            allowed_a = root / "config_a"
+            allowed_b = root / "config_b"
+            settings = Settings.from_env(
+                {
+                    "WIICON5_ADMIN_ENABLED": "false",
+                    "WIICON5_ADMIN_TOKEN": "secret",
+                    "WIICON5_ADMIN_BIND_LOCAL_ONLY": "false",
+                    "WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS": os.pathsep.join([str(allowed_a), str(allowed_b)]),
+                },
+                root=root,
+            )
+
+        self.assertFalse(settings.admin_enabled)
+        self.assertEqual(settings.admin_token, "secret")
+        self.assertFalse(settings.admin_bind_local_only)
+        self.assertEqual(settings.admin_allowed_config_roots, (allowed_a, allowed_b))
 
     def test_settings_loads_bot_instance_yaml(self) -> None:
         with TemporaryDirectory() as temp_dir:

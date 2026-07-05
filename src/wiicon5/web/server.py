@@ -19,6 +19,7 @@ from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.store import HumanSkillDraftStore
 from wiicon5.workbench.trace_import import TraceDraftImporter
+from wiicon5.web.admin_security import AdminSecurityConfig
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -38,6 +39,7 @@ def make_handler(
     smoke_service: McpSmokeTestService | None = None,
     approval_store: ApprovalStore | None = None,
     candidate_publisher: CandidatePublisher | None = None,
+    admin_security: AdminSecurityConfig | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -65,12 +67,15 @@ def make_handler(
         preview_service=effective_preview_service,
         approval_store=effective_approval_store,
     )
+    effective_admin_security = admin_security or AdminSecurityConfig()
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
             query = parse_qs(parsed.query)
+            if self._reject_admin_if_needed(path):
+                return
             if path == "/health":
                 self._send_json(200, {"ok": True, "service": "wiicon5"})
                 return
@@ -179,6 +184,8 @@ def make_handler(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
             if parsed.path == "/api/admin/onboarding/run":
                 try:
                     payload = self._read_json()
@@ -186,8 +193,25 @@ def make_handler(
                     if not config_dump:
                         self._send_json(400, {"ok": False, "error": "config_dump is required"})
                         return
+                    config_dump_path = Path(config_dump).expanduser()
+                    if not effective_admin_security.config_dump_allowed(config_dump_path):
+                        self._audit_admin_denied(
+                            path=parsed.path,
+                            error="config_dump_not_allowed",
+                            status_code=403,
+                            payload={"config_dump": str(config_dump_path)},
+                        )
+                        self._send_json(
+                            403,
+                            {
+                                "ok": False,
+                                "error": "config_dump_not_allowed",
+                                "message": "Configuration dump path is outside WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS.",
+                            },
+                        )
+                        return
                     status = effective_onboarding_manager.start(
-                        config_dump=Path(config_dump).expanduser(),
+                        config_dump=config_dump_path,
                         mcp_url=str(payload.get("mcp_url") or "").strip() or None,
                         background=True,
                     )
@@ -239,6 +263,8 @@ def make_handler(
 
         def do_PATCH(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
             if parsed.path.startswith("/api/admin/workbench/drafts/"):
                 draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
                 self._update_draft(draft_id)
@@ -247,6 +273,8 @@ def make_handler(
 
         def do_PUT(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
             if parsed.path.startswith("/api/admin/workbench/drafts/"):
                 draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
                 self._update_draft(draft_id)
@@ -255,6 +283,8 @@ def make_handler(
 
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._reject_admin_if_needed(parsed.path):
+                return
             if parsed.path.startswith("/api/admin/workbench/drafts/"):
                 draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
                 actor = first_query_value(parse_qs(parsed.query), "actor") or "admin"
@@ -468,6 +498,45 @@ def make_handler(
             self.end_headers()
             self.wfile.write(raw)
 
+        def _reject_admin_if_needed(self, path: str) -> bool:
+            result = effective_admin_security.authorize(
+                path=path,
+                headers=self.headers,
+                client_host=str(self.client_address[0]) if self.client_address else "",
+            )
+            if result.ok:
+                return False
+            self._audit_admin_denied(path=path, error=result.error, status_code=result.status_code)
+            self._send_json(
+                result.status_code,
+                {"ok": False, "error": result.error, "message": result.message},
+            )
+            return True
+
+        def _audit_admin_denied(
+            self,
+            *,
+            path: str,
+            error: str,
+            status_code: int,
+            payload: Dict[str, Any] | None = None,
+        ) -> None:
+            try:
+                effective_draft_store.audit.append(
+                    event_type="workbench.admin.denied",
+                    actor="http",
+                    object_type="http_request",
+                    object_id=path,
+                    payload={
+                        "error": error,
+                        "status_code": status_code,
+                        "client_host": str(self.client_address[0]) if self.client_address else "",
+                        **(payload or {}),
+                    },
+                )
+            except Exception:
+                return None
+
         def log_message(self, format: str, *args: Any) -> None:
             return None
 
@@ -530,8 +599,17 @@ def run_http_server(
     port: int,
     onboarding_manager: OnboardingManager | None = None,
     smoke_service: McpSmokeTestService | None = None,
+    admin_security: AdminSecurityConfig | None = None,
 ) -> None:
-    server = HTTPServer((host, port), make_handler(agent, onboarding_manager=onboarding_manager, smoke_service=smoke_service))
+    server = HTTPServer(
+        (host, port),
+        make_handler(
+            agent,
+            onboarding_manager=onboarding_manager,
+            smoke_service=smoke_service,
+            admin_security=admin_security,
+        ),
+    )
     try:
         server.serve_forever()
     finally:
