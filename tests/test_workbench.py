@@ -14,7 +14,9 @@ from wiicon5.workbench import (
     HumanSkillDraftStore,
     MeasureRecipe,
     MetadataExplorerService,
+    QueryPreviewService,
     SkillCatalogService,
+    SortRecipe,
     draft_from_trace,
 )
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
@@ -286,6 +288,28 @@ class TraceDraftImportTests(unittest.TestCase):
         self.assertEqual(draft.presentation.columns, ["Номенклатура", "Количество"])
 
 
+class QueryPreviewServiceTests(unittest.TestCase):
+    def test_preview_builds_read_only_top_n_by_metric_query(self) -> None:
+        draft = top_n_stock_draft()
+
+        preview = QueryPreviewService().preview(draft)
+
+        self.assertTrue(preview.ok, preview.to_dict())
+        self.assertIn("ВЫБРАТЬ ПЕРВЫЕ 5", preview.query)
+        self.assertIn("РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки", preview.query)
+        self.assertIn("СУММА(Остатки.ВНаличииОстаток) КАК Количество", preview.query)
+        self.assertIn("СГРУППИРОВАТЬ ПО", preview.query)
+        self.assertEqual(preview.issues, [])
+
+    def test_preview_reports_actionable_issue_for_unsupported_recipe(self) -> None:
+        draft = HumanSkillDraft(title="Trace draft", calculation=CalculationRecipe(kind="trace_query"))
+
+        preview = QueryPreviewService().preview(draft)
+
+        self.assertFalse(preview.ok)
+        self.assertEqual(preview.issues[0].code, "unsupported_calculation_kind")
+
+
 class StaticMetadataProvider(MetadataProvider):
     def __init__(self, objects: list[MetadataObject]) -> None:
         self.objects = {item.full_name: item for item in objects}
@@ -322,6 +346,31 @@ def skill_contract(skill_id: str, *, status: SkillStatus = SkillStatus.VERIFIED)
 def write_skill(path: Path, contract: SkillContract) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(contract.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def top_n_stock_draft() -> HumanSkillDraft:
+    return HumanSkillDraft(
+        title="Топ остатков",
+        data_sources=[
+            DataSourceRef(
+                alias="Остатки",
+                object_name="РегистрНакопления.ТоварыНаСкладах.Остатки",
+                trust="verified",
+            )
+        ],
+        field_mappings=[
+            FieldMapping(role="product", source_alias="Остатки", field_name="Номенклатура", confirmed=True),
+            FieldMapping(role="quantity", source_alias="Остатки", field_name="ВНаличииОстаток", confirmed=True),
+        ],
+        calculation=CalculationRecipe(
+            kind="top_n_by_metric",
+            source_alias="Остатки",
+            group_by=["product"],
+            measures=[MeasureRecipe(role="stock_balance", expression="quantity", aggregate="sum", label="Количество")],
+            sort=[SortRecipe(field="Количество", direction="desc")],
+            limit=5,
+        ),
+    )
 
 
 def write_trace(trace: Path, *, question: str, query: str) -> None:

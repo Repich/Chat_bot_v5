@@ -148,6 +148,42 @@ class WebServerTests(unittest.TestCase):
                             "draft": {
                                 "title": "Остатки по складу",
                                 "example_questions": ["Покажи остатки по Центральному складу"],
+                                "data_sources": [
+                                    {
+                                        "alias": "Остатки",
+                                        "object_name": "РегистрНакопления.ТоварыНаСкладах.Остатки",
+                                        "trust": "verified",
+                                    }
+                                ],
+                                "field_mappings": [
+                                    {
+                                        "role": "product",
+                                        "source_alias": "Остатки",
+                                        "field_name": "Номенклатура",
+                                        "confirmed": True,
+                                    },
+                                    {
+                                        "role": "quantity",
+                                        "source_alias": "Остатки",
+                                        "field_name": "ВНаличииОстаток",
+                                        "confirmed": True,
+                                    },
+                                ],
+                                "calculation": {
+                                    "kind": "top_n_by_metric",
+                                    "source_alias": "Остатки",
+                                    "group_by": ["product"],
+                                    "measures": [
+                                        {
+                                            "role": "stock_balance",
+                                            "expression": "quantity",
+                                            "aggregate": "sum",
+                                            "label": "Количество",
+                                        }
+                                    ],
+                                    "sort": [{"field": "Количество", "direction": "desc"}],
+                                    "limit": 5,
+                                },
                             },
                         },
                         ensure_ascii=False,
@@ -183,6 +219,13 @@ class WebServerTests(unittest.TestCase):
                     .read()
                     .decode("utf-8")
                 )
+                preview_draft_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/preview",
+                    data=json.dumps({"actor": "previewer"}, ensure_ascii=False).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                preview_draft = json.loads(urllib.request.urlopen(preview_draft_request, timeout=5).read().decode("utf-8"))
                 delete_draft_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}?actor=deleter",
                     method="DELETE",
@@ -231,6 +274,8 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(drafts["drafts"][0]["draft_id"], created_draft["draft"]["draft_id"])
         self.assertEqual(updated_draft["draft"]["description"], "Описание от консультанта")
         self.assertEqual([item["event_type"] for item in draft_audit["events"]], ["workbench.draft.created", "workbench.draft.updated"])
+        self.assertTrue(preview_draft["preview"]["ok"], preview_draft)
+        self.assertIn("СУММА", preview_draft["preview"]["query"])
         self.assertTrue(deleted_draft["ok"])
         self.assertTrue(imported_draft["ok"])
         self.assertEqual(imported_draft["draft"]["source_kind"], "trace")

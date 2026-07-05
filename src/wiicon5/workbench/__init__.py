@@ -14,6 +14,7 @@ from wiicon5.workbench.models import (
     PresentationRecipe,
     SortRecipe,
 )
+from wiicon5.workbench.preview import QueryPreviewResult, QueryPreviewService
 from wiicon5.workbench.skill_catalog import SkillCatalogItem, SkillCatalogService, SkillCatalogSnapshot
 from wiicon5.workbench.store import HumanSkillDraftStore
 from wiicon5.workbench.trace_import import TraceDraftImporter, draft_from_trace
@@ -32,6 +33,8 @@ __all__ = [
     "MetadataFieldView",
     "MetadataObjectView",
     "PresentationRecipe",
+    "QueryPreviewResult",
+    "QueryPreviewService",
     "SkillCatalogItem",
     "SkillCatalogService",
     "SkillCatalogSnapshot",
