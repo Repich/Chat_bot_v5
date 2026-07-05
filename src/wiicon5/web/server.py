@@ -903,6 +903,35 @@ CHAT_HTML = """<!doctype html>
               <button id="startOnboardingButton" class="secondary" type="button">Запустить обучение</button>
               <div id="onboardingStatus" class="admin-status">Статус не загружен.</div>
             </div>
+            <div id="workbenchPanel" class="admin-panel">
+              <p class="admin-title">Skill Workbench</p>
+              <div class="tool-row">
+                <button id="skillCatalogButton" class="secondary" type="button">Навыки</button>
+                <button id="draftListButton" class="secondary" type="button">Черновики</button>
+              </div>
+              <label>Поиск метаданных
+                <input id="metadataSearchInput" placeholder="Склады, Номенклатура, Регистр">
+              </label>
+              <button id="metadataSearchButton" class="secondary" type="button">Искать метаданные</button>
+              <label>Draft ID
+                <input id="draftIdInput" placeholder="draft_...">
+              </label>
+              <label>Новый draft
+                <input id="draftTitleInput" placeholder="Название навыка">
+              </label>
+              <label>Draft JSON
+                <textarea id="draftJsonInput" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
+              </label>
+              <div class="tool-row">
+                <button id="createDraftButton" class="secondary" type="button">Создать</button>
+                <button id="previewDraftButton" class="secondary" type="button">Preview</button>
+              </div>
+              <div class="tool-row">
+                <button id="smokeDraftButton" class="secondary" type="button">Smoke</button>
+                <button id="publishDraftButton" class="secondary" type="button">Candidate</button>
+              </div>
+              <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
+            </div>
             <label>ProductRef JSON
               <textarea id="productRef" spellcheck="false"></textarea>
             </label>
@@ -945,6 +974,18 @@ CHAT_HTML = """<!doctype html>
     const configDumpPath = document.getElementById("configDumpPath");
     const startOnboardingButton = document.getElementById("startOnboardingButton");
     const onboardingStatus = document.getElementById("onboardingStatus");
+    const skillCatalogButton = document.getElementById("skillCatalogButton");
+    const draftListButton = document.getElementById("draftListButton");
+    const metadataSearchInput = document.getElementById("metadataSearchInput");
+    const metadataSearchButton = document.getElementById("metadataSearchButton");
+    const draftIdInput = document.getElementById("draftIdInput");
+    const draftTitleInput = document.getElementById("draftTitleInput");
+    const draftJsonInput = document.getElementById("draftJsonInput");
+    const createDraftButton = document.getElementById("createDraftButton");
+    const previewDraftButton = document.getElementById("previewDraftButton");
+    const smokeDraftButton = document.getElementById("smokeDraftButton");
+    const publishDraftButton = document.getElementById("publishDraftButton");
+    const workbenchText = document.getElementById("workbenchText");
     let pending = false;
     let onboardingPollTimer = null;
     const baseTitle = document.title;
@@ -1213,6 +1254,90 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    function showWorkbench(payload) {
+      workbenchText.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    async function loadSkillCatalog() {
+      workbenchText.textContent = "Загрузка каталога навыков...";
+      try {
+        const response = await fetch("/api/admin/skills/catalog", {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить каталог навыков: " + String(error.message || error);
+      }
+    }
+
+    async function loadDraftList() {
+      workbenchText.textContent = "Загрузка черновиков...";
+      try {
+        const response = await fetch("/api/admin/workbench/drafts", {cache: "no-store"});
+        const data = await response.json();
+        if (data.ok && Array.isArray(data.drafts) && data.drafts[0]) {
+          draftIdInput.value = data.drafts[0].draft_id || draftIdInput.value;
+        }
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить черновики: " + String(error.message || error);
+      }
+    }
+
+    async function searchMetadata() {
+      const term = metadataSearchInput.value.trim();
+      if (!term) {
+        metadataSearchInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Поиск метаданных...";
+      try {
+        const response = await fetch("/api/admin/metadata/search?q=" + encodeURIComponent(term), {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось выполнить поиск: " + String(error.message || error);
+      }
+    }
+
+    function draftPayloadFromForm() {
+      const raw = draftJsonInput.value.trim();
+      if (raw) return JSON.parse(raw);
+      const title = draftTitleInput.value.trim();
+      if (!title) throw new Error("Укажите название draft или JSON.");
+      return {title, example_questions: [title]};
+    }
+
+    async function createWorkbenchDraft() {
+      try {
+        const response = await fetch("/api/admin/workbench/drafts", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin", draft: draftPayloadFromForm()})
+        });
+        const data = await response.json();
+        if (data.ok && data.draft && data.draft.draft_id) draftIdInput.value = data.draft.draft_id;
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось создать draft: " + String(error.message || error);
+      }
+    }
+
+    async function postDraftAction(action) {
+      const draftId = draftIdInput.value.trim();
+      if (!draftId) {
+        draftIdInput.focus();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin"})
+        });
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Действие Workbench не выполнено: " + String(error.message || error);
+      }
+    }
+
     async function loadConversation() {
       const currentId = effectiveSessionId();
       rememberSession(currentId);
@@ -1347,6 +1472,13 @@ CHAT_HTML = """<!doctype html>
     backendHistoryButton.addEventListener("click", () => showHistory("backend"));
     frontendHistoryButton.addEventListener("click", () => showHistory("frontend"));
     startOnboardingButton.addEventListener("click", () => startOnboarding());
+    skillCatalogButton.addEventListener("click", () => loadSkillCatalog());
+    draftListButton.addEventListener("click", () => loadDraftList());
+    metadataSearchButton.addEventListener("click", () => searchMetadata());
+    createDraftButton.addEventListener("click", () => createWorkbenchDraft());
+    previewDraftButton.addEventListener("click", () => postDraftAction("preview"));
+    smokeDraftButton.addEventListener("click", () => postDraftAction("smoke"));
+    publishDraftButton.addEventListener("click", () => postDraftAction("publish-candidate"));
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {
       rememberSession(effectiveSessionId());
