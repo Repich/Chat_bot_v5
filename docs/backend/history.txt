@@ -1,3 +1,7 @@
+5.0.0-alpha.48
+- Fixed CLI server startup after Workbench metadata wiring by accepting metadata_explorer and preview_service in run_http_server.
+- Added regression coverage for the CLI-to-web-server dependency wiring.
+
 5.0.0-alpha.47
 - Added documentation index/content HTTP endpoints for all Markdown and text files under docs/.
 - Documentation content is served only from the repository docs directory and rejects paths outside that tree.

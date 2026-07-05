@@ -8,6 +8,7 @@ import urllib.request
 from http.server import HTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.intent.decomposer import DecompositionResult
@@ -17,7 +18,7 @@ from wiicon5.mcp.client import DictMcpClient
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
-from wiicon5.web.server import make_handler
+from wiicon5.web.server import make_handler, run_http_server
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.preview import QueryPreviewService
 from wiicon5.workbench.smoke import McpSmokeTestService
@@ -28,6 +29,60 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class WebServerTests(unittest.TestCase):
+    def test_run_http_server_accepts_cli_workbench_dependencies(self) -> None:
+        question = "Привет"
+        agent = AgentOrchestrator(
+            registry=SkillRegistry.load_from_dir(PROJECT_ROOT / "skills"),
+            decomposer=ScriptedGoalDecomposer(
+                {
+                    question: DecompositionResult(
+                        intent=IntentResult(
+                            intent_type=IntentType.OUT_OF_SCOPE,
+                            business_goal=question,
+                            requires_1c_data=False,
+                            relevant=False,
+                        )
+                    )
+                }
+            ),
+        )
+
+        class StopServer(Exception):
+            pass
+
+        class FakeHTTPServer:
+            def __init__(self, address, handler) -> None:
+                self.address = address
+                self.handler = handler
+                self.closed = False
+
+            def serve_forever(self) -> None:
+                raise StopServer()
+
+            def server_close(self) -> None:
+                self.closed = True
+
+        with TemporaryDirectory() as temp_dir:
+            onboarding_manager = OnboardingManager(bot_instance_root=Path(temp_dir) / "bot")
+            metadata_explorer = MetadataExplorerService()
+            preview_service = QueryPreviewService(metadata_lookup=metadata_explorer.metadata_object)
+            smoke_service = McpSmokeTestService(
+                bot_instance_root=onboarding_manager.bot_instance_root,
+                mcp_client=DictMcpClient({"success": True, "data": []}),
+                preview_service=preview_service,
+            )
+            with patch("wiicon5.web.server.HTTPServer", FakeHTTPServer):
+                with self.assertRaises(StopServer):
+                    run_http_server(
+                        agent,
+                        host="127.0.0.1",
+                        port=0,
+                        onboarding_manager=onboarding_manager,
+                        metadata_explorer=metadata_explorer,
+                        preview_service=preview_service,
+                        smoke_service=smoke_service,
+                    )
+
     def test_health_and_chat_return_json(self) -> None:
         question = "Привет"
         agent = AgentOrchestrator(

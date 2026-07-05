@@ -1141,6 +1141,8 @@ def run_http_server(
     host: str,
     port: int,
     onboarding_manager: OnboardingManager | None = None,
+    metadata_explorer: MetadataExplorerService | None = None,
+    preview_service: QueryPreviewService | None = None,
     smoke_service: McpSmokeTestService | None = None,
     admin_security: AdminSecurityConfig | None = None,
 ) -> None:
@@ -1149,6 +1151,8 @@ def run_http_server(
         make_handler(
             agent,
             onboarding_manager=onboarding_manager,
+            metadata_explorer=metadata_explorer,
+            preview_service=preview_service,
             smoke_service=smoke_service,
             admin_security=admin_security,
         ),

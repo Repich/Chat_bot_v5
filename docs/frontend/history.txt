@@ -1,3 +1,6 @@
+5.0.0-alpha.48
+- No frontend behavior changes. This release fixes server startup so the alpha.47 Documentation UI is actually loaded after restart.
+
 5.0.0-alpha.47
 - Added a Documentation section to settings with the full docs index, in-client document viewer, and quick Workbench skill workflow actions.
 - Fixed the Skill Catalog button regression caused by a stale action variable and restored automatic smoke_id capture after Smoke.
