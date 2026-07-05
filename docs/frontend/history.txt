@@ -1,3 +1,6 @@
+5.0.0-alpha.41
+- Updated Workbench user documentation for the summary panel, skill/draft/object cards, lifecycle controls, regression replay, and guided top_n_by_metric draft creation.
+
 5.0.0-alpha.40
 - Added a guided top_n_by_metric draft builder to the Workbench UI so a consultant can create a HumanSkillDraft without writing JSON.
 - The builder captures source object, grouping field, metric field, optional filter field, aggregation, limit, and field confirmation state.

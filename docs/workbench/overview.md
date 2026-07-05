@@ -38,6 +38,18 @@ onboarding/query synthesis/trace/manual draft
 Candidate skills are not runtime-active by default. The agent can use promoted
 `verified` and `stable` skills.
 
+## Web Client Shape
+
+The current web Workbench is intentionally simple:
+
+- a readable summary panel for skills, drafts, metadata, candidates, lifecycle,
+  and regression results;
+- raw JSON below the summary for diagnostics and support;
+- guided `top_n_by_metric` draft creation for the first manual skill-building
+  path;
+- explicit buttons for preview, smoke, approval, candidate publication,
+  regression replay, and lifecycle transitions.
+
 ## What Workbench Is Not
 
 Workbench is not a raw JSON editor and not a shortcut around validation. Imported

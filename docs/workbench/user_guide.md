@@ -5,7 +5,13 @@ candidate, or when an expert wants to define a reusable business skill.
 
 ## 1. Inspect Existing Skills
 
-Open the Skill Catalog and check:
+Open `Settings -> Skill Workbench -> Навыки`. The Workbench panel shows a
+human-readable summary first and keeps the raw JSON below it for diagnostics.
+
+To open one skill, paste its `skill_id` into `Skill ID` and click
+`Открыть skill`.
+
+Check:
 
 - status: `candidate`, `verified`, `stable`, `deprecated`, or `blocked`;
 - example capabilities and supported filters;
@@ -25,8 +31,10 @@ Workbench has candidate queues from:
 - imported skill packs;
 - traces converted into drafts.
 
-For each candidate, either create a draft, reject it, or ignore similar future
-suggestions.
+Use `Onboarding candidates` and `Agent candidates` to load the queues. For each
+candidate, either create a draft, reject it, or ignore similar future
+suggestions. Candidate summaries are for review; the full evidence remains in
+the raw JSON block.
 
 ## 3. Edit A Draft
 
@@ -42,6 +50,17 @@ A draft should describe business meaning, not code:
 
 Hints from onboarding are useful, but final query fields must be confirmed by
 MCP or verified XML metadata.
+
+For the first supported manual scenario, use the guided `top_n_by_metric` form:
+
+- source object: the 1C register, document table, or virtual table name;
+- grouping role and field;
+- metric role and field;
+- optional filter role and field;
+- aggregation and limit;
+- field confirmation flag after checking metadata.
+
+`Draft JSON` is an advanced override. Leave it empty for normal consultant use.
 
 ## 4. Validate And Smoke
 
@@ -61,8 +80,9 @@ export.
 Publishing creates a `candidate` skill. To make it runtime-active:
 
 1. Create or choose regression cases.
-2. Run regression replay.
-3. Promote candidate to `verified`.
+2. Run regression replay from the Workbench panel.
+3. Paste the skill id into `Skill ID`, add the regression case ids and a reason,
+   then promote candidate to `verified`.
 4. Later promote verified to `stable` after successful runs or explicit admin
    approval.
 

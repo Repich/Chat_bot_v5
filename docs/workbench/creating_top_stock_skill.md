@@ -8,9 +8,9 @@ This example creates a reusable skill for the question:
 
 ## 1. Find Data Sources
 
-Use Metadata Explorer to find the stock balance register. In many trade
-configurations this will be an accumulation register with product, warehouse,
-and quantity fields.
+Open `Settings -> Skill Workbench`. Use `Поиск метаданных` to find the stock
+balance register. In many trade configurations this will be an accumulation
+register with product, warehouse, and quantity fields.
 
 Example target source:
 
@@ -18,23 +18,33 @@ Example target source:
 РегистрНакопления.ТоварыНаСкладах.Остатки()
 ```
 
-Then find the warehouse catalog and the field that identifies a retail store.
+Use `Metadata full_name -> Открыть объект` for the exact object card. Then find
+the warehouse catalog and the field that identifies a retail store.
 
 ## 2. Create Draft
 
-Create a HumanSkillDraft with:
+In the guided draft form fill:
 
 - title: `Товар с максимальным остатком в розничных магазинах`;
 - example question: `Покажи какого товара больше всего в розничном магазине?`;
-- source: stock balance register;
-- product field role;
-- warehouse field role;
-- stock balance measure role;
-- warehouse type filter role.
+- source alias: `Остатки`;
+- source object: stock balance register or virtual table;
+- grouping role: `product`;
+- grouping field: product field, for example `Номенклатура`;
+- metric role: `stock_balance`;
+- metric field: balance resource, for example `ВНаличииОстаток`;
+- metric label: `Остаток`;
+- optional filter role: `warehouse_type`;
+- optional filter field: retail-store field path, for example
+  `Склад.ТипСклада`;
+- limit: `1`.
+
+Set `Fields confirmed` only after checking the fields in Metadata Explorer or
+verified XML metadata.
 
 ## 3. Configure Calculation
 
-Use a `top_n_by_metric` calculation:
+The form creates a `top_n_by_metric` calculation:
 
 ```text
 group by product
