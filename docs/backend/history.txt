@@ -1,3 +1,7 @@
+5.0.0-alpha.47
+- Added documentation index/content HTTP endpoints for all Markdown and text files under docs/.
+- Documentation content is served only from the repository docs directory and rejects paths outside that tree.
+
 5.0.0-alpha.46
 - Workbench-published candidate skills now use the existing executable learned_query/fixed_query runtime strategy instead of an unregistered workbench_preview_query strategy.
 - Query preview no longer treats FieldMapping.confirmed from a draft as verified metadata; preview/publish require MCP/XML/onboarding-index verified metadata lookup.

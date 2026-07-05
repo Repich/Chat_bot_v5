@@ -31,6 +31,7 @@ from wiicon5.web.workbench_ui import CHAT_HTML
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 VERSION_FILE = PROJECT_ROOT / "VERSION"
+DOCS_ROOT = PROJECT_ROOT / "docs"
 BACKEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "backend" / "history.txt"
 FRONTEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "frontend" / "history.txt"
 
@@ -109,6 +110,24 @@ def make_handler(
                 return
             if path == "/api/version":
                 self._send_json(200, {"ok": True, "service": "wiicon5", "version": current_version()})
+                return
+            if path == "/api/docs":
+                self._send_json(200, {"ok": True, "docs": documentation_index()})
+                return
+            if path == "/api/docs/content":
+                doc_path = first_query_value(query, "path")
+                doc_file = documentation_file(doc_path)
+                if doc_file is None:
+                    self._send_json(404, {"ok": False, "error": "doc_not_found", "path": doc_path})
+                    return
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "doc": documentation_item(doc_file),
+                        "content": read_text_file(doc_file),
+                    },
+                )
                 return
             if path == "/api/conversation":
                 session_id = first_query_value(query, "session_id") or "default"
@@ -981,6 +1000,68 @@ def read_text_file(path: Path) -> str:
         return path.read_text(encoding="utf-8").strip() + "\n"
     except OSError:
         return "История изменений пока не найдена.\n"
+
+
+def documentation_index() -> list[Dict[str, str]]:
+    if not DOCS_ROOT.exists():
+        return []
+    result: list[Dict[str, str]] = []
+    for path in sorted(DOCS_ROOT.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
+            continue
+        result.append(documentation_item(path))
+    return result
+
+
+def documentation_file(value: str) -> Path | None:
+    requested = value.strip()
+    if not requested:
+        return None
+    if requested.startswith("docs/"):
+        requested = requested[len("docs/") :]
+    candidate = (DOCS_ROOT / requested).resolve()
+    docs_root = DOCS_ROOT.resolve()
+    try:
+        candidate.relative_to(docs_root)
+    except ValueError:
+        return None
+    if not candidate.is_file() or candidate.suffix.lower() not in {".md", ".txt"}:
+        return None
+    return candidate
+
+
+def documentation_item(path: Path) -> Dict[str, str]:
+    relative = path.relative_to(PROJECT_ROOT)
+    return {
+        "path": str(relative),
+        "title": documentation_title(path),
+        "section": documentation_section(relative),
+        "format": path.suffix.lower().lstrip("."),
+    }
+
+
+def documentation_title(path: Path) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines()[:40]:
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                return stripped.lstrip("#").strip() or path.stem
+    except OSError:
+        pass
+    return path.stem.replace("_", " ").replace("-", " ").strip().title()
+
+
+def documentation_section(relative: Path) -> str:
+    parts = relative.parts
+    if len(parts) >= 3 and parts[1] == "workbench":
+        return "Skill Workbench"
+    if len(parts) >= 3 and parts[1] == "architecture":
+        return "Архитектура"
+    if len(parts) >= 3 and parts[1] == "backend":
+        return "Backend"
+    if len(parts) >= 3 and parts[1] == "frontend":
+        return "Frontend"
+    return "Проект"
 
 
 def first_query_value(query: Dict[str, list[str]], name: str) -> str:

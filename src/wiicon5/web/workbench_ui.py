@@ -375,6 +375,92 @@ CHAT_HTML = """<!doctype html>
       color: var(--text);
       border: 1px solid var(--line);
     }
+    .docs-panel {
+      display: grid;
+      gap: 8px;
+    }
+    .docs-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .docs-guide {
+      display: grid;
+      gap: 6px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .docs-guide p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .docs-guide ol {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .docs-guide li {
+      margin: 3px 0;
+    }
+    .docs-viewer {
+      display: none;
+      max-height: 46vh;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 10px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .docs-viewer.visible { display: block; }
+    .docs-title {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .docs-meta {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .docs-content {
+      display: grid;
+      gap: 8px;
+    }
+    .docs-content h2,
+    .docs-content h3,
+    .docs-content p {
+      margin: 0;
+    }
+    .docs-content h2 {
+      font-size: 15px;
+      line-height: 1.25;
+    }
+    .docs-content h3 {
+      font-size: 14px;
+      line-height: 1.25;
+    }
+    .docs-content ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .docs-content pre {
+      margin: 0;
+      white-space: pre-wrap;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      color: var(--code);
+    }
+    .docs-status {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
     .danger { color: var(--danger); }
     .admin-panel {
       display: grid;
@@ -535,6 +621,37 @@ CHAT_HTML = """<!doctype html>
             <div id="historyPanel" class="history-panel">
               <p id="historyTitle" class="history-title"></p>
               <pre id="historyText"></pre>
+            </div>
+            <div id="documentationPanel" class="admin-panel docs-panel">
+              <p class="admin-title">Документация</p>
+              <div class="docs-guide">
+                <p>Работа со скиллами в Workbench:</p>
+                <ol>
+                  <li>Откройте каталог навыков или черновики и выберите нужную карточку.</li>
+                  <li>Для нового навыка найдите метаданные 1С, заполните draft и проверьте Preview.</li>
+                  <li>Запустите Smoke с тестовыми параметрами, затем Approve и Candidate.</li>
+                  <li>После regression replay переведите candidate в verified или stable через Lifecycle.</li>
+                </ol>
+                <div class="docs-actions">
+                  <button id="docsOpenSkillsButton" class="secondary" type="button">Навыки</button>
+                  <button id="docsOpenDraftsButton" class="secondary" type="button">Черновики</button>
+                  <button id="docsOpenCandidatesButton" class="secondary" type="button">Кандидаты</button>
+                  <button id="docsFocusMetadataButton" class="secondary" type="button">Метаданные</button>
+                </div>
+              </div>
+              <label>Документ
+                <select id="docsSelect"></select>
+              </label>
+              <div class="tool-row">
+                <button id="docsRefreshButton" class="secondary" type="button">Обновить</button>
+                <button id="docsOpenButton" class="secondary" type="button">Открыть</button>
+              </div>
+              <div id="docsStatus" class="docs-status">Документация не загружена.</div>
+              <div id="docsViewer" class="docs-viewer">
+                <p id="docsTitle" class="docs-title"></p>
+                <p id="docsMeta" class="docs-meta"></p>
+                <div id="docsContent" class="docs-content"></div>
+              </div>
             </div>
             <div class="admin-panel">
               <p class="admin-title">Первоначальное обучение</p>
@@ -758,6 +875,18 @@ CHAT_HTML = """<!doctype html>
     const historyPanel = document.getElementById("historyPanel");
     const historyTitle = document.getElementById("historyTitle");
     const historyText = document.getElementById("historyText");
+    const docsSelect = document.getElementById("docsSelect");
+    const docsRefreshButton = document.getElementById("docsRefreshButton");
+    const docsOpenButton = document.getElementById("docsOpenButton");
+    const docsOpenSkillsButton = document.getElementById("docsOpenSkillsButton");
+    const docsOpenDraftsButton = document.getElementById("docsOpenDraftsButton");
+    const docsOpenCandidatesButton = document.getElementById("docsOpenCandidatesButton");
+    const docsFocusMetadataButton = document.getElementById("docsFocusMetadataButton");
+    const docsStatus = document.getElementById("docsStatus");
+    const docsViewer = document.getElementById("docsViewer");
+    const docsTitle = document.getElementById("docsTitle");
+    const docsMeta = document.getElementById("docsMeta");
+    const docsContent = document.getElementById("docsContent");
     const settingsDetails = document.getElementById("settingsDetails");
     const trainingBanner = document.getElementById("trainingBanner");
     const configDumpPath = document.getElementById("configDumpPath");
@@ -829,6 +958,7 @@ CHAT_HTML = """<!doctype html>
     let titleBlinkTimer = null;
     let titleBlinkOn = false;
     let latestWorkbenchSmokeId = "";
+    let documentationItems = [];
 
     const savedSessionId = localStorage.getItem(SESSION_STORAGE_KEY);
     if (savedSessionId) sessionId.value = savedSessionId;
@@ -1377,9 +1507,6 @@ CHAT_HTML = """<!doctype html>
       try {
         const response = await fetch("/api/admin/skills/catalog", {cache: "no-store"});
         const data = await response.json();
-        if (action === "smoke" && data.smoke && data.smoke.ok && data.smoke.smoke_id) {
-          latestWorkbenchSmokeId = data.smoke.smoke_id;
-        }
         showWorkbench(data);
       } catch (error) {
         workbenchText.textContent = "Не удалось загрузить каталог навыков: " + String(error.message || error);
@@ -1644,7 +1771,11 @@ CHAT_HTML = """<!doctype html>
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({actor: "web-admin", ...extra})
         });
-        showWorkbench(await response.json());
+        const data = await response.json();
+        if (action === "smoke" && data.smoke && data.smoke.ok && data.smoke.smoke_id) {
+          latestWorkbenchSmokeId = data.smoke.smoke_id;
+        }
+        showWorkbench(data);
       } catch (error) {
         workbenchText.textContent = "Действие Workbench не выполнено: " + String(error.message || error);
       }
@@ -1810,6 +1941,134 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    async function loadDocumentationIndex(openDefault = false) {
+      docsStatus.textContent = "Загрузка документации...";
+      try {
+        const response = await fetch("/api/docs", {cache: "no-store"});
+        const data = await response.json();
+        documentationItems = Array.isArray(data.docs) ? data.docs : [];
+        renderDocumentationSelect();
+        docsStatus.textContent = documentationItems.length
+          ? "Доступно документов: " + documentationItems.length
+          : "Документация не найдена.";
+        if (openDefault && documentationItems.length) {
+          selectPreferredDocumentation();
+          await openSelectedDocumentation();
+        }
+      } catch (error) {
+        docsStatus.textContent = "Не удалось загрузить список документации.";
+      }
+    }
+
+    function renderDocumentationSelect() {
+      docsSelect.replaceChildren();
+      for (const item of documentationItems) {
+        const option = document.createElement("option");
+        option.value = item.path || "";
+        option.textContent = `${item.section || "Документация"} - ${item.title || item.path}`;
+        docsSelect.append(option);
+      }
+    }
+
+    function selectPreferredDocumentation() {
+      const preferred = [
+        "docs/workbench/user_guide.md",
+        "docs/workbench/overview.md",
+        "docs/workbench/creating_top_stock_skill.md",
+        "docs/project_overview.md"
+      ];
+      const found = preferred.find(path => documentationItems.some(item => item.path === path));
+      if (found) docsSelect.value = found;
+    }
+
+    async function openSelectedDocumentation() {
+      if (!documentationItems.length) {
+        await loadDocumentationIndex(false);
+      }
+      const path = docsSelect.value;
+      if (!path) {
+        docsStatus.textContent = "Выберите документ.";
+        return;
+      }
+      docsStatus.textContent = "Загрузка документа...";
+      try {
+        const response = await fetch("/api/docs/content?path=" + encodeURIComponent(path), {cache: "no-store"});
+        const data = await response.json();
+        if (!data.ok) {
+          docsStatus.textContent = "Документ не найден.";
+          return;
+        }
+        renderDocumentation(data.doc || {}, data.content || "");
+        docsStatus.textContent = "Открыт документ: " + ((data.doc && data.doc.path) || path);
+      } catch (error) {
+        docsStatus.textContent = "Не удалось загрузить документ.";
+      }
+    }
+
+    function renderDocumentation(doc, content) {
+      docsViewer.classList.add("visible");
+      docsTitle.textContent = doc.title || doc.path || "Документация";
+      docsMeta.textContent = `${doc.section || "Документация"} · ${doc.path || ""}`;
+      renderMarkdownContent(docsContent, content);
+    }
+
+    function renderMarkdownContent(container, content) {
+      container.replaceChildren();
+      let list = null;
+      let codeBlock = null;
+      const closeList = () => { list = null; };
+      for (const rawLine of String(content || "").split("\n")) {
+        const line = rawLine.replace(/\s+$/, "");
+        if (line.startsWith("```")) {
+          closeList();
+          if (codeBlock) {
+            codeBlock = null;
+          } else {
+            codeBlock = document.createElement("pre");
+            container.append(codeBlock);
+          }
+          continue;
+        }
+        if (codeBlock) {
+          codeBlock.textContent += (codeBlock.textContent ? "\n" : "") + line;
+          continue;
+        }
+        const trimmed = line.trim();
+        if (!trimmed) {
+          closeList();
+          continue;
+        }
+        if (trimmed.startsWith("### ")) {
+          closeList();
+          const heading = document.createElement("h3");
+          heading.textContent = trimmed.slice(4);
+          container.append(heading);
+          continue;
+        }
+        if (trimmed.startsWith("## ") || trimmed.startsWith("# ")) {
+          closeList();
+          const heading = document.createElement("h2");
+          heading.textContent = trimmed.replace(/^#+\s*/, "");
+          container.append(heading);
+          continue;
+        }
+        if (trimmed.startsWith("- ")) {
+          if (!list) {
+            list = document.createElement("ul");
+            container.append(list);
+          }
+          const item = document.createElement("li");
+          item.textContent = trimmed.slice(2);
+          list.append(item);
+          continue;
+        }
+        closeList();
+        const paragraph = document.createElement("p");
+        paragraph.textContent = trimmed;
+        container.append(paragraph);
+      }
+    }
+
     function payloadProductRef() {
       const value = productRef.value.trim();
       if (!value) return undefined;
@@ -1882,6 +2141,16 @@ CHAT_HTML = """<!doctype html>
     reloadHistoryButton.addEventListener("click", () => loadConversation());
     backendHistoryButton.addEventListener("click", () => showHistory("backend"));
     frontendHistoryButton.addEventListener("click", () => showHistory("frontend"));
+    docsRefreshButton.addEventListener("click", () => loadDocumentationIndex(false));
+    docsOpenButton.addEventListener("click", () => openSelectedDocumentation());
+    docsSelect.addEventListener("change", () => openSelectedDocumentation());
+    docsOpenSkillsButton.addEventListener("click", () => loadSkillCatalog());
+    docsOpenDraftsButton.addEventListener("click", () => loadDraftList());
+    docsOpenCandidatesButton.addEventListener("click", () => loadSynthesisCandidates());
+    docsFocusMetadataButton.addEventListener("click", () => {
+      metadataSearchInput.focus();
+      workbenchText.textContent = "Введите объект или термин 1С в поле поиска метаданных, затем нажмите «Искать метаданные».";
+    });
     startOnboardingButton.addEventListener("click", () => startOnboarding());
     skillCatalogButton.addEventListener("click", () => loadSkillCatalog());
     skillDetailsButton.addEventListener("click", () => loadSkillDetails());
@@ -1934,6 +2203,7 @@ CHAT_HTML = """<!doctype html>
     });
 
     loadVersion();
+    loadDocumentationIndex(true);
     loadOnboardingStatus();
     rememberSession(effectiveSessionId());
     loadSessionList();

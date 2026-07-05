@@ -1,3 +1,7 @@
+5.0.0-alpha.47
+- Added a Documentation section to settings with the full docs index, in-client document viewer, and quick Workbench skill workflow actions.
+- Fixed the Skill Catalog button regression caused by a stale action variable and restored automatic smoke_id capture after Smoke.
+
 5.0.0-alpha.46
 - Workbench metadata object cards continue to show confirmed fields and now use all_fields for field picker actions so hints remain visible but separated.
 - Added Smoke params JSON input to the Workbench panel for test values required by parameterized draft smoke runs.

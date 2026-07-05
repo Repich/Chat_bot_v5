@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from http.server import HTTPServer
 from pathlib import Path
@@ -188,6 +189,30 @@ class WebServerTests(unittest.TestCase):
                     .read()
                     .decode("utf-8")
                 )
+                docs_index = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/docs",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                docs_content = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/docs/content?path=docs/workbench/user_guide.md",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                try:
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/docs/content?path=../VERSION",
+                        timeout=5,
+                    ).read()
+                    docs_traversal_status = 200
+                except urllib.error.HTTPError as exc:
+                    docs_traversal_status = exc.code
                 stock_skill = json.loads(
                     urllib.request.urlopen(
                         f"http://{host}:{port}/api/admin/skills/catalog/get_stock_balances",
@@ -414,6 +439,12 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("newSessionButton", chat_page)
         self.assertIn("settingsDetails", chat_page)
         self.assertIn("reloadHistoryButton", chat_page)
+        self.assertIn("documentationPanel", chat_page)
+        self.assertIn("docsSelect", chat_page)
+        self.assertIn("docsOpenButton", chat_page)
+        self.assertIn("loadDocumentationIndex", chat_page)
+        self.assertIn("openSelectedDocumentation", chat_page)
+        self.assertIn("renderMarkdownContent", chat_page)
         self.assertIn("trainingBanner", chat_page)
         self.assertIn("startOnboardingButton", chat_page)
         self.assertIn("workbenchPanel", chat_page)
@@ -466,6 +497,12 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(rejected_candidate["rejection"]["candidate_id"], onboarding_candidate_id)
         self.assertTrue(skill_catalog["ok"])
         self.assertGreaterEqual(skill_catalog["summary"]["total"], 1)
+        self.assertTrue(docs_index["ok"])
+        self.assertIn("docs/workbench/user_guide.md", [item["path"] for item in docs_index["docs"]])
+        self.assertTrue(docs_content["ok"])
+        self.assertEqual(docs_content["doc"]["path"], "docs/workbench/user_guide.md")
+        self.assertIn("Workbench", docs_content["content"])
+        self.assertEqual(docs_traversal_status, 404)
         self.assertTrue(stock_skill["ok"])
         self.assertEqual(stock_skill["skill"]["skill_id"], "get_stock_balances")
         self.assertIn("source_path", stock_skill["skill"])
