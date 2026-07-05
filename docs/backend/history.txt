@@ -1,3 +1,12 @@
+5.0.0-alpha.33
+- Added bot-specific Skill Lifecycle service for candidate -> verified -> stable promotion, deprecate, block, and explicit rollback actions.
+- Lifecycle transitions update the skill JSON status/version, move the skill between status-specific bot workspace folders, append lifecycle evidence, and write Workbench audit events with before/after hashes.
+- Candidate -> verified now requires publication approval evidence plus at least one regression case id; verified -> stable requires either explicit admin approval or enough successful runs.
+- Runtime skill registry now treats only verified and stable skills as active by default; candidate skills remain visible in Workbench but are not planned silently.
+- Runtime agent construction now loads bot-specific skills alongside global seed skills, so promoted verified/stable skills can be used by the agent.
+- Added admin endpoints for /api/admin/skills/{skill_id}/promote, /deprecate, /block, and /rollback.
+- Added regression tests for lifecycle gates, audit/evidence persistence, registry active-status filtering, source-kind reporting, and web routing.
+
 5.0.0-alpha.32
 - Added Workbench synthesis candidates: successful query synthesis answers can now be collected as human-review candidates without auto-publishing a skill.
 - Candidate creation is gated by generic evidence checks: relevant 1C data intent, successful final query, non-empty result rows, nontrivial read-only query text, and duplicate question/query detection.

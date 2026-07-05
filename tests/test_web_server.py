@@ -310,6 +310,23 @@ class WebServerTests(unittest.TestCase):
                 published_candidate = json.loads(
                     urllib.request.urlopen(publish_candidate_request, timeout=5).read().decode("utf-8")
                 )
+                published_skill_id = published_candidate["publication"]["skill"]["skill_id"]
+                promote_skill_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/skills/{published_skill_id}/promote",
+                    data=json.dumps(
+                        {
+                            "actor": "promoter",
+                            "reason": "Smoke sample reviewed and regression case attached.",
+                            "regression_case_ids": ["reg_web_stock_top"],
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                promoted_skill = json.loads(
+                    urllib.request.urlopen(promote_skill_request, timeout=5).read().decode("utf-8")
+                )
                 draft_approvals_after_publish = json.loads(
                     urllib.request.urlopen(
                         f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/approvals",
@@ -402,6 +419,9 @@ class WebServerTests(unittest.TestCase):
         self.assertTrue(published_candidate["publication"]["ok"], published_candidate)
         self.assertEqual(published_candidate["publication"]["skill"]["status"], "candidate")
         self.assertNotEqual(published_candidate["publication"]["approval"]["approval_id"], approved_draft["approval"]["approval_id"])
+        self.assertTrue(promoted_skill["ok"], promoted_skill)
+        self.assertEqual(promoted_skill["lifecycle"]["after_status"], "verified")
+        self.assertEqual(promoted_skill["lifecycle"]["skill"]["status"], "verified")
         self.assertEqual(
             draft_approvals_after_publish["latest"]["approval_id"],
             published_candidate["publication"]["approval"]["approval_id"],

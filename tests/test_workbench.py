@@ -19,6 +19,7 @@ from wiicon5.workbench import (
     McpSmokeTestService,
     QueryPreviewService,
     SkillCatalogService,
+    SkillLifecycleService,
     SortRecipe,
     draft_from_trace,
 )
@@ -405,6 +406,99 @@ class CandidatePublisherTests(unittest.TestCase):
 
         self.assertFalse(published.ok)
         self.assertEqual(published.issues[-1].code, "approval_rejected")
+
+
+class SkillLifecycleWorkbenchTests(unittest.TestCase):
+    def test_lifecycle_promotes_candidate_to_verified_with_evidence(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot = Path(temp_dir) / "bot"
+            draft = HumanSkillDraft.from_dict(
+                {
+                    **top_n_stock_draft().to_dict(),
+                    "draft_id": "draft_stock",
+                    "example_questions": ["Покажи товар с самым большим остатком"],
+                }
+            )
+            approval_store = ApprovalStore(bot_instance_root=bot)
+            mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
+            McpSmokeTestService(bot_instance_root=bot, mcp_client=mcp).run(draft)
+            approval_store.approve(
+                draft.draft_id,
+                actor="consultant",
+                comment="Sample reviewed.",
+                regression_case_id="reg_stock_top",
+            )
+            published = CandidatePublisher(bot_instance_root=bot, approval_store=approval_store).publish(draft)
+
+            result = SkillLifecycleService(bot_instance_root=bot).promote(
+                published.skill.skill_id,
+                actor="consultant",
+                reason="Regression case covers the accepted smoke result.",
+            )
+            snapshot = SkillCatalogService(global_skills_dir=Path(temp_dir) / "global", bot_instance_root=bot).snapshot()
+            item = snapshot.get(published.skill.skill_id)
+            events = SkillLifecycleService(bot_instance_root=bot).audit.read()
+
+        self.assertTrue(result.ok, result.to_dict())
+        self.assertEqual(result.before_status, "candidate")
+        self.assertEqual(result.after_status, "verified")
+        self.assertEqual(result.skill.status, SkillStatus.VERIFIED)
+        self.assertTrue(result.path.endswith("/skills/verified/workbench_draft_stock.json"))
+        self.assertFalse(Path(result.previous_path).exists())
+        self.assertIsNotNone(item)
+        self.assertEqual(item.source_kind if item else "", "bot_verified")
+        self.assertTrue(item.runtime_active_by_default if item else False)
+        self.assertIn("workbench.skill.promoted", [event.event_type for event in events])
+
+    def test_lifecycle_blocks_unsafe_transitions_and_supports_block_rollback(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot = Path(temp_dir) / "bot"
+            candidate = skill_contract("manual_candidate", status=SkillStatus.CANDIDATE)
+            write_skill(bot / "skills" / "candidates" / "manual_candidate.json", candidate)
+            service = SkillLifecycleService(bot_instance_root=bot)
+
+            direct_stable = service.promote(
+                "manual_candidate",
+                actor="consultant",
+                reason="Trying to skip verification.",
+                target_status="stable",
+                admin_approval=True,
+            )
+            missing_regression = service.promote(
+                "manual_candidate",
+                actor="consultant",
+                reason="Smoke was checked.",
+            )
+            blocked = service.block(
+                "manual_candidate",
+                actor="consultant",
+                reason="Wrong result on live data.",
+            )
+            rollback_without_approval = service.rollback(
+                "manual_candidate",
+                actor="consultant",
+                reason="Reviewed after fix.",
+                target_status="candidate",
+            )
+            rollback = service.rollback(
+                "manual_candidate",
+                actor="consultant",
+                reason="Reviewed after fix.",
+                target_status="candidate",
+                admin_approval=True,
+            )
+
+        self.assertFalse(direct_stable.ok)
+        self.assertEqual(direct_stable.issues[0].code, "unsupported_transition")
+        self.assertFalse(missing_regression.ok)
+        self.assertIn("missing_human_approval", [issue.code for issue in missing_regression.issues])
+        self.assertIn("missing_regression_case", [issue.code for issue in missing_regression.issues])
+        self.assertTrue(blocked.ok, blocked.to_dict())
+        self.assertEqual(blocked.after_status, "blocked")
+        self.assertFalse(rollback_without_approval.ok)
+        self.assertIn("missing_admin_approval", [issue.code for issue in rollback_without_approval.issues])
+        self.assertTrue(rollback.ok, rollback.to_dict())
+        self.assertEqual(rollback.after_status, "candidate")
 
 
 class StaticMetadataProvider(MetadataProvider):

@@ -11,6 +11,7 @@ from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.workbench.approval import ApprovalStore
+from wiicon5.workbench.lifecycle import SkillLifecycleService
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.models import HumanSkillDraft
 from wiicon5.workbench.onboarding_candidates import OnboardingCandidateService
@@ -44,6 +45,7 @@ def make_handler(
     admin_security: AdminSecurityConfig | None = None,
     onboarding_candidate_service: OnboardingCandidateService | None = None,
     synthesis_candidate_store: SynthesisCandidateStore | None = None,
+    skill_lifecycle: SkillLifecycleService | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -79,6 +81,10 @@ def make_handler(
     effective_synthesis_candidate_store = synthesis_candidate_store or SynthesisCandidateStore(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         draft_store=effective_draft_store,
+        audit_log=effective_draft_store.audit,
+    )
+    effective_skill_lifecycle = skill_lifecycle or SkillLifecycleService(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
         audit_log=effective_draft_store.audit,
     )
 
@@ -311,6 +317,9 @@ def make_handler(
                 if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/publish-candidate"):
                     draft_id = unquote(parsed.path.split("/")[-2])
                     self._publish_candidate(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/skills/"):
+                    self._change_skill_lifecycle(parsed.path)
                     return
                 if parsed.path == "/api/admin/workbench/drafts":
                     self._create_draft()
@@ -614,6 +623,62 @@ def make_handler(
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
 
+        def _change_skill_lifecycle(self, path: str) -> None:
+            parts = path.strip("/").split("/")
+            if len(parts) != 5 or parts[:3] != ["api", "admin", "skills"]:
+                self._send_json(404, {"ok": False, "error": "not_found"})
+                return
+            skill_id = unquote(parts[3])
+            requested_action = parts[4]
+            action = ""
+            if requested_action == "promote":
+                action = "promote"
+            elif requested_action == "deprecate":
+                action = "deprecate"
+            elif requested_action == "block":
+                action = "block"
+            elif requested_action == "rollback":
+                action = "rollback"
+            else:
+                self._send_json(404, {"ok": False, "error": "not_found"})
+                return
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "")
+                reason = str(payload.get("reason") or payload.get("comment") or "")
+                if action == "promote":
+                    result = effective_skill_lifecycle.promote(
+                        skill_id,
+                        actor=actor,
+                        reason=reason,
+                        target_status=str(payload.get("target_status") or ""),
+                        regression_case_ids=[
+                            str(item)
+                            for item in payload.get("regression_case_ids", [])
+                            if str(item).strip()
+                        ]
+                        if isinstance(payload.get("regression_case_ids"), list)
+                        else [],
+                        successful_runs=int_or_default(payload.get("successful_runs"), 0),
+                        admin_approval=bool(payload.get("admin_approval", False)),
+                    )
+                elif action == "deprecate":
+                    result = effective_skill_lifecycle.deprecate(skill_id, actor=actor, reason=reason)
+                elif action == "block":
+                    result = effective_skill_lifecycle.block(skill_id, actor=actor, reason=reason)
+                else:
+                    result = effective_skill_lifecycle.rollback(
+                        skill_id,
+                        actor=actor,
+                        reason=reason,
+                        target_status=str(payload.get("target_status") or ""),
+                        admin_approval=bool(payload.get("admin_approval", False)),
+                    )
+                status_code = 200 if result.ok else lifecycle_error_status(result)
+                self._send_json(status_code, {"ok": result.ok, "lifecycle": result.to_dict()})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
         def _read_json(self) -> Dict[str, Any]:
             content_length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
@@ -713,11 +778,20 @@ def first_query_value(query: Dict[str, list[str]], name: str) -> str:
     return values[0].strip() if values else ""
 
 
-def int_or_default(value: str, default: int) -> int:
+def int_or_default(value: Any, default: int) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def lifecycle_error_status(result) -> int:
+    codes = {issue.code for issue in result.issues}
+    if "skill_not_found" in codes:
+        return 404
+    if "missing_actor" in codes or "missing_reason" in codes:
+        return 400
+    return 409
 
 
 def conversation_summary(context) -> Dict[str, Any]:

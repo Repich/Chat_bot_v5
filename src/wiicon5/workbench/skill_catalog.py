@@ -145,6 +145,14 @@ def source_kind(root: Path, path: Path, *, bot_specific: bool) -> str:
     prefix = "bot" if bot_specific else "global"
     if "candidates" in parts:
         return f"{prefix}_candidate"
+    if "verified" in parts:
+        return f"{prefix}_verified"
+    if "stable" in parts:
+        return f"{prefix}_stable"
+    if "deprecated" in parts:
+        return f"{prefix}_deprecated"
+    if "blocked" in parts:
+        return f"{prefix}_blocked"
     if "learned" in parts:
         return f"{prefix}_learned"
     if "atomic" in parts:

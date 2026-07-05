@@ -36,7 +36,7 @@ def build_agent(
     mcp_client: Optional[McpClient] = None,
     memory: Optional[ConversationMemory] = None,
 ) -> AgentOrchestrator:
-    registry = SkillRegistry.load_from_dir(settings.skills_dir)
+    registry = SkillRegistry.load_from_dirs([settings.skills_dir, settings.bot_context.root / "skills"])
     effective_llm = llm_client or build_llm_client(settings)
     effective_mcp = mcp_client or HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds)
     domain_policy = DomainPolicy(settings.bot_instance)

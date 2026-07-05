@@ -2,6 +2,7 @@
 
 from wiicon5.workbench.audit import WorkbenchAuditEvent, WorkbenchAuditLog
 from wiicon5.workbench.approval import ApprovalRecord, ApprovalStore
+from wiicon5.workbench.lifecycle import SkillLifecycleResult, SkillLifecycleService
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService, MetadataFieldView, MetadataObjectView
 from wiicon5.workbench.models import (
     CalculationRecipe,
@@ -51,6 +52,8 @@ __all__ = [
     "SkillCatalogItem",
     "SkillCatalogService",
     "SkillCatalogSnapshot",
+    "SkillLifecycleResult",
+    "SkillLifecycleService",
     "SortRecipe",
     "TraceDraftImporter",
     "SynthesisCandidate",
