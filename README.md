@@ -26,6 +26,8 @@ WIICON ChatBot 5 - экспериментальный самообучающий
   binding без обращения к LLM.
 - [Architecture adjustments](docs/architecture_adjustments.md): принятые
   технические границы разработки версии 5.
+- [Skill Workbench architecture](docs/architecture/skill_workbench.md):
+  human-in-the-loop lifecycle для просмотра, проверки и публикации навыков.
 
 История изменений:
 
