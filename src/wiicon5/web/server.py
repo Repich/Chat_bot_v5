@@ -13,6 +13,7 @@ from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.models import HumanSkillDraft
 from wiicon5.workbench.preview import QueryPreviewService
+from wiicon5.workbench.publish import CandidatePublisher
 from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.store import HumanSkillDraftStore
@@ -34,6 +35,7 @@ def make_handler(
     trace_importer: TraceDraftImporter | None = None,
     preview_service: QueryPreviewService | None = None,
     smoke_service: McpSmokeTestService | None = None,
+    candidate_publisher: CandidatePublisher | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -51,6 +53,10 @@ def make_handler(
     )
     effective_trace_importer = trace_importer or TraceDraftImporter(runs_root=PROJECT_ROOT / "runs")
     effective_preview_service = preview_service or QueryPreviewService()
+    effective_candidate_publisher = candidate_publisher or CandidatePublisher(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        preview_service=effective_preview_service,
+    )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -175,6 +181,10 @@ def make_handler(
                 if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/smoke"):
                     draft_id = unquote(parsed.path.split("/")[-2])
                     self._smoke_draft(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/publish-candidate"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._publish_candidate(draft_id)
                     return
                 if parsed.path == "/api/admin/workbench/drafts":
                     self._create_draft()
@@ -307,6 +317,30 @@ def make_handler(
                     payload={"ok": smoke.ok, "row_count": smoke.row_count, "smoke_id": smoke.smoke_id},
                 )
                 self._send_json(200, {"ok": True, "smoke": smoke.to_dict()})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _publish_candidate(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_draft_store.require_draft(draft_id)
+                published = effective_candidate_publisher.publish(draft)
+                if published.ok:
+                    effective_draft_store.audit.append(
+                        event_type="workbench.skill.published_candidate",
+                        actor=actor,
+                        object_type="human_skill_draft",
+                        object_id=draft_id,
+                        payload={
+                            "skill_id": published.skill.skill_id if published.skill else "",
+                            "path": published.path,
+                            "evidence_path": published.evidence_path,
+                        },
+                    )
+                self._send_json(200, {"ok": True, "publication": published.to_dict()})
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
             except Exception as exc:

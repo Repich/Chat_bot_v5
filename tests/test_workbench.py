@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 from wiicon5.workbench import (
     CalculationRecipe,
+    CandidatePublisher,
     DataSourceRef,
     DraftEvidence,
     FieldMapping,
@@ -327,6 +328,34 @@ class McpSmokeTestServiceTests(unittest.TestCase):
         self.assertEqual(mcp.query_calls[0].limit, 5)
         self.assertIn("ВЫБРАТЬ ПЕРВЫЕ 5", mcp.query_calls[0].query)
         self.assertTrue(result_path_exists)
+
+
+class CandidatePublisherTests(unittest.TestCase):
+    def test_publish_requires_successful_smoke_and_writes_candidate_skill(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot = Path(temp_dir) / "bot"
+            draft = HumanSkillDraft.from_dict(
+                {
+                    **top_n_stock_draft().to_dict(),
+                    "draft_id": "draft_stock",
+                    "example_questions": ["Покажи товар с самым большим остатком"],
+                }
+            )
+            publisher = CandidatePublisher(bot_instance_root=bot)
+            before_smoke = publisher.publish(draft)
+            mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
+            McpSmokeTestService(bot_instance_root=bot, mcp_client=mcp).run(draft)
+
+            published = publisher.publish(draft)
+            skill_path_exists = Path(published.path).exists()
+            evidence_path_exists = Path(published.evidence_path).exists()
+
+        self.assertFalse(before_smoke.ok)
+        self.assertEqual(before_smoke.issues[-1].code, "missing_successful_smoke")
+        self.assertTrue(published.ok, published.to_dict())
+        self.assertEqual(published.skill.status, SkillStatus.CANDIDATE)
+        self.assertTrue(skill_path_exists)
+        self.assertTrue(evidence_path_exists)
 
 
 class StaticMetadataProvider(MetadataProvider):

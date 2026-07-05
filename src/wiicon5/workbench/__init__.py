@@ -15,6 +15,7 @@ from wiicon5.workbench.models import (
     SortRecipe,
 )
 from wiicon5.workbench.preview import QueryPreviewResult, QueryPreviewService
+from wiicon5.workbench.publish import CandidatePublisher, PublishCandidateResult
 from wiicon5.workbench.skill_catalog import SkillCatalogItem, SkillCatalogService, SkillCatalogSnapshot
 from wiicon5.workbench.smoke import McpSmokeTestService, SmokeTestResult
 from wiicon5.workbench.store import HumanSkillDraftStore
@@ -22,6 +23,7 @@ from wiicon5.workbench.trace_import import TraceDraftImporter, draft_from_trace
 
 __all__ = [
     "CalculationRecipe",
+    "CandidatePublisher",
     "DataSourceRef",
     "DraftEvidence",
     "DraftStatus",
@@ -37,6 +39,7 @@ __all__ = [
     "PresentationRecipe",
     "QueryPreviewResult",
     "QueryPreviewService",
+    "PublishCandidateResult",
     "SmokeTestResult",
     "SkillCatalogItem",
     "SkillCatalogService",

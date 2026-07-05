@@ -241,6 +241,15 @@ class WebServerTests(unittest.TestCase):
                     method="POST",
                 )
                 smoke_draft = json.loads(urllib.request.urlopen(smoke_draft_request, timeout=5).read().decode("utf-8"))
+                publish_candidate_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/publish-candidate",
+                    data=json.dumps({"actor": "publisher"}, ensure_ascii=False).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                published_candidate = json.loads(
+                    urllib.request.urlopen(publish_candidate_request, timeout=5).read().decode("utf-8")
+                )
                 delete_draft_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}?actor=deleter",
                     method="DELETE",
@@ -293,6 +302,8 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("СУММА", preview_draft["preview"]["query"])
         self.assertTrue(smoke_draft["smoke"]["ok"], smoke_draft)
         self.assertEqual(smoke_draft["smoke"]["row_count"], 1)
+        self.assertTrue(published_candidate["publication"]["ok"], published_candidate)
+        self.assertEqual(published_candidate["publication"]["skill"]["status"], "candidate")
         self.assertTrue(deleted_draft["ok"])
         self.assertTrue(imported_draft["ok"])
         self.assertEqual(imported_draft["draft"]["source_kind"], "trace")
