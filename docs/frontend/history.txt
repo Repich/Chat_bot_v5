@@ -1,3 +1,8 @@
+5.0.0-alpha.40
+- Added a guided top_n_by_metric draft builder to the Workbench UI so a consultant can create a HumanSkillDraft without writing JSON.
+- The builder captures source object, grouping field, metric field, optional filter field, aggregation, limit, and field confirmation state.
+- Raw Draft JSON remains available as an advanced override, but the default manual creation path now produces structured draft payloads.
+
 5.0.0-alpha.39
 - Added a human-readable Workbench summary panel above raw JSON results.
 - Skill catalogs, skill cards, drafts, candidates, metadata objects, lifecycle results, and regression replay now render concise business/technical cards.

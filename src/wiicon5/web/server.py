@@ -1461,6 +1461,79 @@ CHAT_HTML = """<!doctype html>
               <label>Новый draft
                 <input id="draftTitleInput" placeholder="Название навыка">
               </label>
+              <label>Пример вопроса
+                <input id="draftExampleQuestionInput" placeholder="Какой вопрос должен закрывать навык">
+              </label>
+              <label>Описание
+                <input id="draftDescriptionInput" placeholder="Бизнес-смысл навыка">
+              </label>
+              <div class="tool-row">
+                <label>Источник alias
+                  <input id="draftSourceAliasInput" value="Источник">
+                </label>
+                <label>Источник 1С
+                  <input id="draftSourceObjectInput" placeholder="РегистрНакопления...Остатки">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Группировка role
+                  <input id="draftGroupRoleInput" placeholder="product">
+                </label>
+                <label>Группировка field
+                  <input id="draftGroupFieldInput" placeholder="Номенклатура">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Метрика role
+                  <input id="draftMeasureRoleInput" placeholder="stock_balance">
+                </label>
+                <label>Метрика field
+                  <input id="draftMeasureFieldInput" placeholder="ВНаличииОстаток">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Метрика label
+                  <input id="draftMeasureLabelInput" placeholder="Остаток">
+                </label>
+                <label>Агрегация
+                  <select id="draftAggregateSelect">
+                    <option value="sum">sum</option>
+                    <option value="count">count</option>
+                    <option value="max">max</option>
+                    <option value="min">min</option>
+                  </select>
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Фильтр role
+                  <input id="draftFilterRoleInput" placeholder="warehouse_type">
+                </label>
+                <label>Фильтр field
+                  <input id="draftFilterFieldInput" placeholder="Склад.ТипСклада">
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Фильтр parameter
+                  <input id="draftFilterParameterInput" placeholder="ТипСклада">
+                </label>
+                <label>Фильтр operator
+                  <select id="draftFilterOperatorSelect">
+                    <option value="equals">equals</option>
+                    <option value="not_equals">not_equals</option>
+                    <option value="in">in</option>
+                    <option value="contains">contains</option>
+                  </select>
+                </label>
+              </div>
+              <div class="tool-row">
+                <label>Limit
+                  <input id="draftLimitInput" type="number" min="1" max="100" step="1" placeholder="10">
+                </label>
+                <label class="checkbox-label">
+                  <input id="draftFieldsConfirmedInput" type="checkbox">
+                  Fields confirmed
+                </label>
+              </div>
               <label>Draft JSON
                 <textarea id="draftJsonInput" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
               </label>
@@ -1592,6 +1665,22 @@ CHAT_HTML = """<!doctype html>
     const draftIdInput = document.getElementById("draftIdInput");
     const draftDetailsButton = document.getElementById("draftDetailsButton");
     const draftTitleInput = document.getElementById("draftTitleInput");
+    const draftExampleQuestionInput = document.getElementById("draftExampleQuestionInput");
+    const draftDescriptionInput = document.getElementById("draftDescriptionInput");
+    const draftSourceAliasInput = document.getElementById("draftSourceAliasInput");
+    const draftSourceObjectInput = document.getElementById("draftSourceObjectInput");
+    const draftGroupRoleInput = document.getElementById("draftGroupRoleInput");
+    const draftGroupFieldInput = document.getElementById("draftGroupFieldInput");
+    const draftMeasureRoleInput = document.getElementById("draftMeasureRoleInput");
+    const draftMeasureFieldInput = document.getElementById("draftMeasureFieldInput");
+    const draftMeasureLabelInput = document.getElementById("draftMeasureLabelInput");
+    const draftAggregateSelect = document.getElementById("draftAggregateSelect");
+    const draftFilterRoleInput = document.getElementById("draftFilterRoleInput");
+    const draftFilterFieldInput = document.getElementById("draftFilterFieldInput");
+    const draftFilterParameterInput = document.getElementById("draftFilterParameterInput");
+    const draftFilterOperatorSelect = document.getElementById("draftFilterOperatorSelect");
+    const draftLimitInput = document.getElementById("draftLimitInput");
+    const draftFieldsConfirmedInput = document.getElementById("draftFieldsConfirmedInput");
     const draftJsonInput = document.getElementById("draftJsonInput");
     const createDraftButton = document.getElementById("createDraftButton");
     const previewDraftButton = document.getElementById("previewDraftButton");
@@ -2204,12 +2293,125 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    function buildTopMetricDraftFromForm() {
+      const sourceObject = draftSourceObjectInput.value.trim();
+      const groupField = draftGroupFieldInput.value.trim();
+      const measureField = draftMeasureFieldInput.value.trim();
+      if (!sourceObject && !groupField && !measureField) return null;
+      if (!sourceObject || !groupField || !measureField) {
+        throw new Error("Для конструктора draft укажите источник 1С, поле группировки и поле метрики.");
+      }
+      const title = draftTitleInput.value.trim() || draftExampleQuestionInput.value.trim();
+      if (!title) throw new Error("Укажите название draft или пример вопроса.");
+      const alias = draftSourceAliasInput.value.trim() || "Источник";
+      const groupRole = draftGroupRoleInput.value.trim() || "dimension";
+      const measureRole = draftMeasureRoleInput.value.trim() || "metric";
+      const measureLabel = draftMeasureLabelInput.value.trim() || measureRole;
+      const filterRole = draftFilterRoleInput.value.trim();
+      const filterField = draftFilterFieldInput.value.trim();
+      const filterParameter = draftFilterParameterInput.value.trim() || filterRole;
+      const limit = Number.parseInt(draftLimitInput.value, 10);
+      const confirmed = draftFieldsConfirmedInput.checked;
+      const fieldMappings = [
+        {
+          role: groupRole,
+          source_alias: alias,
+          field_name: groupField,
+          required: true,
+          confirmed
+        },
+        {
+          role: measureRole,
+          source_alias: alias,
+          field_name: measureField,
+          required: true,
+          confirmed
+        }
+      ];
+      const filters = [];
+      if (filterRole || filterField) {
+        if (!filterRole || !filterField) {
+          throw new Error("Для фильтра укажите role и field.");
+        }
+        fieldMappings.push({
+          role: filterRole,
+          source_alias: alias,
+          field_name: filterField,
+          required: false,
+          confirmed
+        });
+        filters.push({
+          role: filterRole,
+          operator: draftFilterOperatorSelect.value || "equals",
+          value_source: "input",
+          parameter: filterParameter || filterRole,
+          required: false
+        });
+      }
+      return {
+        title,
+        description: draftDescriptionInput.value.trim(),
+        status: "draft",
+        example_questions: [draftExampleQuestionInput.value.trim() || title],
+        business_entities: [groupRole, measureRole].concat(filterRole ? [filterRole] : []),
+        data_sources: [
+          {
+            alias,
+            object_name: sourceObject,
+            object_kind: "",
+            purpose: "primary",
+            trust: confirmed ? "verified" : "manual",
+            evidence: [
+              {
+                source: "workbench_ui",
+                reference: "manual_top_n_by_metric_form",
+                trust: confirmed ? "verified" : "manual"
+              }
+            ]
+          }
+        ],
+        field_mappings: fieldMappings,
+        calculation: {
+          kind: "top_n_by_metric",
+          source_alias: alias,
+          filters,
+          group_by: [groupRole],
+          measures: [
+            {
+              role: measureRole,
+              expression: measureRole,
+              aggregate: draftAggregateSelect.value || "sum",
+              label: measureLabel
+            }
+          ],
+          sort: [{field: measureLabel, direction: "desc"}],
+          limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 10
+        },
+        presentation: {
+          columns: [groupRole, measureLabel],
+          answer_template: "",
+          empty_result_text: "Данных не найдено.",
+          notes: ""
+        },
+        tags: ["workbench_ui", "top_n_by_metric"],
+        notes: "",
+        source_kind: "manual"
+      };
+    }
+
     function draftPayloadFromForm() {
       const raw = draftJsonInput.value.trim();
       if (raw) return JSON.parse(raw);
+      const builtDraft = buildTopMetricDraftFromForm();
+      if (builtDraft) return builtDraft;
       const title = draftTitleInput.value.trim();
       if (!title) throw new Error("Укажите название draft или JSON.");
-      return {title, example_questions: [title]};
+      return {
+        title,
+        description: draftDescriptionInput.value.trim(),
+        example_questions: [draftExampleQuestionInput.value.trim() || title],
+        source_kind: "manual"
+      };
     }
 
     async function createWorkbenchDraft() {
