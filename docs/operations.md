@@ -158,6 +158,17 @@ python3 scripts/trace_to_case.py runs/agent_... \
 python3 scripts/run_regression.py --cases bot_instances/local/regression
 ```
 
+Выполнить replay cases через агента и сохранить результат в workspace бота:
+
+```bash
+python3 scripts/run_regression.py \
+  --cases bot_instances/local/regression \
+  --replay
+```
+
+Для перевода candidate skill в verified нужен успешный replay по связанным
+`case_id`; одного наличия regression case теперь недостаточно.
+
 ## Тесты
 
 Запустить все тесты:

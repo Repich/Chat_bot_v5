@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from wiicon5.models import SkillContract, SkillStatus, ValidationIssue
+from wiicon5.regression.replay import has_successful_replay
 from wiicon5.skills.registry import is_skill_contract_payload
 from wiicon5.workbench.audit import WorkbenchAuditLog, utc_now
 from wiicon5.workbench.models import jsonable
@@ -78,6 +79,7 @@ class SkillLifecycleService:
             bot_instance_root / "workbench" / "audit" / "events.jsonl",
             bot_id=bot_instance_root.name or "local",
         )
+        self.regression_results_dir = bot_instance_root / "regression" / "results"
         self.stable_successful_runs_min = stable_successful_runs_min
 
     def promote(
@@ -294,6 +296,14 @@ class SkillLifecycleService:
                     "missing_regression_case",
                     "Candidate -> verified requires at least one regression case id.",
                     "regression_case_ids",
+                )
+            )
+        elif not has_successful_replay(self.regression_results_dir, regression_ids):
+            issues.append(
+                ValidationIssue(
+                    "missing_successful_regression_replay",
+                    "Candidate -> verified requires a successful regression replay for every supplied case id.",
+                    "regression_results",
                 )
             )
         return issues

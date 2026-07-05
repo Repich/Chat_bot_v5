@@ -1,3 +1,11 @@
+5.0.0-alpha.34
+- Added regression replay: regression cases can now be executed through the agent and checked for expected source, artifact type, columns, clarification behavior, and forbidden metadata objects.
+- Regression cases now carry stable case_id values, and replay results are saved under the bot instance regression results workspace.
+- Added CLI support for `scripts/run_regression.py --replay`, preserving the old validation-only mode by default.
+- Added admin endpoint `POST /api/admin/regression/run` to replay bot-instance regression cases and audit the run.
+- Candidate -> verified promotion now requires a successful replay result for every supplied regression case id, not just the presence of an id.
+- Added regression tests for replay success/failure checks, saved replay evidence, promotion replay gating, and web routing.
+
 5.0.0-alpha.33
 - Added bot-specific Skill Lifecycle service for candidate -> verified -> stable promotion, deprecate, block, and explicit rollback actions.
 - Lifecycle transitions update the skill JSON status/version, move the skill between status-specific bot workspace folders, append lifecycle evidence, and write Workbench audit events with before/after hashes.

@@ -279,8 +279,10 @@ XML-derived поля получают `trust=verified`, а поля, найде�
 - `scripts/trace_to_case.py`
 - `scripts/run_regression.py`
 
-Trace можно превратить в regression case. Текущий runner валидирует формат и
-ожидания cases; автоматический replay через LLM/MCP будет следующим слоем.
+Trace можно превратить в regression case. Runner поддерживает два режима:
+валидацию формата case pack и replay через агента. Replay проверяет source,
+тип artifact, ожидаемые колонки, уточнения и запрещенные объекты метаданных.
+Promotion candidate -> verified требует успешный replay для связанных case id.
 
 ### Skill Composer Explainability
 

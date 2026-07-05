@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 class RegressionCase:
     question: str
     expected_behavior: str
+    case_id: str = ""
     expected_source: str = ""
     expected_artifact_type: str = ""
     expected_columns_any_of: List[List[str]] = field(default_factory=list)
@@ -19,6 +20,7 @@ class RegressionCase:
 
     def to_dict(self) -> Dict[str, object]:
         return {
+            "case_id": self.case_id or case_id_for_question(self.question),
             "question": self.question,
             "expected_behavior": self.expected_behavior,
             "expected_source": self.expected_source,
@@ -31,9 +33,11 @@ class RegressionCase:
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "RegressionCase":
+        question = str(payload.get("question") or "")
         return cls(
-            question=str(payload.get("question") or ""),
+            question=question,
             expected_behavior=str(payload.get("expected_behavior") or "uses_skills_or_synthesis"),
+            case_id=str(payload.get("case_id") or case_id_for_question(question)),
             expected_source=str(payload.get("expected_source") or ""),
             expected_artifact_type=str(payload.get("expected_artifact_type") or ""),
             expected_columns_any_of=[
@@ -51,8 +55,10 @@ def case_from_trace(trace_path: Path, *, expected_ok: bool = False) -> Regressio
     user_message = read_json(trace_path / "input" / "user_message.json")
     result = read_json(trace_path / "result" / "result.json")
     final_artifact = result.get("final_artifact") if isinstance(result.get("final_artifact"), dict) else {}
+    question = str(user_message.get("message") or "")
     return RegressionCase(
-        question=str(user_message.get("message") or ""),
+        case_id=case_id_for_question(question),
+        question=question,
         expected_behavior="ok" if expected_ok else "uses_skills_or_synthesis",
         expected_source=str(result.get("source") or ""),
         expected_artifact_type=str(final_artifact.get("type") or ""),
@@ -100,3 +106,7 @@ def case_filename(question: str) -> str:
     while "__" in safe:
         safe = safe.replace("__", "_")
     return (safe[:80] or "regression_case") + ".json"
+
+
+def case_id_for_question(question: str) -> str:
+    return case_filename(question).removesuffix(".json")

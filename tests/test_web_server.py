@@ -48,6 +48,7 @@ class WebServerTests(unittest.TestCase):
             runs_root = Path(temp_dir) / "runs"
             write_trace(runs_root / "agent_001")
             write_onboarding_candidate(onboarding_manager.bot_instance_root)
+            write_regression_case(onboarding_manager.bot_instance_root)
             metadata_explorer = MetadataExplorerService(
                 provider=StaticMetadataProvider(
                     [
@@ -310,6 +311,15 @@ class WebServerTests(unittest.TestCase):
                 published_candidate = json.loads(
                     urllib.request.urlopen(publish_candidate_request, timeout=5).read().decode("utf-8")
                 )
+                regression_run_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/regression/run",
+                    data=json.dumps({"actor": "regression-runner"}, ensure_ascii=False).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                regression_run = json.loads(
+                    urllib.request.urlopen(regression_run_request, timeout=5).read().decode("utf-8")
+                )
                 published_skill_id = published_candidate["publication"]["skill"]["skill_id"]
                 promote_skill_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/skills/{published_skill_id}/promote",
@@ -419,6 +429,8 @@ class WebServerTests(unittest.TestCase):
         self.assertTrue(published_candidate["publication"]["ok"], published_candidate)
         self.assertEqual(published_candidate["publication"]["skill"]["status"], "candidate")
         self.assertNotEqual(published_candidate["publication"]["approval"]["approval_id"], approved_draft["approval"]["approval_id"])
+        self.assertTrue(regression_run["ok"], regression_run)
+        self.assertEqual(regression_run["regression"]["passed"], 1)
         self.assertTrue(promoted_skill["ok"], promoted_skill)
         self.assertEqual(promoted_skill["lifecycle"]["after_status"], "verified")
         self.assertEqual(promoted_skill["lifecycle"]["skill"]["status"], "verified")
@@ -535,6 +547,23 @@ def write_onboarding_candidate(bot_root: Path) -> None:
                         "status": "candidate",
                     }
                 ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_regression_case(bot_root: Path) -> None:
+    regression = bot_root / "regression"
+    regression.mkdir(parents=True, exist_ok=True)
+    (regression / "reg_web_stock_top.json").write_text(
+        json.dumps(
+            {
+                "case_id": "reg_web_stock_top",
+                "question": "Привет",
+                "expected_behavior": "ok",
+                "expected_source": "general_answer",
             },
             ensure_ascii=False,
         ),

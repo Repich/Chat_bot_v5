@@ -26,6 +26,8 @@ from wiicon5.workbench import (
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
 from wiicon5.mcp.client import DictMcpClient
 from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
+from wiicon5.regression.replay import RegressionCaseReplayResult, RegressionReplayResult, save_replay_result
+from wiicon5.workbench.audit import utc_now
 
 
 class WorkbenchModelTests(unittest.TestCase):
@@ -429,6 +431,12 @@ class SkillLifecycleWorkbenchTests(unittest.TestCase):
                 regression_case_id="reg_stock_top",
             )
             published = CandidatePublisher(bot_instance_root=bot, approval_store=approval_store).publish(draft)
+            before_replay = SkillLifecycleService(bot_instance_root=bot).promote(
+                published.skill.skill_id,
+                actor="consultant",
+                reason="Regression case id exists but has not been replayed yet.",
+            )
+            write_successful_replay(bot, "reg_stock_top")
 
             result = SkillLifecycleService(bot_instance_root=bot).promote(
                 published.skill.skill_id,
@@ -439,6 +447,8 @@ class SkillLifecycleWorkbenchTests(unittest.TestCase):
             item = snapshot.get(published.skill.skill_id)
             events = SkillLifecycleService(bot_instance_root=bot).audit.read()
 
+        self.assertFalse(before_replay.ok)
+        self.assertIn("missing_successful_regression_replay", [issue.code for issue in before_replay.issues])
         self.assertTrue(result.ok, result.to_dict())
         self.assertEqual(result.before_status, "candidate")
         self.assertEqual(result.after_status, "verified")
@@ -537,6 +547,31 @@ def skill_contract(skill_id: str, *, status: SkillStatus = SkillStatus.VERIFIED)
 def write_skill(path: Path, contract: SkillContract) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(contract.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_successful_replay(bot: Path, case_id: str) -> None:
+    ts = utc_now()
+    save_replay_result(
+        RegressionReplayResult(
+            run_id=f"run_{case_id}",
+            ok=True,
+            count=1,
+            passed=1,
+            failed=0,
+            started_at=ts,
+            finished_at=ts,
+            case_results=[
+                RegressionCaseReplayResult(
+                    case_id=case_id,
+                    question="Покажи товар с самым большим остатком",
+                    ok=True,
+                    source="skill_execution_ok",
+                    artifact_type="TypedTable",
+                )
+            ],
+        ),
+        bot / "regression" / "results",
+    )
 
 
 def top_n_stock_draft() -> HumanSkillDraft:

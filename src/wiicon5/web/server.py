@@ -10,6 +10,7 @@ from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.onboarding.status import OnboardingManager
+from wiicon5.regression import load_cases, run_regression_replay, save_replay_result
 from wiicon5.workbench.approval import ApprovalStore
 from wiicon5.workbench.lifecycle import SkillLifecycleService
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
@@ -273,6 +274,9 @@ def make_handler(
                     self._send_json(202, {"ok": True, "status": status.to_dict()})
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+            if parsed.path == "/api/admin/regression/run":
+                self._run_regression_replay()
                 return
             if parsed.path != "/chat":
                 if parsed.path == "/api/admin/workbench/drafts/from-trace":
@@ -620,6 +624,52 @@ def make_handler(
                 self._send_json(200, {"ok": True, "publication": published.to_dict()})
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _run_regression_replay(self) -> None:
+            try:
+                payload = self._read_json()
+                cases_value = str(payload.get("cases") or "").strip()
+                cases_path = (
+                    Path(cases_value).expanduser()
+                    if cases_value
+                    else effective_onboarding_manager.bot_instance_root / "regression"
+                )
+                if not effective_admin_security.config_dump_allowed(cases_path):
+                    self._audit_admin_denied(
+                        path="/api/admin/regression/run",
+                        error="regression_cases_not_allowed",
+                        status_code=403,
+                        payload={"cases": str(cases_path)},
+                    )
+                    self._send_json(
+                        403,
+                        {
+                            "ok": False,
+                            "error": "regression_cases_not_allowed",
+                            "message": "Regression cases path is outside WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS.",
+                        },
+                    )
+                    return
+                cases = load_cases(cases_path)
+                result = run_regression_replay(
+                    cases,
+                    agent,
+                    session_prefix=str(payload.get("session_prefix") or "regression"),
+                )
+                result_path = save_replay_result(
+                    result,
+                    effective_onboarding_manager.bot_instance_root / "regression" / "results",
+                )
+                effective_draft_store.audit.append(
+                    event_type="workbench.regression.replayed",
+                    actor=str(payload.get("actor") or "admin"),
+                    object_type="regression",
+                    object_id=result.run_id,
+                    payload={"ok": result.ok, "count": result.count, "path": str(result_path)},
+                )
+                self._send_json(200, {"ok": result.ok, "regression": result.to_dict(), "path": str(result_path)})
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
 

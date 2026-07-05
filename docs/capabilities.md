@@ -103,8 +103,8 @@
   использует его как локальный fallback при поиске объектов метаданных.
 - Onboarding не создает approved skills автоматически.
 - Trace можно преобразовать в regression case.
-- Regression runner пока валидирует case pack и готовит основу для будущего
-  replay.
+- Regression runner валидирует case pack и умеет выполнять replay через агента,
+  сохраняя результат как evidence для promotion.
 - Composer пишет explainability trace по выбору навыков.
 
 ### Web-Клиент
