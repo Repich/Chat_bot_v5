@@ -153,6 +153,8 @@ class WorkbenchStoreTests(unittest.TestCase):
             paths = sorted((bot / "workbench" / "drafts").glob("*.json"))
 
         self.assertNotEqual(first.draft_id, second.draft_id)
+        self.assertTrue(first.draft_id.startswith("draft_"))
+        self.assertTrue(first.draft_id.isascii())
         self.assertEqual(len(paths), 2)
 
     def test_store_delete_removes_file_and_audits_event(self) -> None:

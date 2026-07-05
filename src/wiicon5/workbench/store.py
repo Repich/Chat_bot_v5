@@ -131,8 +131,7 @@ class HumanSkillDraftStore:
         return self.drafts_dir / f"{safe_file_stem(draft_id)}.json"
 
     def _new_draft_id(self, title: str) -> str:
-        stem = safe_file_stem(title)[:40].strip("_") or "draft"
-        return f"{stem}_{uuid4().hex[:10]}"
+        return f"draft_{uuid4().hex[:12]}"
 
     def _read_draft(self, path: Path) -> Optional[HumanSkillDraft]:
         try:

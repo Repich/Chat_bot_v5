@@ -132,6 +132,54 @@ class WebServerTests(unittest.TestCase):
                     .read()
                     .decode("utf-8")
                 )
+                create_draft_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts",
+                    data=json.dumps(
+                        {
+                            "actor": "tester",
+                            "draft": {
+                                "title": "Остатки по складу",
+                                "example_questions": ["Покажи остатки по Центральному складу"],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                created_draft = json.loads(urllib.request.urlopen(create_draft_request, timeout=5).read().decode("utf-8"))
+                draft_id = created_draft["draft"]["draft_id"]
+                drafts = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/drafts",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                update_draft_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}",
+                    data=json.dumps(
+                        {"actor": "editor", "description": "Описание от консультанта"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="PATCH",
+                )
+                updated_draft = json.loads(urllib.request.urlopen(update_draft_request, timeout=5).read().decode("utf-8"))
+                draft_audit = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/audit?object_id={draft_id}",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                delete_draft_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}?actor=deleter",
+                    method="DELETE",
+                )
+                deleted_draft = json.loads(urllib.request.urlopen(delete_draft_request, timeout=5).read().decode("utf-8"))
                 backend_history = urllib.request.urlopen(f"http://{host}:{port}/history/backend", timeout=5).read().decode("utf-8")
             finally:
                 server.shutdown()
@@ -161,6 +209,11 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(metadata_search["objects"][0]["full_name"], "Справочник.Склады")
         self.assertTrue(metadata_object["ok"])
         self.assertEqual(metadata_object["object"]["fields"][0]["name"], "Ссылка")
+        self.assertTrue(created_draft["ok"])
+        self.assertEqual(drafts["drafts"][0]["draft_id"], created_draft["draft"]["draft_id"])
+        self.assertEqual(updated_draft["draft"]["description"], "Описание от консультанта")
+        self.assertEqual([item["event_type"] for item in draft_audit["events"]], ["workbench.draft.created", "workbench.draft.updated"])
+        self.assertTrue(deleted_draft["ok"])
         self.assertIn('input.addEventListener("keydown"', chat_page)
         self.assertIn("form.requestSubmit()", chat_page)
         self.assertIn("startTitleBlink", chat_page)

@@ -11,7 +11,9 @@ from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
+from wiicon5.workbench.models import HumanSkillDraft
 from wiicon5.workbench.skill_catalog import SkillCatalogService
+from wiicon5.workbench.store import HumanSkillDraftStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -25,6 +27,7 @@ def make_handler(
     onboarding_manager: OnboardingManager | None = None,
     skill_catalog: SkillCatalogService | None = None,
     metadata_explorer: MetadataExplorerService | None = None,
+    draft_store: HumanSkillDraftStore | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -35,6 +38,10 @@ def make_handler(
     )
     effective_metadata_explorer = metadata_explorer or MetadataExplorerService.from_bot_instance(
         effective_onboarding_manager.bot_instance_root
+    )
+    effective_draft_store = draft_store or HumanSkillDraftStore(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        bot_id=effective_onboarding_manager.bot_instance_root.name or "local",
     )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
@@ -71,6 +78,29 @@ def make_handler(
                 return
             if path == "/api/admin/onboarding/status":
                 self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
+                return
+            if path == "/api/admin/workbench/drafts":
+                self._send_json(
+                    200,
+                    {"ok": True, "drafts": [draft.to_dict() for draft in effective_draft_store.list_drafts()]},
+                )
+                return
+            if path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(path.rsplit("/", 1)[-1])
+                draft = effective_draft_store.get_draft(draft_id)
+                if draft is None:
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                self._send_json(200, {"ok": True, "draft": draft.to_dict()})
+                return
+            if path == "/api/admin/workbench/audit":
+                object_id = first_query_value(query, "object_id")
+                events = (
+                    effective_draft_store.audit.filter_by_object(object_id)
+                    if object_id
+                    else effective_draft_store.audit.read()
+                )
+                self._send_json(200, {"ok": True, "events": [event.to_dict() for event in events]})
                 return
             if path == "/api/admin/skills/catalog":
                 snapshot = effective_skill_catalog.snapshot()
@@ -127,6 +157,9 @@ def make_handler(
                     self._send_json(500, {"ok": False, "error": str(exc)})
                 return
             if parsed.path != "/chat":
+                if parsed.path == "/api/admin/workbench/drafts":
+                    self._create_draft()
+                    return
                 self._send_json(404, {"ok": False, "error": "not_found"})
                 return
             try:
@@ -141,6 +174,58 @@ def make_handler(
                 self._send_json(200, {"ok": True, "result": result.to_dict()})
             except Exception as exc:  # Keep HTTP layer diagnostic rather than crashing the server.
                 self._send_json(500, {"ok": False, "error": str(exc)})
+
+        def do_PATCH(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                self._update_draft(draft_id)
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def do_PUT(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                self._update_draft(draft_id)
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/admin/workbench/drafts/"):
+                draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                actor = first_query_value(parse_qs(parsed.query), "actor") or "admin"
+                if not effective_draft_store.delete_draft(draft_id, actor=actor):
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                self._send_json(200, {"ok": True, "draft_id": draft_id})
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def _create_draft(self) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft_payload = payload.get("draft") if isinstance(payload.get("draft"), dict) else payload
+                draft = HumanSkillDraft.from_dict(draft_payload)
+                created = effective_draft_store.create_draft(draft, actor=actor)
+                self._send_json(201, {"ok": True, "draft": created.to_dict()})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _update_draft(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                changes = payload.get("draft") if isinstance(payload.get("draft"), dict) else dict(payload)
+                changes.pop("actor", None)
+                updated = effective_draft_store.update_draft(draft_id, changes, actor=actor)
+                self._send_json(200, {"ok": True, "draft": updated.to_dict()})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
 
         def _read_json(self) -> Dict[str, Any]:
             content_length = int(self.headers.get("Content-Length", "0"))
