@@ -1,3 +1,10 @@
+5.0.0-alpha.31
+- Added a Workbench onboarding candidate service that normalizes candidate_bindings, candidate_semantic_roles, register_usage_map, and candidate_query_patterns into a human-review queue.
+- Added admin API endpoints to list onboarding candidates, reject candidates, and create HumanSkillDraft records from candidates.
+- Candidate rejection decisions are stored in the bot-specific Workbench workspace and audited.
+- Drafts created from onboarding candidates keep source_kind=onboarding_candidate and remain non-plannable until validation, smoke, and approval.
+- Added regression tests for candidate reading, missing files, reject persistence, draft creation, and web API routing.
+
 5.0.0-alpha.30
 - Added admin security settings for WIICON5_ADMIN_ENABLED, WIICON5_ADMIN_TOKEN, WIICON5_ADMIN_BIND_LOCAL_ONLY, and WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS.
 - Guarded /api/admin/* endpoints with localhost-only mode by default and optional Authorization Bearer / X-WIICON5-Admin-Token checks.

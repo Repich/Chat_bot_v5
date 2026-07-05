@@ -47,6 +47,7 @@ class WebServerTests(unittest.TestCase):
             onboarding_manager = OnboardingManager(bot_instance_root=Path(temp_dir) / "bot")
             runs_root = Path(temp_dir) / "runs"
             write_trace(runs_root / "agent_001")
+            write_onboarding_candidate(onboarding_manager.bot_instance_root)
             metadata_explorer = MetadataExplorerService(
                 provider=StaticMetadataProvider(
                     [
@@ -90,6 +91,36 @@ class WebServerTests(unittest.TestCase):
                     )
                     .read()
                     .decode("utf-8")
+                )
+                onboarding_candidates = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/onboarding/candidates",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                onboarding_candidate_id = onboarding_candidates["candidates"][0]["candidate_id"]
+                create_candidate_draft_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/onboarding/candidates/{onboarding_candidate_id}/create-draft",
+                    data=json.dumps({"actor": "candidate-admin"}, ensure_ascii=False).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                candidate_draft = json.loads(
+                    urllib.request.urlopen(create_candidate_draft_request, timeout=5).read().decode("utf-8")
+                )
+                reject_candidate_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/onboarding/candidates/{onboarding_candidate_id}/reject",
+                    data=json.dumps(
+                        {"actor": "candidate-admin", "comment": "Проверим позже"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                rejected_candidate = json.loads(
+                    urllib.request.urlopen(reject_candidate_request, timeout=5).read().decode("utf-8")
                 )
                 chat_page_response = urllib.request.urlopen(f"http://{host}:{port}/chat", timeout=5)
                 chat_page = chat_page_response.read().decode("utf-8")
@@ -315,6 +346,7 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("workbenchPanel", chat_page)
         self.assertIn("skillCatalogButton", chat_page)
         self.assertIn("draftListButton", chat_page)
+        self.assertIn("onboardingCandidatesButton", chat_page)
         self.assertIn("metadataSearchInput", chat_page)
         self.assertIn("createDraftButton", chat_page)
         self.assertIn("previewDraftButton", chat_page)
@@ -322,9 +354,16 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("approvalCommentInput", chat_page)
         self.assertIn("approveDraftButton", chat_page)
         self.assertIn("rejectDraftButton", chat_page)
+        self.assertIn("candidateIdInput", chat_page)
+        self.assertIn("candidateCreateDraftButton", chat_page)
+        self.assertIn("candidateRejectButton", chat_page)
         self.assertIn("publishDraftButton", chat_page)
         self.assertTrue(onboarding_status["ok"])
         self.assertFalse(onboarding_status["status"]["trained"])
+        self.assertTrue(onboarding_candidates["ok"])
+        self.assertEqual(onboarding_candidates["summary"]["total"], 1)
+        self.assertEqual(candidate_draft["draft"]["source_kind"], "onboarding_candidate")
+        self.assertEqual(rejected_candidate["rejection"]["candidate_id"], onboarding_candidate_id)
         self.assertTrue(skill_catalog["ok"])
         self.assertGreaterEqual(skill_catalog["summary"]["total"], 1)
         self.assertTrue(stock_skill["ok"])
@@ -362,7 +401,9 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("startTitleBlink", chat_page)
         self.assertIn("Новое сообщение", chat_page)
         self.assertIn("loadSkillCatalog", chat_page)
+        self.assertIn("loadOnboardingCandidates", chat_page)
         self.assertIn("postDraftAction", chat_page)
+        self.assertIn("postCandidateAction", chat_page)
         self.assertIn('postDraftAction("approve"', chat_page)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")
@@ -438,6 +479,28 @@ def write_trace(trace) -> None:
     )
     (trace / "result" / "result.json").write_text(
         json.dumps({"source": "query_synthesis_ok", "message": "Найден результат."}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def write_onboarding_candidate(bot_root: Path) -> None:
+    onboarding = bot_root / "onboarding"
+    onboarding.mkdir(parents=True, exist_ok=True)
+    (onboarding / "candidate_bindings.json").write_text(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "semantic_role": "stock_balance",
+                        "object": "РегистрНакопления.ТоварыНаСкладах",
+                        "confidence": 0.7,
+                        "evidence": ["object has product and warehouse fields"],
+                        "status": "candidate",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 

@@ -1,3 +1,6 @@
+5.0.0-alpha.31
+- Added Skill Workbench controls to load onboarding candidates, create a draft from a selected candidate, and reject a candidate.
+
 5.0.0-alpha.29
 - Added Workbench controls for approval comments plus explicit approve/reject actions.
 - Workbench candidate publication now sends approval comments through the admin API.

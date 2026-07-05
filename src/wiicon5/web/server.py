@@ -13,6 +13,7 @@ from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.workbench.approval import ApprovalStore
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.models import HumanSkillDraft
+from wiicon5.workbench.onboarding_candidates import OnboardingCandidateService
 from wiicon5.workbench.preview import QueryPreviewService
 from wiicon5.workbench.publish import APPROVAL_GATE_CODES, CandidatePublisher
 from wiicon5.workbench.skill_catalog import SkillCatalogService
@@ -40,6 +41,7 @@ def make_handler(
     approval_store: ApprovalStore | None = None,
     candidate_publisher: CandidatePublisher | None = None,
     admin_security: AdminSecurityConfig | None = None,
+    onboarding_candidate_service: OnboardingCandidateService | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -68,6 +70,10 @@ def make_handler(
         approval_store=effective_approval_store,
     )
     effective_admin_security = admin_security or AdminSecurityConfig()
+    effective_onboarding_candidate_service = onboarding_candidate_service or OnboardingCandidateService(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        draft_store=effective_draft_store,
+    )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -105,6 +111,24 @@ def make_handler(
                 return
             if path == "/api/admin/onboarding/status":
                 self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
+                return
+            if path == "/api/admin/workbench/onboarding/candidates":
+                limit = int_or_default(first_query_value(query, "limit"), 200)
+                type_filter = first_query_value(query, "type")
+                term = first_query_value(query, "q") or first_query_value(query, "term")
+                candidates = effective_onboarding_candidate_service.list_candidates(
+                    limit=limit,
+                    type_filter=type_filter,
+                    term=term,
+                )
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "candidates": [item.to_dict() for item in candidates],
+                        "summary": onboarding_candidate_summary(candidates),
+                    },
+                )
                 return
             if path == "/api/admin/workbench/drafts":
                 self._send_json(
@@ -223,6 +247,14 @@ def make_handler(
                 if parsed.path == "/api/admin/workbench/drafts/from-trace":
                     self._create_draft_from_trace()
                     return
+                if parsed.path.startswith("/api/admin/workbench/onboarding/candidates/") and parsed.path.endswith("/create-draft"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._create_draft_from_onboarding_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/onboarding/candidates/") and parsed.path.endswith("/reject"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._reject_onboarding_candidate(candidate_id)
+                    return
                 if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/preview"):
                     draft_id = unquote(parsed.path.split("/")[-2])
                     self._preview_draft(draft_id)
@@ -330,6 +362,38 @@ def make_handler(
                 draft = effective_trace_importer.draft_from_trace(Path(trace_path))
                 created = effective_draft_store.create_draft(draft, actor=actor)
                 self._send_json(201, {"ok": True, "draft": created.to_dict()})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _create_draft_from_onboarding_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_onboarding_candidate_service.create_draft(candidate_id, actor=actor)
+                self._send_json(201, {"ok": True, "draft": draft.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "onboarding_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _reject_onboarding_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                record = effective_onboarding_candidate_service.reject_candidate(
+                    candidate_id,
+                    actor=actor,
+                    comment=str(payload.get("comment") or ""),
+                )
+                self._send_json(200, {"ok": True, "rejection": record})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "onboarding_candidate_not_found", "candidate_id": candidate_id},
+                )
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
 
@@ -578,6 +642,15 @@ def conversation_summary(context) -> Dict[str, Any]:
         "updated_at": latest.ts if latest else "",
         "preview": preview[:140],
     }
+
+
+def onboarding_candidate_summary(candidates) -> Dict[str, Any]:
+    by_type: Dict[str, int] = {}
+    by_status: Dict[str, int] = {}
+    for candidate in candidates:
+        by_type[candidate.type] = by_type.get(candidate.type, 0) + 1
+        by_status[candidate.status] = by_status.get(candidate.status, 0) + 1
+    return {"total": len(candidates), "by_type": by_type, "by_status": by_status}
 
 
 def seed_context_from_payload(agent: AgentOrchestrator, session_id: str, payload: Dict[str, Any]) -> None:
@@ -1074,6 +1147,7 @@ CHAT_HTML = """<!doctype html>
                 <button id="skillCatalogButton" class="secondary" type="button">Навыки</button>
                 <button id="draftListButton" class="secondary" type="button">Черновики</button>
               </div>
+              <button id="onboardingCandidatesButton" class="secondary" type="button">Onboarding candidates</button>
               <label>Поиск метаданных
                 <input id="metadataSearchInput" placeholder="Склады, Номенклатура, Регистр">
               </label>
@@ -1101,6 +1175,13 @@ CHAT_HTML = """<!doctype html>
               <div class="tool-row">
                 <button id="approveDraftButton" class="secondary" type="button">Approve</button>
                 <button id="rejectDraftButton" class="secondary" type="button">Reject</button>
+              </div>
+              <label>Candidate ID
+                <input id="candidateIdInput" placeholder="onb_...">
+              </label>
+              <div class="tool-row">
+                <button id="candidateCreateDraftButton" class="secondary" type="button">Create draft</button>
+                <button id="candidateRejectButton" class="secondary" type="button">Reject</button>
               </div>
               <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
             </div>
@@ -1148,6 +1229,7 @@ CHAT_HTML = """<!doctype html>
     const onboardingStatus = document.getElementById("onboardingStatus");
     const skillCatalogButton = document.getElementById("skillCatalogButton");
     const draftListButton = document.getElementById("draftListButton");
+    const onboardingCandidatesButton = document.getElementById("onboardingCandidatesButton");
     const metadataSearchInput = document.getElementById("metadataSearchInput");
     const metadataSearchButton = document.getElementById("metadataSearchButton");
     const draftIdInput = document.getElementById("draftIdInput");
@@ -1160,6 +1242,9 @@ CHAT_HTML = """<!doctype html>
     const approvalCommentInput = document.getElementById("approvalCommentInput");
     const approveDraftButton = document.getElementById("approveDraftButton");
     const rejectDraftButton = document.getElementById("rejectDraftButton");
+    const candidateIdInput = document.getElementById("candidateIdInput");
+    const candidateCreateDraftButton = document.getElementById("candidateCreateDraftButton");
+    const candidateRejectButton = document.getElementById("candidateRejectButton");
     const workbenchText = document.getElementById("workbenchText");
     let pending = false;
     let onboardingPollTimer = null;
@@ -1457,6 +1542,20 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    async function loadOnboardingCandidates() {
+      workbenchText.textContent = "Загрузка onboarding candidates...";
+      try {
+        const response = await fetch("/api/admin/workbench/onboarding/candidates", {cache: "no-store"});
+        const data = await response.json();
+        if (data.ok && Array.isArray(data.candidates) && data.candidates[0]) {
+          candidateIdInput.value = data.candidates[0].candidate_id || candidateIdInput.value;
+        }
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить onboarding candidates: " + String(error.message || error);
+      }
+    }
+
     async function searchMetadata() {
       const term = metadataSearchInput.value.trim();
       if (!term) {
@@ -1510,6 +1609,26 @@ CHAT_HTML = """<!doctype html>
         showWorkbench(await response.json());
       } catch (error) {
         workbenchText.textContent = "Действие Workbench не выполнено: " + String(error.message || error);
+      }
+    }
+
+    async function postCandidateAction(action) {
+      const candidateId = candidateIdInput.value.trim();
+      if (!candidateId) {
+        candidateIdInput.focus();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/admin/workbench/onboarding/candidates/${encodeURIComponent(candidateId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin", comment: approvalCommentInput.value.trim()})
+        });
+        const data = await response.json();
+        if (data.ok && data.draft && data.draft.draft_id) draftIdInput.value = data.draft.draft_id;
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Действие onboarding candidate не выполнено: " + String(error.message || error);
       }
     }
 
@@ -1649,6 +1768,7 @@ CHAT_HTML = """<!doctype html>
     startOnboardingButton.addEventListener("click", () => startOnboarding());
     skillCatalogButton.addEventListener("click", () => loadSkillCatalog());
     draftListButton.addEventListener("click", () => loadDraftList());
+    onboardingCandidatesButton.addEventListener("click", () => loadOnboardingCandidates());
     metadataSearchButton.addEventListener("click", () => searchMetadata());
     createDraftButton.addEventListener("click", () => createWorkbenchDraft());
     previewDraftButton.addEventListener("click", () => postDraftAction("preview"));
@@ -1659,6 +1779,8 @@ CHAT_HTML = """<!doctype html>
     rejectDraftButton.addEventListener("click", () => postDraftAction("reject", {
       comment: approvalCommentInput.value.trim()
     }));
+    candidateCreateDraftButton.addEventListener("click", () => postCandidateAction("create-draft"));
+    candidateRejectButton.addEventListener("click", () => postCandidateAction("reject"));
     publishDraftButton.addEventListener("click", () => postDraftAction("publish-candidate"));
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {

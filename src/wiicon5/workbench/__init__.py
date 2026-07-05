@@ -15,6 +15,7 @@ from wiicon5.workbench.models import (
     PresentationRecipe,
     SortRecipe,
 )
+from wiicon5.workbench.onboarding_candidates import OnboardingCandidate, OnboardingCandidateService
 from wiicon5.workbench.preview import QueryPreviewResult, QueryPreviewService
 from wiicon5.workbench.publish import CandidatePublisher, PublishCandidateResult
 from wiicon5.workbench.skill_catalog import SkillCatalogItem, SkillCatalogService, SkillCatalogSnapshot
@@ -39,6 +40,8 @@ __all__ = [
     "MetadataFieldView",
     "MetadataObjectView",
     "McpSmokeTestService",
+    "OnboardingCandidate",
+    "OnboardingCandidateService",
     "PresentationRecipe",
     "QueryPreviewResult",
     "QueryPreviewService",
