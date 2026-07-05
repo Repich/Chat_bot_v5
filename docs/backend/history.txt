@@ -1,3 +1,6 @@
+5.0.0-alpha.49
+- No backend behavior changes. This release keeps the alpha.48 server startup wiring and updates the client shell.
+
 5.0.0-alpha.48
 - Fixed CLI server startup after Workbench metadata wiring by accepting metadata_explorer and preview_service in run_http_server.
 - Added regression coverage for the CLI-to-web-server dependency wiring.

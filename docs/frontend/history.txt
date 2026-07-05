@@ -1,3 +1,7 @@
+5.0.0-alpha.49
+- Added a safe in-memory storage fallback so Safari private browsing does not stop the page script before button handlers are registered.
+- Collapsed advanced Workbench draft, approval, candidate, lifecycle, regression, and debug controls into explicit subpanels so settings stay readable by default.
+
 5.0.0-alpha.48
 - No frontend behavior changes. This release fixes server startup so the alpha.47 Documentation UI is actually loaded after restart.
 

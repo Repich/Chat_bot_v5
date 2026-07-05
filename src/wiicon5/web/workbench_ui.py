@@ -468,6 +468,38 @@ CHAT_HTML = """<!doctype html>
       padding-top: 0;
       border-top: 1px solid var(--line);
     }
+    .admin-subpanel {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 0;
+    }
+    .admin-subpanel > summary {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 9px;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 650;
+      list-style: none;
+    }
+    .admin-subpanel > summary::-webkit-details-marker { display: none; }
+    .admin-subpanel > summary::before {
+      content: "▸";
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .admin-subpanel[open] > summary::before { content: "▾"; }
+    .admin-subpanel-content {
+      display: grid;
+      gap: 8px;
+      padding: 0 9px 9px;
+    }
     .admin-title {
       margin: 0;
       color: var(--muted);
@@ -667,180 +699,203 @@ CHAT_HTML = """<!doctype html>
                 <button id="skillCatalogButton" class="secondary" type="button">Навыки</button>
                 <button id="draftListButton" class="secondary" type="button">Черновики</button>
               </div>
-              <button id="onboardingCandidatesButton" class="secondary" type="button">Onboarding candidates</button>
-              <button id="synthesisCandidatesButton" class="secondary" type="button">Agent candidates</button>
               <label>Поиск метаданных
                 <input id="metadataSearchInput" placeholder="Склады, Номенклатура, Регистр">
               </label>
-              <button id="metadataSearchButton" class="secondary" type="button">Искать метаданные</button>
-              <label>Metadata full_name
-                <input id="metadataObjectInput" placeholder="РегистрНакопления.ТоварыНаСкладах">
-              </label>
-              <button id="metadataObjectButton" class="secondary" type="button">Открыть объект</button>
-              <label>Draft ID
-                <input id="draftIdInput" placeholder="draft_...">
-              </label>
-              <button id="draftDetailsButton" class="secondary" type="button">Открыть draft</button>
-              <label>Новый draft
-                <input id="draftTitleInput" placeholder="Название навыка">
-              </label>
-              <label>Пример вопроса
-                <input id="draftExampleQuestionInput" placeholder="Какой вопрос должен закрывать навык">
-              </label>
-              <label>Описание
-                <input id="draftDescriptionInput" placeholder="Бизнес-смысл навыка">
-              </label>
               <div class="tool-row">
-                <label>Источник alias
-                  <input id="draftSourceAliasInput" value="Источник">
-                </label>
-                <label>Источник 1С
-                  <input id="draftSourceObjectInput" placeholder="РегистрНакопления...Остатки">
-                </label>
+                <button id="metadataSearchButton" class="secondary" type="button">Искать</button>
+                <button id="onboardingCandidatesButton" class="secondary" type="button">Кандидаты</button>
               </div>
-              <div class="tool-row">
-                <label>Группировка role
-                  <input id="draftGroupRoleInput" placeholder="product">
-                </label>
-                <label>Группировка field
-                  <input id="draftGroupFieldInput" placeholder="Номенклатура">
-                </label>
-              </div>
-              <div class="tool-row">
-                <label>Метрика role
-                  <input id="draftMeasureRoleInput" placeholder="stock_balance">
-                </label>
-                <label>Метрика field
-                  <input id="draftMeasureFieldInput" placeholder="ВНаличииОстаток">
-                </label>
-              </div>
-              <div class="tool-row">
-                <label>Метрика label
-                  <input id="draftMeasureLabelInput" placeholder="Остаток">
-                </label>
-                <label>Агрегация
-                  <select id="draftAggregateSelect">
-                    <option value="sum">sum</option>
-                    <option value="count">count</option>
-                    <option value="max">max</option>
-                    <option value="min">min</option>
-                  </select>
-                </label>
-              </div>
-              <div class="tool-row">
-                <label>Фильтр role
-                  <input id="draftFilterRoleInput" placeholder="warehouse_type">
-                </label>
-                <label>Фильтр field
-                  <input id="draftFilterFieldInput" placeholder="Склад.ТипСклада">
-                </label>
-              </div>
-              <div class="tool-row">
-                <label>Фильтр parameter
-                  <input id="draftFilterParameterInput" placeholder="ТипСклада">
-                </label>
-                <label>Фильтр operator
-                  <select id="draftFilterOperatorSelect">
-                    <option value="equals">equals</option>
-                    <option value="not_equals">not_equals</option>
-                    <option value="in">in</option>
-                    <option value="contains">contains</option>
-                  </select>
-                </label>
-              </div>
-              <div class="tool-row">
-                <label>Limit
-                  <input id="draftLimitInput" type="number" min="1" max="100" step="1" placeholder="10">
-                </label>
-                <label class="checkbox-label">
-                  <input id="draftFieldsConfirmedInput" type="checkbox">
-                  Fields confirmed
-                </label>
-              </div>
-              <label>Draft JSON
-                <textarea id="draftJsonInput" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
-              </label>
-              <div class="tool-row">
-                <button id="createDraftButton" class="secondary" type="button">Создать</button>
-                <button id="previewDraftButton" class="secondary" type="button">Preview</button>
-              </div>
-              <div class="tool-row">
-                <button id="smokeDraftButton" class="secondary" type="button">Smoke</button>
-                <button id="publishDraftButton" class="secondary" type="button">Candidate</button>
-              </div>
-              <label>Комментарий approval
-                <input id="approvalCommentInput" placeholder="Что проверено человеком">
-              </label>
-              <label>Smoke params JSON
-                <textarea id="smokeParamsInput" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
-              </label>
-              <div class="tool-row">
-                <button id="approveDraftButton" class="secondary" type="button">Approve</button>
-                <button id="rejectDraftButton" class="secondary" type="button">Reject</button>
-              </div>
-              <label>Candidate ID
-                <input id="candidateIdInput" placeholder="onb_...">
-              </label>
-              <div class="tool-row">
-                <button id="candidateCreateDraftButton" class="secondary" type="button">Create draft</button>
-                <button id="candidateRejectButton" class="secondary" type="button">Reject</button>
-              </div>
-              <label>Agent candidate ID
-                <input id="synthesisCandidateIdInput" placeholder="syn_...">
-              </label>
-              <div class="tool-row">
-                <button id="synthesisCreateDraftButton" class="secondary" type="button">Create draft</button>
-                <button id="synthesisRejectButton" class="secondary" type="button">Reject</button>
-              </div>
-              <button id="synthesisIgnoreSimilarButton" class="secondary" type="button">Ignore similar</button>
-              <p class="admin-title">Lifecycle навыка</p>
-              <label>Skill ID
-                <input id="skillLifecycleIdInput" placeholder="skill_...">
-              </label>
-              <button id="skillDetailsButton" class="secondary" type="button">Открыть skill</button>
-              <label>Причина изменения
-                <input id="skillLifecycleReasonInput" placeholder="Что проверено и почему меняем статус">
-              </label>
-              <label>Regression case IDs
-                <input id="skillRegressionCasesInput" placeholder="reg_case_1, reg_case_2">
-              </label>
-              <label>Target status
-                <select id="skillLifecycleTargetStatus">
-                  <option value="">По умолчанию</option>
-                  <option value="verified">verified</option>
-                  <option value="stable">stable</option>
-                  <option value="candidate">candidate</option>
-                </select>
-              </label>
-              <label>Successful runs
-                <input id="skillSuccessfulRunsInput" type="number" min="0" step="1" placeholder="0">
-              </label>
-              <label class="checkbox-label">
-                <input id="skillAdminApprovalInput" type="checkbox">
-                Admin approval
-              </label>
-              <div class="tool-row">
-                <button id="skillPromoteButton" class="secondary" type="button">Promote</button>
-                <button id="skillRollbackButton" class="secondary" type="button">Rollback</button>
-              </div>
-              <div class="tool-row">
-                <button id="skillDeprecateButton" class="secondary" type="button">Deprecate</button>
-                <button id="skillBlockButton" class="secondary" type="button">Block</button>
-              </div>
-              <p class="admin-title">Regression replay</p>
-              <label>Cases path
-                <input id="regressionCasesPathInput" placeholder="Пусто = bot_instance/regression">
-              </label>
-              <label>Session prefix
-                <input id="regressionSessionPrefixInput" value="web-regression">
-              </label>
-              <button id="runRegressionButton" class="secondary" type="button">Run regression</button>
+              <details class="admin-subpanel">
+                <summary>Открыть объект или карточку</summary>
+                <div class="admin-subpanel-content">
+                  <label>Metadata full_name
+                    <input id="metadataObjectInput" placeholder="РегистрНакопления.ТоварыНаСкладах">
+                  </label>
+                  <button id="metadataObjectButton" class="secondary" type="button">Открыть объект</button>
+                  <label>Draft ID
+                    <input id="draftIdInput" placeholder="draft_...">
+                  </label>
+                  <button id="draftDetailsButton" class="secondary" type="button">Открыть draft</button>
+                  <label>Skill ID
+                    <input id="skillLifecycleIdInput" placeholder="skill_...">
+                  </label>
+                  <button id="skillDetailsButton" class="secondary" type="button">Открыть skill</button>
+                </div>
+              </details>
+              <details class="admin-subpanel">
+                <summary>Создать или проверить draft</summary>
+                <div class="admin-subpanel-content">
+                  <label>Новый draft
+                    <input id="draftTitleInput" placeholder="Название навыка">
+                  </label>
+                  <label>Пример вопроса
+                    <input id="draftExampleQuestionInput" placeholder="Какой вопрос должен закрывать навык">
+                  </label>
+                  <label>Описание
+                    <input id="draftDescriptionInput" placeholder="Бизнес-смысл навыка">
+                  </label>
+                  <div class="tool-row">
+                    <label>Источник alias
+                      <input id="draftSourceAliasInput" value="Источник">
+                    </label>
+                    <label>Источник 1С
+                      <input id="draftSourceObjectInput" placeholder="РегистрНакопления...Остатки">
+                    </label>
+                  </div>
+                  <div class="tool-row">
+                    <label>Группировка role
+                      <input id="draftGroupRoleInput" placeholder="product">
+                    </label>
+                    <label>Группировка field
+                      <input id="draftGroupFieldInput" placeholder="Номенклатура">
+                    </label>
+                  </div>
+                  <div class="tool-row">
+                    <label>Метрика role
+                      <input id="draftMeasureRoleInput" placeholder="stock_balance">
+                    </label>
+                    <label>Метрика field
+                      <input id="draftMeasureFieldInput" placeholder="ВНаличииОстаток">
+                    </label>
+                  </div>
+                  <div class="tool-row">
+                    <label>Метрика label
+                      <input id="draftMeasureLabelInput" placeholder="Остаток">
+                    </label>
+                    <label>Агрегация
+                      <select id="draftAggregateSelect">
+                        <option value="sum">sum</option>
+                        <option value="count">count</option>
+                        <option value="max">max</option>
+                        <option value="min">min</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="tool-row">
+                    <label>Фильтр role
+                      <input id="draftFilterRoleInput" placeholder="warehouse_type">
+                    </label>
+                    <label>Фильтр field
+                      <input id="draftFilterFieldInput" placeholder="Склад.ТипСклада">
+                    </label>
+                  </div>
+                  <div class="tool-row">
+                    <label>Фильтр parameter
+                      <input id="draftFilterParameterInput" placeholder="ТипСклада">
+                    </label>
+                    <label>Фильтр operator
+                      <select id="draftFilterOperatorSelect">
+                        <option value="equals">equals</option>
+                        <option value="not_equals">not_equals</option>
+                        <option value="in">in</option>
+                        <option value="contains">contains</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="tool-row">
+                    <label>Limit
+                      <input id="draftLimitInput" type="number" min="1" max="100" step="1" placeholder="10">
+                    </label>
+                    <label class="checkbox-label">
+                      <input id="draftFieldsConfirmedInput" type="checkbox">
+                      Fields confirmed
+                    </label>
+                  </div>
+                  <label>Draft JSON
+                    <textarea id="draftJsonInput" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
+                  </label>
+                  <div class="tool-row">
+                    <button id="createDraftButton" class="secondary" type="button">Создать</button>
+                    <button id="previewDraftButton" class="secondary" type="button">Preview</button>
+                  </div>
+                  <button id="smokeDraftButton" class="secondary" type="button">Smoke</button>
+                  <label>Smoke params JSON
+                    <textarea id="smokeParamsInput" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
+                  </label>
+                </div>
+              </details>
+              <details class="admin-subpanel">
+                <summary>Approval, публикация и кандидаты</summary>
+                <div class="admin-subpanel-content">
+                  <label>Комментарий approval
+                    <input id="approvalCommentInput" placeholder="Что проверено человеком">
+                  </label>
+                  <div class="tool-row">
+                    <button id="approveDraftButton" class="secondary" type="button">Approve</button>
+                    <button id="rejectDraftButton" class="secondary" type="button">Reject</button>
+                  </div>
+                  <button id="publishDraftButton" class="secondary" type="button">Candidate</button>
+                  <label>Candidate ID
+                    <input id="candidateIdInput" placeholder="onb_...">
+                  </label>
+                  <div class="tool-row">
+                    <button id="candidateCreateDraftButton" class="secondary" type="button">Create draft</button>
+                    <button id="candidateRejectButton" class="secondary" type="button">Reject</button>
+                  </div>
+                  <button id="synthesisCandidatesButton" class="secondary" type="button">Agent candidates</button>
+                  <label>Agent candidate ID
+                    <input id="synthesisCandidateIdInput" placeholder="syn_...">
+                  </label>
+                  <div class="tool-row">
+                    <button id="synthesisCreateDraftButton" class="secondary" type="button">Create draft</button>
+                    <button id="synthesisRejectButton" class="secondary" type="button">Reject</button>
+                  </div>
+                  <button id="synthesisIgnoreSimilarButton" class="secondary" type="button">Ignore similar</button>
+                </div>
+              </details>
+              <details class="admin-subpanel">
+                <summary>Lifecycle и regression</summary>
+                <div class="admin-subpanel-content">
+                  <label>Причина изменения
+                    <input id="skillLifecycleReasonInput" placeholder="Что проверено и почему меняем статус">
+                  </label>
+                  <label>Regression case IDs
+                    <input id="skillRegressionCasesInput" placeholder="reg_case_1, reg_case_2">
+                  </label>
+                  <label>Target status
+                    <select id="skillLifecycleTargetStatus">
+                      <option value="">По умолчанию</option>
+                      <option value="verified">verified</option>
+                      <option value="stable">stable</option>
+                      <option value="candidate">candidate</option>
+                    </select>
+                  </label>
+                  <label>Successful runs
+                    <input id="skillSuccessfulRunsInput" type="number" min="0" step="1" placeholder="0">
+                  </label>
+                  <label class="checkbox-label">
+                    <input id="skillAdminApprovalInput" type="checkbox">
+                    Admin approval
+                  </label>
+                  <div class="tool-row">
+                    <button id="skillPromoteButton" class="secondary" type="button">Promote</button>
+                    <button id="skillRollbackButton" class="secondary" type="button">Rollback</button>
+                  </div>
+                  <div class="tool-row">
+                    <button id="skillDeprecateButton" class="secondary" type="button">Deprecate</button>
+                    <button id="skillBlockButton" class="secondary" type="button">Block</button>
+                  </div>
+                  <label>Cases path
+                    <input id="regressionCasesPathInput" placeholder="Пусто = bot_instance/regression">
+                  </label>
+                  <label>Session prefix
+                    <input id="regressionSessionPrefixInput" value="web-regression">
+                  </label>
+                  <button id="runRegressionButton" class="secondary" type="button">Run regression</button>
+                </div>
+              </details>
               <div id="workbenchSummary" class="workbench-summary"></div>
               <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
             </div>
-            <label>ProductRef JSON
-              <textarea id="productRef" spellcheck="false"></textarea>
-            </label>
+            <details class="admin-subpanel">
+              <summary>Отладка запроса</summary>
+              <div class="admin-subpanel-content">
+                <label>ProductRef JSON
+                  <textarea id="productRef" spellcheck="false"></textarea>
+                </label>
+              </div>
+            </details>
           </div>
         </details>
       </aside>
@@ -959,9 +1014,32 @@ CHAT_HTML = """<!doctype html>
     let titleBlinkOn = false;
     let latestWorkbenchSmokeId = "";
     let documentationItems = [];
+    const storage = createStorage();
 
-    const savedSessionId = localStorage.getItem(SESSION_STORAGE_KEY);
+    const savedSessionId = storage.getItem(SESSION_STORAGE_KEY);
     if (savedSessionId) sessionId.value = savedSessionId;
+
+    function createStorage() {
+      try {
+        const probe = "wiicon5.storage.probe";
+        window.localStorage.setItem(probe, "1");
+        window.localStorage.removeItem(probe);
+        return window.localStorage;
+      } catch (error) {
+        const memory = new Map();
+        return {
+          getItem(key) {
+            return memory.has(key) ? memory.get(key) : null;
+          },
+          setItem(key, value) {
+            memory.set(String(key), String(value));
+          },
+          removeItem(key) {
+            memory.delete(String(key));
+          }
+        };
+      }
+    }
 
     function effectiveSessionId() {
       return sessionId.value.trim() || "web-test";
@@ -969,7 +1047,7 @@ CHAT_HTML = """<!doctype html>
 
     function readLocalSessions() {
       try {
-        const parsed = JSON.parse(localStorage.getItem(SESSION_LIST_STORAGE_KEY) || "[]");
+        const parsed = JSON.parse(storage.getItem(SESSION_LIST_STORAGE_KEY) || "[]");
         return Array.isArray(parsed) ? parsed.filter(item => item && item.session_id) : [];
       } catch (error) {
         return [];
@@ -977,13 +1055,13 @@ CHAT_HTML = """<!doctype html>
     }
 
     function writeLocalSessions(items) {
-      localStorage.setItem(SESSION_LIST_STORAGE_KEY, JSON.stringify(items.slice(0, 30)));
+      storage.setItem(SESSION_LIST_STORAGE_KEY, JSON.stringify(items.slice(0, 30)));
     }
 
     function rememberSession(id, patch = {}) {
       const session = String(id || "").trim();
       if (!session) return;
-      localStorage.setItem(SESSION_STORAGE_KEY, session);
+      storage.setItem(SESSION_STORAGE_KEY, session);
       const now = new Date().toISOString();
       const items = readLocalSessions();
       const existingIndex = items.findIndex(item => item.session_id === session);
