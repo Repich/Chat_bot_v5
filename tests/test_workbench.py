@@ -13,7 +13,9 @@ from wiicon5.workbench import (
     HumanSkillDraft,
     HumanSkillDraftStore,
     MeasureRecipe,
+    SkillCatalogService,
 )
+from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
 
 
 class WorkbenchModelTests(unittest.TestCase):
@@ -165,6 +167,64 @@ class WorkbenchStoreTests(unittest.TestCase):
         self.assertIsNone(restored)
         self.assertEqual(events[-1].event_type, "workbench.draft.deleted")
         self.assertEqual(events[-1].actor, "admin")
+
+
+class SkillCatalogServiceTests(unittest.TestCase):
+    def test_catalog_lists_global_and_bot_specific_skill_contracts(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            global_skills = root / "skills"
+            bot = root / "bot_instances" / "client_a"
+            write_skill(global_skills / "atomic" / "data" / "global_stock.json", skill_contract("global_stock"))
+            write_skill(
+                bot / "skills" / "candidates" / "bot_cash.json",
+                skill_contract("bot_cash", status=SkillStatus.CANDIDATE),
+            )
+            (global_skills / "not_a_skill.json").write_text('{"hello": "world"}', encoding="utf-8")
+
+            snapshot = SkillCatalogService(global_skills_dir=global_skills, bot_instance_root=bot).snapshot()
+            payload = snapshot.to_dict()
+
+        self.assertEqual(payload["summary"]["total"], 2)
+        self.assertEqual(payload["summary"]["by_source"]["global_atomic"], 1)
+        self.assertEqual(payload["summary"]["by_source"]["bot_candidate"], 1)
+        self.assertEqual(snapshot.get("bot_cash").skill.status, SkillStatus.CANDIDATE)
+        self.assertFalse(snapshot.get("bot_cash").runtime_active_by_default)
+
+    def test_catalog_reports_broken_skill_json_without_stopping_scan(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            global_skills = root / "skills"
+            bot = root / "bot_instances" / "client_a"
+            write_skill(global_skills / "atomic" / "data" / "valid.json", skill_contract("valid"))
+            broken = global_skills / "atomic" / "data" / "broken.json"
+            broken.parent.mkdir(parents=True, exist_ok=True)
+            broken.write_text("{not json", encoding="utf-8")
+
+            snapshot = SkillCatalogService(global_skills_dir=global_skills, bot_instance_root=bot).snapshot()
+
+        self.assertEqual([item.skill.skill_id for item in snapshot.items], ["valid"])
+        self.assertEqual(len(snapshot.errors), 1)
+        self.assertIn("broken.json", snapshot.errors[0].path)
+
+
+def skill_contract(skill_id: str, *, status: SkillStatus = SkillStatus.VERIFIED) -> SkillContract:
+    return SkillContract(
+        skill_id=skill_id,
+        version="0.1.0",
+        kind=SkillKind.DATA,
+        status=status,
+        description=f"Test skill {skill_id}",
+        capabilities=[skill_id],
+        inputs=[Port(name="period", type="Period", required=False)],
+        outputs=[Port(name="rows", type="TypedTable")],
+        implementation_strategy="test",
+    )
+
+
+def write_skill(path: Path, contract: SkillContract) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(contract.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

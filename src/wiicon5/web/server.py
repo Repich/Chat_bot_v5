@@ -4,12 +4,13 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Dict, Type
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.onboarding.status import OnboardingManager
+from wiicon5.workbench.skill_catalog import SkillCatalogService
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -18,9 +19,17 @@ BACKEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "backend" / "history.txt"
 FRONTEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "frontend" / "history.txt"
 
 
-def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager | None = None) -> Type[BaseHTTPRequestHandler]:
+def make_handler(
+    agent: AgentOrchestrator,
+    onboarding_manager: OnboardingManager | None = None,
+    skill_catalog: SkillCatalogService | None = None,
+) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
+    )
+    effective_skill_catalog = skill_catalog or SkillCatalogService(
+        global_skills_dir=PROJECT_ROOT / "skills",
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
     )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
@@ -57,6 +66,18 @@ def make_handler(agent: AgentOrchestrator, onboarding_manager: OnboardingManager
                 return
             if path == "/api/admin/onboarding/status":
                 self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
+                return
+            if path == "/api/admin/skills/catalog":
+                snapshot = effective_skill_catalog.snapshot()
+                self._send_json(200, {"ok": True, **snapshot.to_dict()})
+                return
+            if path.startswith("/api/admin/skills/catalog/"):
+                skill_id = unquote(path.rsplit("/", 1)[-1])
+                item = effective_skill_catalog.snapshot().get(skill_id)
+                if item is None:
+                    self._send_json(404, {"ok": False, "error": "skill_not_found", "skill_id": skill_id})
+                    return
+                self._send_json(200, {"ok": True, "skill": item.to_dict()})
                 return
             if path == "/history/backend":
                 self._send_text(200, read_text_file(BACKEND_HISTORY_FILE))

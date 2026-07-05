@@ -82,6 +82,22 @@ class WebServerTests(unittest.TestCase):
                     .read()
                     .decode("utf-8")
                 )
+                skill_catalog = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/skills/catalog",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                stock_skill = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/skills/catalog/get_stock_balances",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
                 backend_history = urllib.request.urlopen(f"http://{host}:{port}/history/backend", timeout=5).read().decode("utf-8")
             finally:
                 server.shutdown()
@@ -102,6 +118,11 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("startOnboardingButton", chat_page)
         self.assertTrue(onboarding_status["ok"])
         self.assertFalse(onboarding_status["status"]["trained"])
+        self.assertTrue(skill_catalog["ok"])
+        self.assertGreaterEqual(skill_catalog["summary"]["total"], 1)
+        self.assertTrue(stock_skill["ok"])
+        self.assertEqual(stock_skill["skill"]["skill_id"], "get_stock_balances")
+        self.assertIn("source_path", stock_skill["skill"])
         self.assertIn('input.addEventListener("keydown"', chat_page)
         self.assertIn("form.requestSubmit()", chat_page)
         self.assertIn("startTitleBlink", chat_page)

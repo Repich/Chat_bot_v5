@@ -13,6 +13,7 @@ from wiicon5.workbench.models import (
     PresentationRecipe,
     SortRecipe,
 )
+from wiicon5.workbench.skill_catalog import SkillCatalogItem, SkillCatalogService, SkillCatalogSnapshot
 from wiicon5.workbench.store import HumanSkillDraftStore
 
 __all__ = [
@@ -26,6 +27,9 @@ __all__ = [
     "HumanSkillDraftStore",
     "MeasureRecipe",
     "PresentationRecipe",
+    "SkillCatalogItem",
+    "SkillCatalogService",
+    "SkillCatalogSnapshot",
     "SortRecipe",
     "WorkbenchAuditEvent",
     "WorkbenchAuditLog",
