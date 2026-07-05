@@ -15,6 +15,7 @@ from wiicon5.workbench import (
     MeasureRecipe,
     MetadataExplorerService,
     SkillCatalogService,
+    draft_from_trace,
 )
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
 from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
@@ -253,6 +254,38 @@ class MetadataExplorerServiceTests(unittest.TestCase):
         self.assertEqual(fields["ТипСклада"]["source"], "onboarding_index")
 
 
+class TraceDraftImportTests(unittest.TestCase):
+    def test_trace_import_creates_human_draft_with_query_evidence(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            trace = Path(temp_dir) / "runs" / "agent_001"
+            write_trace(
+                trace,
+                question="Покажи товар с самым большим остатком",
+                query="""
+                ВЫБРАТЬ ПЕРВЫЕ 1
+                    Остатки.Номенклатура КАК Номенклатура,
+                    Остатки.ВНаличииОстаток КАК Количество
+                ИЗ
+                    РегистрНакопления.ТоварыНаСкладах.Остатки(&Период) КАК Остатки
+                УПОРЯДОЧИТЬ ПО
+                    Количество УБЫВ
+                """,
+            )
+
+            draft = draft_from_trace(trace)
+
+        self.assertEqual(draft.title, "Покажи товар с самым большим остатком")
+        self.assertEqual(draft.source_kind, "trace")
+        self.assertEqual(draft.data_sources[0].alias, "Остатки")
+        self.assertEqual(draft.data_sources[0].trust, "verified")
+        self.assertEqual(draft.calculation.kind, "trace_query")
+        self.assertIn("РегистрНакопления.ТоварыНаСкладах", draft.calculation.raw["query"])
+        mappings = {item.field_name: item for item in draft.field_mappings}
+        self.assertTrue(mappings["Номенклатура"].confirmed)
+        self.assertTrue(mappings["ВНаличииОстаток"].confirmed)
+        self.assertEqual(draft.presentation.columns, ["Номенклатура", "Количество"])
+
+
 class StaticMetadataProvider(MetadataProvider):
     def __init__(self, objects: list[MetadataObject]) -> None:
         self.objects = {item.full_name: item for item in objects}
@@ -289,6 +322,63 @@ def skill_contract(skill_id: str, *, status: SkillStatus = SkillStatus.VERIFIED)
 def write_skill(path: Path, contract: SkillContract) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(contract.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_trace(trace: Path, *, question: str, query: str) -> None:
+    (trace / "input").mkdir(parents=True, exist_ok=True)
+    (trace / "intent").mkdir(parents=True, exist_ok=True)
+    (trace / "query_synthesis").mkdir(parents=True, exist_ok=True)
+    (trace / "result").mkdir(parents=True, exist_ok=True)
+    (trace / "input" / "user_message.json").write_text(
+        json.dumps({"message": question}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (trace / "intent" / "goal_decomposition.json").write_text(
+        json.dumps(
+            {
+                "business_goal": question,
+                "final_artifact_type": "TypedTable",
+                "expected_answer_type": "table",
+                "required_artifacts": [{"name": "stock", "type": "StockBalanceTable"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    synthesis = {
+        "source": "skill_gap",
+        "synthesis": {
+            "ok": True,
+            "final_artifact": {
+                "name": "answer",
+                "type": "TypedTable",
+                "value": {
+                    "columns": ["Номенклатура", "Количество"],
+                    "rows": [{"Номенклатура": "Телевизор", "Количество": 10}],
+                },
+            },
+            "trace": {
+                "metadata_objects": [
+                    {
+                        "full_name": "РегистрНакопления.ТоварыНаСкладах",
+                        "source": "metadata_xml",
+                        "trust": "verified",
+                        "fields": ["Номенклатура", "Склад", "ВНаличииОстаток"],
+                        "field_hints": [],
+                    }
+                ],
+                "final_query": {"query": query, "params": {"Период": "2026-07-05T00:00:00"}, "limit": 1},
+            },
+        },
+    }
+    (trace / "query_synthesis" / "result.json").write_text(
+        json.dumps(synthesis, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (trace / "result" / "result.json").write_text(
+        json.dumps({"source": "query_synthesis_ok", "message": "Найден результат."}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

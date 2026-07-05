@@ -14,6 +14,7 @@ from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.models import HumanSkillDraft
 from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.store import HumanSkillDraftStore
+from wiicon5.workbench.trace_import import TraceDraftImporter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -28,6 +29,7 @@ def make_handler(
     skill_catalog: SkillCatalogService | None = None,
     metadata_explorer: MetadataExplorerService | None = None,
     draft_store: HumanSkillDraftStore | None = None,
+    trace_importer: TraceDraftImporter | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -43,6 +45,7 @@ def make_handler(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         bot_id=effective_onboarding_manager.bot_instance_root.name or "local",
     )
+    effective_trace_importer = trace_importer or TraceDraftImporter(runs_root=PROJECT_ROOT / "runs")
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -157,6 +160,9 @@ def make_handler(
                     self._send_json(500, {"ok": False, "error": str(exc)})
                 return
             if parsed.path != "/chat":
+                if parsed.path == "/api/admin/workbench/drafts/from-trace":
+                    self._create_draft_from_trace()
+                    return
                 if parsed.path == "/api/admin/workbench/drafts":
                     self._create_draft()
                     return
@@ -224,6 +230,20 @@ def make_handler(
                 self._send_json(200, {"ok": True, "draft": updated.to_dict()})
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _create_draft_from_trace(self) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                trace_path = str(payload.get("trace_path") or "").strip()
+                if not trace_path:
+                    self._send_json(400, {"ok": False, "error": "trace_path is required"})
+                    return
+                draft = effective_trace_importer.draft_from_trace(Path(trace_path))
+                created = effective_draft_store.create_draft(draft, actor=actor)
+                self._send_json(201, {"ok": True, "draft": created.to_dict()})
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
 

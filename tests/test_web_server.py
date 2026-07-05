@@ -17,6 +17,7 @@ from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 from wiicon5.web.server import make_handler
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
+from wiicon5.workbench.trace_import import TraceDraftImporter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,8 @@ class WebServerTests(unittest.TestCase):
         )
         with TemporaryDirectory() as temp_dir:
             onboarding_manager = OnboardingManager(bot_instance_root=Path(temp_dir) / "bot")
+            runs_root = Path(temp_dir) / "runs"
+            write_trace(runs_root / "agent_001")
             metadata_explorer = MetadataExplorerService(
                 provider=StaticMetadataProvider(
                     [
@@ -57,7 +60,12 @@ class WebServerTests(unittest.TestCase):
             )
             server = HTTPServer(
                 ("127.0.0.1", 0),
-                make_handler(agent, onboarding_manager=onboarding_manager, metadata_explorer=metadata_explorer),
+                make_handler(
+                    agent,
+                    onboarding_manager=onboarding_manager,
+                    metadata_explorer=metadata_explorer,
+                    trace_importer=TraceDraftImporter(runs_root=runs_root),
+                ),
             )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -180,6 +188,16 @@ class WebServerTests(unittest.TestCase):
                     method="DELETE",
                 )
                 deleted_draft = json.loads(urllib.request.urlopen(delete_draft_request, timeout=5).read().decode("utf-8"))
+                import_trace_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts/from-trace",
+                    data=json.dumps(
+                        {"actor": "trace-admin", "trace_path": "agent_001"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                imported_draft = json.loads(urllib.request.urlopen(import_trace_request, timeout=5).read().decode("utf-8"))
                 backend_history = urllib.request.urlopen(f"http://{host}:{port}/history/backend", timeout=5).read().decode("utf-8")
             finally:
                 server.shutdown()
@@ -214,6 +232,9 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(updated_draft["draft"]["description"], "Описание от консультанта")
         self.assertEqual([item["event_type"] for item in draft_audit["events"]], ["workbench.draft.created", "workbench.draft.updated"])
         self.assertTrue(deleted_draft["ok"])
+        self.assertTrue(imported_draft["ok"])
+        self.assertEqual(imported_draft["draft"]["source_kind"], "trace")
+        self.assertEqual(imported_draft["draft"]["example_questions"], ["Покажи товар с самым большим остатком"])
         self.assertIn('input.addEventListener("keydown"', chat_page)
         self.assertIn("form.requestSubmit()", chat_page)
         self.assertIn("startTitleBlink", chat_page)
@@ -244,6 +265,56 @@ class StaticMetadataProvider(MetadataProvider):
     def get_object(self, full_name: str) -> MetadataObject:
         self.last_requests.append({"operation": "get_object", "full_name": full_name})
         return self.objects.get(full_name, MetadataObject(full_name=full_name))
+
+
+def write_trace(trace) -> None:
+    trace = Path(trace)
+    (trace / "input").mkdir(parents=True, exist_ok=True)
+    (trace / "intent").mkdir(parents=True, exist_ok=True)
+    (trace / "query_synthesis").mkdir(parents=True, exist_ok=True)
+    (trace / "result").mkdir(parents=True, exist_ok=True)
+    question = "Покажи товар с самым большим остатком"
+    query = """
+    ВЫБРАТЬ ПЕРВЫЕ 1
+        Остатки.Номенклатура КАК Номенклатура,
+        Остатки.ВНаличииОстаток КАК Количество
+    ИЗ
+        РегистрНакопления.ТоварыНаСкладах.Остатки(&Период) КАК Остатки
+    """
+    (trace / "input" / "user_message.json").write_text(json.dumps({"message": question}, ensure_ascii=False), encoding="utf-8")
+    (trace / "intent" / "goal_decomposition.json").write_text(
+        json.dumps({"business_goal": question, "final_artifact_type": "TypedTable"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (trace / "query_synthesis" / "result.json").write_text(
+        json.dumps(
+            {
+                "synthesis": {
+                    "ok": True,
+                    "final_artifact": {
+                        "type": "TypedTable",
+                        "value": {"columns": ["Номенклатура", "Количество"], "rows": []},
+                    },
+                    "trace": {
+                        "metadata_objects": [
+                            {
+                                "full_name": "РегистрНакопления.ТоварыНаСкладах",
+                                "trust": "verified",
+                                "fields": ["Номенклатура", "ВНаличииОстаток"],
+                            }
+                        ],
+                        "final_query": {"query": query, "params": {}, "limit": 1},
+                    },
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (trace / "result" / "result.json").write_text(
+        json.dumps({"source": "query_synthesis_ok", "message": "Найден результат."}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
