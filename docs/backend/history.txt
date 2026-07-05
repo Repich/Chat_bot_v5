@@ -1,3 +1,10 @@
+5.0.0-alpha.35
+- Added portable skill pack export/import for selected skills.
+- Export can include matching binding records; import writes skills only as bot-specific candidate skills and marks them with imported_pack evidence.
+- Imported skills do not become verified/stable and remain subject to Workbench validation, smoke, approval, regression replay, and promotion.
+- Added CLI wrappers for macOS/Linux and Windows: scripts/export_skill_pack.py/.cmd and scripts/import_skill_pack.py/.cmd.
+- Added audit events for imported skills and bindings plus tests for export, import, missing skill reporting, and duplicate protection.
+
 5.0.0-alpha.34
 - Added regression replay: regression cases can now be executed through the agent and checked for expected source, artifact type, columns, clarification behavior, and forbidden metadata objects.
 - Regression cases now carry stable case_id values, and replay results are saved under the bot instance regression results workspace.
