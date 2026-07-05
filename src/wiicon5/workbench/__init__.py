@@ -16,6 +16,7 @@ from wiicon5.workbench.models import (
 )
 from wiicon5.workbench.preview import QueryPreviewResult, QueryPreviewService
 from wiicon5.workbench.skill_catalog import SkillCatalogItem, SkillCatalogService, SkillCatalogSnapshot
+from wiicon5.workbench.smoke import McpSmokeTestService, SmokeTestResult
 from wiicon5.workbench.store import HumanSkillDraftStore
 from wiicon5.workbench.trace_import import TraceDraftImporter, draft_from_trace
 
@@ -32,9 +33,11 @@ __all__ = [
     "MetadataExplorerService",
     "MetadataFieldView",
     "MetadataObjectView",
+    "McpSmokeTestService",
     "PresentationRecipe",
     "QueryPreviewResult",
     "QueryPreviewService",
+    "SmokeTestResult",
     "SkillCatalogItem",
     "SkillCatalogService",
     "SkillCatalogSnapshot",

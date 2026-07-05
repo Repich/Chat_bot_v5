@@ -12,11 +12,13 @@ from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
+from wiicon5.mcp.client import DictMcpClient
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 from wiicon5.web.server import make_handler
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
+from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.trace_import import TraceDraftImporter
 
 
@@ -65,6 +67,12 @@ class WebServerTests(unittest.TestCase):
                     onboarding_manager=onboarding_manager,
                     metadata_explorer=metadata_explorer,
                     trace_importer=TraceDraftImporter(runs_root=runs_root),
+                    smoke_service=McpSmokeTestService(
+                        bot_instance_root=onboarding_manager.bot_instance_root,
+                        mcp_client=DictMcpClient(
+                            {"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]}
+                        ),
+                    ),
                 ),
             )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -226,6 +234,13 @@ class WebServerTests(unittest.TestCase):
                     method="POST",
                 )
                 preview_draft = json.loads(urllib.request.urlopen(preview_draft_request, timeout=5).read().decode("utf-8"))
+                smoke_draft_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/smoke",
+                    data=json.dumps({"actor": "smoke-runner"}, ensure_ascii=False).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                smoke_draft = json.loads(urllib.request.urlopen(smoke_draft_request, timeout=5).read().decode("utf-8"))
                 delete_draft_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}?actor=deleter",
                     method="DELETE",
@@ -276,6 +291,8 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual([item["event_type"] for item in draft_audit["events"]], ["workbench.draft.created", "workbench.draft.updated"])
         self.assertTrue(preview_draft["preview"]["ok"], preview_draft)
         self.assertIn("СУММА", preview_draft["preview"]["query"])
+        self.assertTrue(smoke_draft["smoke"]["ok"], smoke_draft)
+        self.assertEqual(smoke_draft["smoke"]["row_count"], 1)
         self.assertTrue(deleted_draft["ok"])
         self.assertTrue(imported_draft["ok"])
         self.assertEqual(imported_draft["draft"]["source_kind"], "trace")

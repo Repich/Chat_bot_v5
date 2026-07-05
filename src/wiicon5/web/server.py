@@ -14,6 +14,7 @@ from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.models import HumanSkillDraft
 from wiicon5.workbench.preview import QueryPreviewService
 from wiicon5.workbench.skill_catalog import SkillCatalogService
+from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.store import HumanSkillDraftStore
 from wiicon5.workbench.trace_import import TraceDraftImporter
 
@@ -32,6 +33,7 @@ def make_handler(
     draft_store: HumanSkillDraftStore | None = None,
     trace_importer: TraceDraftImporter | None = None,
     preview_service: QueryPreviewService | None = None,
+    smoke_service: McpSmokeTestService | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -170,6 +172,10 @@ def make_handler(
                     draft_id = unquote(parsed.path.split("/")[-2])
                     self._preview_draft(draft_id)
                     return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/smoke"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._smoke_draft(draft_id)
+                    return
                 if parsed.path == "/api/admin/workbench/drafts":
                     self._create_draft()
                     return
@@ -277,6 +283,35 @@ def make_handler(
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
 
+        def _smoke_draft(self, draft_id: str) -> None:
+            if smoke_service is None:
+                self._send_json(503, {"ok": False, "error": "smoke_test_not_configured"})
+                return
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_draft_store.require_draft(draft_id)
+                effective_draft_store.audit.append(
+                    event_type="workbench.smoke.started",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    payload={},
+                )
+                smoke = smoke_service.run(draft)
+                effective_draft_store.audit.append(
+                    event_type="workbench.smoke.completed",
+                    actor=actor,
+                    object_type="human_skill_draft",
+                    object_id=draft_id,
+                    payload={"ok": smoke.ok, "row_count": smoke.row_count, "smoke_id": smoke.smoke_id},
+                )
+                self._send_json(200, {"ok": True, "smoke": smoke.to_dict()})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
         def _read_json(self) -> Dict[str, Any]:
             content_length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
@@ -373,8 +408,9 @@ def run_http_server(
     host: str,
     port: int,
     onboarding_manager: OnboardingManager | None = None,
+    smoke_service: McpSmokeTestService | None = None,
 ) -> None:
-    server = HTTPServer((host, port), make_handler(agent, onboarding_manager=onboarding_manager))
+    server = HTTPServer((host, port), make_handler(agent, onboarding_manager=onboarding_manager, smoke_service=smoke_service))
     try:
         server.serve_forever()
     finally:

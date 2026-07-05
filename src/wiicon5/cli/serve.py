@@ -5,8 +5,10 @@ from pathlib import Path
 
 from wiicon5.app.config import Settings
 from wiicon5.app.factory import build_agent
+from wiicon5.mcp.client import HttpMcpClient
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.web.server import run_http_server
+from wiicon5.workbench.smoke import McpSmokeTestService
 
 
 def main() -> int:
@@ -20,8 +22,12 @@ def main() -> int:
     settings = Settings.from_env(root=root)
     agent = build_agent(settings)
     onboarding_manager = OnboardingManager(bot_instance_root=settings.bot_context.root, mcp_url=settings.mcp_url)
+    smoke_service = McpSmokeTestService(
+        bot_instance_root=settings.bot_context.root,
+        mcp_client=HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds),
+    )
     print(f"WIICON5 listening on http://{args.host}:{args.port}/chat")
-    run_http_server(agent, host=args.host, port=args.port, onboarding_manager=onboarding_manager)
+    run_http_server(agent, host=args.host, port=args.port, onboarding_manager=onboarding_manager, smoke_service=smoke_service)
     return 0
 
 

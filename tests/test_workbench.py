@@ -14,12 +14,14 @@ from wiicon5.workbench import (
     HumanSkillDraftStore,
     MeasureRecipe,
     MetadataExplorerService,
+    McpSmokeTestService,
     QueryPreviewService,
     SkillCatalogService,
     SortRecipe,
     draft_from_trace,
 )
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
+from wiicon5.mcp.client import DictMcpClient
 from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
 
 
@@ -308,6 +310,23 @@ class QueryPreviewServiceTests(unittest.TestCase):
 
         self.assertFalse(preview.ok)
         self.assertEqual(preview.issues[0].code, "unsupported_calculation_kind")
+
+
+class McpSmokeTestServiceTests(unittest.TestCase):
+    def test_smoke_runs_preview_query_through_mcp_and_persists_result(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            draft = HumanSkillDraft.from_dict({**top_n_stock_draft().to_dict(), "draft_id": "draft_stock"})
+            mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
+            service = McpSmokeTestService(bot_instance_root=Path(temp_dir) / "bot", mcp_client=mcp)
+
+            result = service.run(draft)
+            result_path_exists = Path(result.path).exists()
+
+        self.assertTrue(result.ok, result.to_dict())
+        self.assertEqual(result.row_count, 1)
+        self.assertEqual(mcp.query_calls[0].limit, 5)
+        self.assertIn("ВЫБРАТЬ ПЕРВЫЕ 5", mcp.query_calls[0].query)
+        self.assertTrue(result_path_exists)
 
 
 class StaticMetadataProvider(MetadataProvider):
