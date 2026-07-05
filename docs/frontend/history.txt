@@ -1,3 +1,7 @@
+5.0.0-alpha.32
+- Added Workbench controls for agent-generated query synthesis candidates.
+- The web client can load the synthesis candidate queue, create a draft from a selected candidate, reject a candidate, or ignore similar generated queries.
+
 5.0.0-alpha.31
 - Added Skill Workbench controls to load onboarding candidates, create a draft from a selected candidate, and reject a candidate.
 

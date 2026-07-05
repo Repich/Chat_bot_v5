@@ -21,6 +21,7 @@ from wiicon5.skills.composer import SkillComposer
 from wiicon5.skills.learned import LearnedSkillStore
 from wiicon5.skills.lifecycle import SkillEvolutionDecision, SkillEvolutionPolicy
 from wiicon5.skills.registry import SkillRegistry
+from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,7 @@ class AgentOrchestrator:
         plan_executor: Optional[SkillPlanExecutor] = None,
         query_synthesizer: Optional[QuerySynthesisEngine] = None,
         learned_skill_store: Optional[LearnedSkillStore] = None,
+        synthesis_candidate_store: Optional[SynthesisCandidateStore] = None,
         clarification_resolver: Optional[ClarificationResolver] = None,
         domain_policy: Optional[DomainPolicy] = None,
         baseline_intent_policy: Optional[BaselineIntentPolicy] = None,
@@ -89,6 +91,7 @@ class AgentOrchestrator:
         self.plan_executor = plan_executor
         self.query_synthesizer = query_synthesizer
         self.learned_skill_store = learned_skill_store
+        self.synthesis_candidate_store = synthesis_candidate_store
         self.clarification_resolver = clarification_resolver or ClarificationResolver()
         self.trace_writer = TraceWriter(trace_root or Path("runs"))
 
@@ -415,6 +418,16 @@ class AgentOrchestrator:
         run_trace: RunTrace,
         context: ConversationContext,
     ) -> None:
+        if self.synthesis_candidate_store is not None:
+            candidate = self.synthesis_candidate_store.record_from_synthesis(
+                question=intent.business_goal,
+                intent=intent,
+                goal=goal,
+                synthesis_result=synthesis_result,
+                trace_path=str(run_trace.path),
+            )
+            if candidate is not None:
+                run_trace.write_json("workbench/synthesis_candidate.json", candidate.to_dict())
         if self.learned_skill_store is None:
             return
         learned = self.learned_skill_store.learn_from_synthesis(

@@ -1,3 +1,10 @@
+5.0.0-alpha.32
+- Added Workbench synthesis candidates: successful query synthesis answers can now be collected as human-review candidates without auto-publishing a skill.
+- Candidate creation is gated by generic evidence checks: relevant 1C data intent, successful final query, non-empty result rows, nontrivial read-only query text, and duplicate question/query detection.
+- The orchestrator now writes synthesis-candidate evidence into the run trace when a successful generated query is captured for review.
+- Added admin API endpoints to list synthesis candidates, create a draft from a selected candidate, reject it, or mark similar generated queries as ignored.
+- Added regression tests for candidate creation gates, deduplication, reject/ignore actions, draft conversion, orchestrator integration, and web routing.
+
 5.0.0-alpha.31
 - Added a Workbench onboarding candidate service that normalizes candidate_bindings, candidate_semantic_roles, register_usage_map, and candidate_query_patterns into a human-review queue.
 - Added admin API endpoints to list onboarding candidates, reject candidates, and create HumanSkillDraft records from candidates.

@@ -100,6 +100,14 @@ class WebServerTests(unittest.TestCase):
                     .read()
                     .decode("utf-8")
                 )
+                synthesis_candidates = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/synthesis/candidates",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
                 onboarding_candidate_id = onboarding_candidates["candidates"][0]["candidate_id"]
                 create_candidate_draft_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/onboarding/candidates/{onboarding_candidate_id}/create-draft",
@@ -347,6 +355,7 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("skillCatalogButton", chat_page)
         self.assertIn("draftListButton", chat_page)
         self.assertIn("onboardingCandidatesButton", chat_page)
+        self.assertIn("synthesisCandidatesButton", chat_page)
         self.assertIn("metadataSearchInput", chat_page)
         self.assertIn("createDraftButton", chat_page)
         self.assertIn("previewDraftButton", chat_page)
@@ -357,11 +366,17 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("candidateIdInput", chat_page)
         self.assertIn("candidateCreateDraftButton", chat_page)
         self.assertIn("candidateRejectButton", chat_page)
+        self.assertIn("synthesisCandidateIdInput", chat_page)
+        self.assertIn("synthesisCreateDraftButton", chat_page)
+        self.assertIn("synthesisRejectButton", chat_page)
+        self.assertIn("synthesisIgnoreSimilarButton", chat_page)
         self.assertIn("publishDraftButton", chat_page)
         self.assertTrue(onboarding_status["ok"])
         self.assertFalse(onboarding_status["status"]["trained"])
         self.assertTrue(onboarding_candidates["ok"])
         self.assertEqual(onboarding_candidates["summary"]["total"], 1)
+        self.assertTrue(synthesis_candidates["ok"])
+        self.assertEqual(synthesis_candidates["summary"]["total"], 0)
         self.assertEqual(candidate_draft["draft"]["source_kind"], "onboarding_candidate")
         self.assertEqual(rejected_candidate["rejection"]["candidate_id"], onboarding_candidate_id)
         self.assertTrue(skill_catalog["ok"])
@@ -402,8 +417,10 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("Новое сообщение", chat_page)
         self.assertIn("loadSkillCatalog", chat_page)
         self.assertIn("loadOnboardingCandidates", chat_page)
+        self.assertIn("loadSynthesisCandidates", chat_page)
         self.assertIn("postDraftAction", chat_page)
         self.assertIn("postCandidateAction", chat_page)
+        self.assertIn("postSynthesisCandidateAction", chat_page)
         self.assertIn('postDraftAction("approve"', chat_page)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")

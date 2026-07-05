@@ -19,6 +19,7 @@ from wiicon5.workbench.publish import APPROVAL_GATE_CODES, CandidatePublisher
 from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.store import HumanSkillDraftStore
+from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 from wiicon5.workbench.trace_import import TraceDraftImporter
 from wiicon5.web.admin_security import AdminSecurityConfig
 
@@ -42,6 +43,7 @@ def make_handler(
     candidate_publisher: CandidatePublisher | None = None,
     admin_security: AdminSecurityConfig | None = None,
     onboarding_candidate_service: OnboardingCandidateService | None = None,
+    synthesis_candidate_store: SynthesisCandidateStore | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -73,6 +75,11 @@ def make_handler(
     effective_onboarding_candidate_service = onboarding_candidate_service or OnboardingCandidateService(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         draft_store=effective_draft_store,
+    )
+    effective_synthesis_candidate_store = synthesis_candidate_store or SynthesisCandidateStore(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        draft_store=effective_draft_store,
+        audit_log=effective_draft_store.audit,
     )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
@@ -127,6 +134,24 @@ def make_handler(
                         "ok": True,
                         "candidates": [item.to_dict() for item in candidates],
                         "summary": onboarding_candidate_summary(candidates),
+                    },
+                )
+                return
+            if path == "/api/admin/workbench/synthesis/candidates":
+                limit = int_or_default(first_query_value(query, "limit"), 200)
+                status = first_query_value(query, "status")
+                term = first_query_value(query, "q") or first_query_value(query, "term")
+                candidates = effective_synthesis_candidate_store.list_candidates(
+                    limit=limit,
+                    status=status,
+                    term=term,
+                )
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "candidates": [item.to_dict() for item in candidates],
+                        "summary": synthesis_candidate_summary(candidates),
                     },
                 )
                 return
@@ -254,6 +279,18 @@ def make_handler(
                 if parsed.path.startswith("/api/admin/workbench/onboarding/candidates/") and parsed.path.endswith("/reject"):
                     candidate_id = unquote(parsed.path.split("/")[-2])
                     self._reject_onboarding_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/synthesis/candidates/") and parsed.path.endswith("/create-draft"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._create_draft_from_synthesis_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/synthesis/candidates/") and parsed.path.endswith("/reject"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._reject_synthesis_candidate(candidate_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/synthesis/candidates/") and parsed.path.endswith("/ignore-similar"):
+                    candidate_id = unquote(parsed.path.split("/")[-2])
+                    self._ignore_similar_synthesis_candidate(candidate_id)
                     return
                 if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/preview"):
                     draft_id = unquote(parsed.path.split("/")[-2])
@@ -393,6 +430,56 @@ def make_handler(
                 self._send_json(
                     404,
                     {"ok": False, "error": "onboarding_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _create_draft_from_synthesis_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                draft = effective_synthesis_candidate_store.create_draft(candidate_id, actor=actor)
+                self._send_json(201, {"ok": True, "draft": draft.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "synthesis_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _reject_synthesis_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                candidate = effective_synthesis_candidate_store.reject_candidate(
+                    candidate_id,
+                    actor=actor,
+                    comment=str(payload.get("comment") or ""),
+                )
+                self._send_json(200, {"ok": True, "candidate": candidate.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "synthesis_candidate_not_found", "candidate_id": candidate_id},
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _ignore_similar_synthesis_candidate(self, candidate_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                candidate = effective_synthesis_candidate_store.ignore_similar(
+                    candidate_id,
+                    actor=actor,
+                    comment=str(payload.get("comment") or ""),
+                )
+                self._send_json(200, {"ok": True, "candidate": candidate.to_dict()})
+            except KeyError:
+                self._send_json(
+                    404,
+                    {"ok": False, "error": "synthesis_candidate_not_found", "candidate_id": candidate_id},
                 )
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
@@ -651,6 +738,13 @@ def onboarding_candidate_summary(candidates) -> Dict[str, Any]:
         by_type[candidate.type] = by_type.get(candidate.type, 0) + 1
         by_status[candidate.status] = by_status.get(candidate.status, 0) + 1
     return {"total": len(candidates), "by_type": by_type, "by_status": by_status}
+
+
+def synthesis_candidate_summary(candidates) -> Dict[str, Any]:
+    by_status: Dict[str, int] = {}
+    for candidate in candidates:
+        by_status[candidate.status] = by_status.get(candidate.status, 0) + 1
+    return {"total": len(candidates), "by_status": by_status}
 
 
 def seed_context_from_payload(agent: AgentOrchestrator, session_id: str, payload: Dict[str, Any]) -> None:
@@ -1148,6 +1242,7 @@ CHAT_HTML = """<!doctype html>
                 <button id="draftListButton" class="secondary" type="button">Черновики</button>
               </div>
               <button id="onboardingCandidatesButton" class="secondary" type="button">Onboarding candidates</button>
+              <button id="synthesisCandidatesButton" class="secondary" type="button">Agent candidates</button>
               <label>Поиск метаданных
                 <input id="metadataSearchInput" placeholder="Склады, Номенклатура, Регистр">
               </label>
@@ -1183,6 +1278,14 @@ CHAT_HTML = """<!doctype html>
                 <button id="candidateCreateDraftButton" class="secondary" type="button">Create draft</button>
                 <button id="candidateRejectButton" class="secondary" type="button">Reject</button>
               </div>
+              <label>Agent candidate ID
+                <input id="synthesisCandidateIdInput" placeholder="syn_...">
+              </label>
+              <div class="tool-row">
+                <button id="synthesisCreateDraftButton" class="secondary" type="button">Create draft</button>
+                <button id="synthesisRejectButton" class="secondary" type="button">Reject</button>
+              </div>
+              <button id="synthesisIgnoreSimilarButton" class="secondary" type="button">Ignore similar</button>
               <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
             </div>
             <label>ProductRef JSON
@@ -1230,6 +1333,7 @@ CHAT_HTML = """<!doctype html>
     const skillCatalogButton = document.getElementById("skillCatalogButton");
     const draftListButton = document.getElementById("draftListButton");
     const onboardingCandidatesButton = document.getElementById("onboardingCandidatesButton");
+    const synthesisCandidatesButton = document.getElementById("synthesisCandidatesButton");
     const metadataSearchInput = document.getElementById("metadataSearchInput");
     const metadataSearchButton = document.getElementById("metadataSearchButton");
     const draftIdInput = document.getElementById("draftIdInput");
@@ -1245,6 +1349,10 @@ CHAT_HTML = """<!doctype html>
     const candidateIdInput = document.getElementById("candidateIdInput");
     const candidateCreateDraftButton = document.getElementById("candidateCreateDraftButton");
     const candidateRejectButton = document.getElementById("candidateRejectButton");
+    const synthesisCandidateIdInput = document.getElementById("synthesisCandidateIdInput");
+    const synthesisCreateDraftButton = document.getElementById("synthesisCreateDraftButton");
+    const synthesisRejectButton = document.getElementById("synthesisRejectButton");
+    const synthesisIgnoreSimilarButton = document.getElementById("synthesisIgnoreSimilarButton");
     const workbenchText = document.getElementById("workbenchText");
     let pending = false;
     let onboardingPollTimer = null;
@@ -1556,6 +1664,20 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    async function loadSynthesisCandidates() {
+      workbenchText.textContent = "Загрузка agent candidates...";
+      try {
+        const response = await fetch("/api/admin/workbench/synthesis/candidates", {cache: "no-store"});
+        const data = await response.json();
+        if (data.ok && Array.isArray(data.candidates) && data.candidates[0]) {
+          synthesisCandidateIdInput.value = data.candidates[0].candidate_id || synthesisCandidateIdInput.value;
+        }
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить agent candidates: " + String(error.message || error);
+      }
+    }
+
     async function searchMetadata() {
       const term = metadataSearchInput.value.trim();
       if (!term) {
@@ -1629,6 +1751,26 @@ CHAT_HTML = """<!doctype html>
         showWorkbench(data);
       } catch (error) {
         workbenchText.textContent = "Действие onboarding candidate не выполнено: " + String(error.message || error);
+      }
+    }
+
+    async function postSynthesisCandidateAction(action) {
+      const candidateId = synthesisCandidateIdInput.value.trim();
+      if (!candidateId) {
+        synthesisCandidateIdInput.focus();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/admin/workbench/synthesis/candidates/${encodeURIComponent(candidateId)}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({actor: "web-admin", comment: approvalCommentInput.value.trim()})
+        });
+        const data = await response.json();
+        if (data.ok && data.draft && data.draft.draft_id) draftIdInput.value = data.draft.draft_id;
+        showWorkbench(data);
+      } catch (error) {
+        workbenchText.textContent = "Действие agent candidate не выполнено: " + String(error.message || error);
       }
     }
 
@@ -1769,6 +1911,7 @@ CHAT_HTML = """<!doctype html>
     skillCatalogButton.addEventListener("click", () => loadSkillCatalog());
     draftListButton.addEventListener("click", () => loadDraftList());
     onboardingCandidatesButton.addEventListener("click", () => loadOnboardingCandidates());
+    synthesisCandidatesButton.addEventListener("click", () => loadSynthesisCandidates());
     metadataSearchButton.addEventListener("click", () => searchMetadata());
     createDraftButton.addEventListener("click", () => createWorkbenchDraft());
     previewDraftButton.addEventListener("click", () => postDraftAction("preview"));
@@ -1781,6 +1924,9 @@ CHAT_HTML = """<!doctype html>
     }));
     candidateCreateDraftButton.addEventListener("click", () => postCandidateAction("create-draft"));
     candidateRejectButton.addEventListener("click", () => postCandidateAction("reject"));
+    synthesisCreateDraftButton.addEventListener("click", () => postSynthesisCandidateAction("create-draft"));
+    synthesisRejectButton.addEventListener("click", () => postSynthesisCandidateAction("reject"));
+    synthesisIgnoreSimilarButton.addEventListener("click", () => postSynthesisCandidateAction("ignore-similar"));
     publishDraftButton.addEventListener("click", () => postDraftAction("publish-candidate"));
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {
