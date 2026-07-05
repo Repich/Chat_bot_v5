@@ -12,8 +12,13 @@ logs/
 runs/
 bot_instances/*/onboarding/
 bot_instances/*/runs/
+bot_instances/*/workbench/drafts/
+bot_instances/*/workbench/approvals/
 bot_instances/*/workbench/smoke/
 bot_instances/*/workbench/audit/
+bot_instances/*/skills/candidates/
+bot_instances/*/skills/evidence/
+bot_instances/*/regression/results/
 skills/bindings/
 skills/learned/
 !skills/learned/

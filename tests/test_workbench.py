@@ -259,9 +259,12 @@ class MetadataExplorerServiceTests(unittest.TestCase):
         self.assertTrue(result["available"])
         self.assertEqual(result["objects"][0]["full_name"], "Справочник.Склады")
         fields = {item["name"]: item for item in details["object"]["fields"]}
+        hints = {item["name"]: item for item in details["object"]["field_hints"]}
+        all_fields = {item["name"]: item for item in details["object"]["all_fields"]}
         self.assertTrue(fields["Ссылка"]["confirmed"])
-        self.assertFalse(fields["ТипСклада"]["confirmed"])
-        self.assertEqual(fields["ТипСклада"]["source"], "onboarding_index")
+        self.assertFalse(hints["ТипСклада"]["confirmed"])
+        self.assertEqual(hints["ТипСклада"]["source"], "onboarding_index")
+        self.assertIn("ТипСклада", all_fields)
 
 
 class TraceDraftImportTests(unittest.TestCase):
@@ -300,7 +303,7 @@ class QueryPreviewServiceTests(unittest.TestCase):
     def test_preview_builds_read_only_top_n_by_metric_query(self) -> None:
         draft = top_n_stock_draft()
 
-        preview = QueryPreviewService().preview(draft)
+        preview = verified_preview_service().preview(draft)
 
         self.assertTrue(preview.ok, preview.to_dict())
         self.assertIn("ВЫБРАТЬ ПЕРВЫЕ 5", preview.query)
@@ -336,13 +339,50 @@ class QueryPreviewServiceTests(unittest.TestCase):
         self.assertFalse(preview.ok)
         self.assertIn("field_not_confirmed_by_metadata", [issue.code for issue in preview.issues])
 
+    def test_preview_does_not_trust_draft_confirmed_fields_without_metadata(self) -> None:
+        draft = top_n_stock_draft()
+
+        preview = QueryPreviewService().preview(draft)
+
+        self.assertFalse(preview.ok)
+        self.assertIn("source_not_confirmed_by_verified_metadata", [issue.code for issue in preview.issues])
+
     def test_preview_reports_actionable_issue_for_unsupported_recipe(self) -> None:
-        draft = HumanSkillDraft(title="Trace draft", calculation=CalculationRecipe(kind="trace_query"))
+        draft = HumanSkillDraft(title="Unsupported draft", calculation=CalculationRecipe(kind="unknown_recipe"))
 
         preview = QueryPreviewService().preview(draft)
 
         self.assertFalse(preview.ok)
         self.assertEqual(preview.issues[0].code, "unsupported_calculation_kind")
+
+    def test_preview_can_review_trace_query_with_verified_metadata(self) -> None:
+        draft = HumanSkillDraft(
+            title="Trace fixed query",
+            data_sources=[
+                DataSourceRef(alias="Остатки", object_name="РегистрНакопления.ТоварыНаСкладах.Остатки")
+            ],
+            calculation=CalculationRecipe(
+                kind="trace_query",
+                raw={
+                    "query": """
+                    ВЫБРАТЬ ПЕРВЫЕ 5
+                        Остатки.Номенклатура КАК Номенклатура,
+                        Остатки.ВНаличииОстаток КАК Количество
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки
+                    УПОРЯДОЧИТЬ ПО
+                        Количество УБЫВ
+                    """,
+                    "params": {},
+                    "limit": 5,
+                },
+            ),
+        )
+
+        preview = verified_preview_service().preview(draft)
+
+        self.assertTrue(preview.ok, preview.to_dict())
+        self.assertIn("РегистрНакопления.ТоварыНаСкладах.Остатки()", preview.query)
 
 
 class McpSmokeTestServiceTests(unittest.TestCase):
@@ -350,7 +390,11 @@ class McpSmokeTestServiceTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             draft = HumanSkillDraft.from_dict({**top_n_stock_draft().to_dict(), "draft_id": "draft_stock"})
             mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
-            service = McpSmokeTestService(bot_instance_root=Path(temp_dir) / "bot", mcp_client=mcp)
+            service = McpSmokeTestService(
+                bot_instance_root=Path(temp_dir) / "bot",
+                mcp_client=mcp,
+                preview_service=verified_preview_service(),
+            )
 
             result = service.run(draft)
             result_path_exists = Path(result.path).exists()
@@ -359,7 +403,27 @@ class McpSmokeTestServiceTests(unittest.TestCase):
         self.assertEqual(result.row_count, 1)
         self.assertEqual(mcp.query_calls[0].limit, 5)
         self.assertIn("ВЫБРАТЬ ПЕРВЫЕ 5", mcp.query_calls[0].query)
+        self.assertTrue(result.draft_hash)
+        self.assertTrue(result.preview_hash)
         self.assertTrue(result_path_exists)
+
+    def test_smoke_requires_parameter_values_before_mcp(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            draft = HumanSkillDraft.from_dict({**filtered_stock_draft().to_dict(), "draft_id": "draft_stock_filtered"})
+            mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
+            service = McpSmokeTestService(
+                bot_instance_root=Path(temp_dir) / "bot",
+                mcp_client=mcp,
+                preview_service=filtered_preview_service(),
+            )
+
+            missing = service.run(draft)
+            ok = service.run(draft, params={"Склад": "Основной"})
+
+        self.assertFalse(missing.ok)
+        self.assertEqual(missing.issues[0].code, "missing_smoke_param")
+        self.assertEqual(mcp.query_calls[0].params["Склад"], "Основной")
+        self.assertTrue(ok.ok, ok.to_dict())
 
 
 class ApprovalStoreTests(unittest.TestCase):
@@ -381,6 +445,13 @@ class ApprovalStoreTests(unittest.TestCase):
         self.assertEqual(latest.approval_id if latest else "", approved.approval_id)
         self.assertEqual([item.event_type for item in events], ["workbench.approval.recorded", "workbench.approval.recorded"])
         self.assertEqual(events[-1].object_id, "draft_stock")
+
+    def test_approval_requires_actor(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = ApprovalStore(bot_instance_root=Path(temp_dir) / "bot")
+
+            with self.assertRaises(ValueError):
+                store.approve("draft_stock", actor="", comment="Checked.")
 
 
 class WorkbenchTraceWriterTests(unittest.TestCase):
@@ -416,12 +487,28 @@ class CandidatePublisherTests(unittest.TestCase):
                 }
             )
             approval_store = ApprovalStore(bot_instance_root=bot)
-            publisher = CandidatePublisher(bot_instance_root=bot, approval_store=approval_store)
+            publisher = CandidatePublisher(
+                bot_instance_root=bot,
+                approval_store=approval_store,
+                preview_service=verified_preview_service(),
+            )
             before_smoke = publisher.publish(draft)
             mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
-            McpSmokeTestService(bot_instance_root=bot, mcp_client=mcp).run(draft)
+            smoke = McpSmokeTestService(
+                bot_instance_root=bot,
+                mcp_client=mcp,
+                preview_service=verified_preview_service(),
+            ).run(draft)
             before_approval = publisher.publish(draft)
-            approval = approval_store.approve(draft.draft_id, actor="consultant", comment="Sample reviewed.")
+            approval = approval_store.approve(
+                draft.draft_id,
+                actor="consultant",
+                comment="Sample reviewed.",
+                smoke_id=smoke.smoke_id,
+                draft_hash=smoke.draft_hash,
+                preview_hash=smoke.preview_hash,
+                query_hash=smoke.query_hash,
+            )
 
             published = publisher.publish(draft)
             skill_path_exists = Path(published.path).exists()
@@ -434,6 +521,9 @@ class CandidatePublisherTests(unittest.TestCase):
         self.assertEqual(approval.decision, "approved")
         self.assertTrue(published.ok, published.to_dict())
         self.assertEqual(published.skill.status, SkillStatus.CANDIDATE)
+        self.assertEqual(published.skill.implementation_strategy, "learned_query")
+        self.assertEqual(published.skill.implementation["kind"], "fixed_query")
+        self.assertEqual(published.skill.outputs[0].type, "TopNMetricTable")
         self.assertEqual(published.approval.approval_id, approval.approval_id)
         self.assertTrue(skill_path_exists)
         self.assertTrue(evidence_path_exists)
@@ -450,13 +540,60 @@ class CandidatePublisherTests(unittest.TestCase):
             )
             approval_store = ApprovalStore(bot_instance_root=bot)
             mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
-            McpSmokeTestService(bot_instance_root=bot, mcp_client=mcp).run(draft)
+            McpSmokeTestService(
+                bot_instance_root=bot,
+                mcp_client=mcp,
+                preview_service=verified_preview_service(),
+            ).run(draft)
             approval_store.reject(draft.draft_id, actor="consultant", comment="Wrong business meaning.")
 
-            published = CandidatePublisher(bot_instance_root=bot, approval_store=approval_store).publish(draft)
+            published = CandidatePublisher(
+                bot_instance_root=bot,
+                approval_store=approval_store,
+                preview_service=verified_preview_service(),
+            ).publish(draft)
 
         self.assertFalse(published.ok)
         self.assertEqual(published.issues[-1].code, "approval_rejected")
+
+    def test_publish_rejects_smoke_and_approval_from_old_draft_hash(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot = Path(temp_dir) / "bot"
+            draft = HumanSkillDraft.from_dict(
+                {
+                    **top_n_stock_draft().to_dict(),
+                    "draft_id": "draft_stock",
+                    "example_questions": ["Покажи товар с самым большим остатком"],
+                }
+            )
+            changed = HumanSkillDraft.from_dict({**draft.to_dict(), "description": "Changed after smoke."})
+            approval_store = ApprovalStore(bot_instance_root=bot)
+            mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
+            smoke = McpSmokeTestService(
+                bot_instance_root=bot,
+                mcp_client=mcp,
+                preview_service=verified_preview_service(),
+            ).run(draft)
+            approval_store.approve(
+                draft.draft_id,
+                actor="consultant",
+                comment="Sample reviewed.",
+                smoke_id=smoke.smoke_id,
+                draft_hash=smoke.draft_hash,
+                preview_hash=smoke.preview_hash,
+                query_hash=smoke.query_hash,
+            )
+
+            published = CandidatePublisher(
+                bot_instance_root=bot,
+                approval_store=approval_store,
+                preview_service=verified_preview_service(),
+            ).publish(changed)
+
+        self.assertFalse(published.ok)
+        issue_codes = [issue.code for issue in published.issues]
+        self.assertIn("missing_successful_smoke", issue_codes)
+        self.assertIn("approval_draft_hash_mismatch", issue_codes)
 
 
 class SkillLifecycleWorkbenchTests(unittest.TestCase):
@@ -472,14 +609,26 @@ class SkillLifecycleWorkbenchTests(unittest.TestCase):
             )
             approval_store = ApprovalStore(bot_instance_root=bot)
             mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
-            McpSmokeTestService(bot_instance_root=bot, mcp_client=mcp).run(draft)
+            smoke = McpSmokeTestService(
+                bot_instance_root=bot,
+                mcp_client=mcp,
+                preview_service=verified_preview_service(),
+            ).run(draft)
             approval_store.approve(
                 draft.draft_id,
                 actor="consultant",
                 comment="Sample reviewed.",
+                smoke_id=smoke.smoke_id,
+                draft_hash=smoke.draft_hash,
+                preview_hash=smoke.preview_hash,
+                query_hash=smoke.query_hash,
                 regression_case_id="reg_stock_top",
             )
-            published = CandidatePublisher(bot_instance_root=bot, approval_store=approval_store).publish(draft)
+            published = CandidatePublisher(
+                bot_instance_root=bot,
+                approval_store=approval_store,
+                preview_service=verified_preview_service(),
+            ).publish(draft)
             before_replay = SkillLifecycleService(bot_instance_root=bot).promote(
                 published.skill.skill_id,
                 actor="consultant",
@@ -646,6 +795,78 @@ def top_n_stock_draft() -> HumanSkillDraft:
             limit=5,
         ),
     )
+
+
+def top_n_stock_metadata() -> MetadataObject:
+    return MetadataObject(
+        full_name="РегистрНакопления.ТоварыНаСкладах",
+        fields=["Номенклатура", "ВНаличии"],
+        field_details={
+            "Номенклатура": {
+                "name": "Номенклатура",
+                "_category": "dimension",
+                "_source": "metadata_xml",
+                "_trust": "verified",
+            },
+            "ВНаличии": {
+                "name": "ВНаличии",
+                "_category": "resource",
+                "_source": "metadata_xml",
+                "_trust": "verified",
+            },
+        },
+        raw={"_source": "metadata_xml", "_trust": "verified"},
+    )
+
+
+def verified_preview_service() -> QueryPreviewService:
+    return QueryPreviewService(metadata_lookup=lambda _: top_n_stock_metadata())
+
+
+def filtered_stock_draft() -> HumanSkillDraft:
+    return HumanSkillDraft.from_dict(
+        {
+            **top_n_stock_draft().to_dict(),
+            "field_mappings": [
+                *[item.to_dict() for item in top_n_stock_draft().field_mappings],
+                {"role": "warehouse", "source_alias": "Остатки", "field_name": "Склад", "confirmed": True},
+            ],
+            "calculation": {
+                **top_n_stock_draft().calculation.to_dict(),
+                "filters": [
+                    {
+                        "role": "warehouse",
+                        "operator": "equals",
+                        "value_source": "input",
+                        "parameter": "Склад",
+                        "required": True,
+                    }
+                ],
+            },
+        }
+    )
+
+
+def filtered_stock_metadata() -> MetadataObject:
+    base = top_n_stock_metadata()
+    field_details = dict(base.field_details)
+    field_details["Склад"] = {
+        "name": "Склад",
+        "_category": "dimension",
+        "_source": "metadata_xml",
+        "_trust": "verified",
+    }
+    return MetadataObject(
+        full_name=base.full_name,
+        synonym=base.synonym,
+        fields=[*base.fields, "Склад"],
+        field_details=field_details,
+        raw=dict(base.raw),
+    )
+
+
+def filtered_preview_service() -> QueryPreviewService:
+    return QueryPreviewService(metadata_lookup=lambda _: filtered_stock_metadata())
 
 
 def write_trace(trace: Path, *, question: str, query: str) -> None:

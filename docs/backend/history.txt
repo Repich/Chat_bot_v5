@@ -1,3 +1,14 @@
+5.0.0-alpha.46
+- Workbench-published candidate skills now use the existing executable learned_query/fixed_query runtime strategy instead of an unregistered workbench_preview_query strategy.
+- Query preview no longer treats FieldMapping.confirmed from a draft as verified metadata; preview/publish require MCP/XML/onboarding-index verified metadata lookup.
+- Smoke results now persist draft_hash, preview_hash, query_hash, and metadata_dependency_hash, and smoke accepts explicit test params while rejecting missing params before MCP execution.
+- Approval records now store draft/query fingerprints and require a non-empty actor. Publish validates current successful smoke plus matching approval fingerprints before writing a candidate skill.
+- Publish-candidate now requires explicit approve=true, actor, comment, smoke_id, and will not override a rejected approval unless override_previous_rejection=true is provided.
+- Metadata Explorer responses now separate confirmed fields, field_hints, and all_fields.
+- Added Workbench data storage policy and expanded ignore rules for local bot-instance evidence.
+- Synchronized VERSION, package __version__, README, project overview, and pyproject package version.
+- Moved the web client HTML/JS out of the HTTP router into wiicon5.web.workbench_ui to reduce server.py coupling.
+
 5.0.0-alpha.45
 - Release cleanup: explicitly ignored bot-specific Workbench runtime traces, smoke samples, and audit logs so local evidence files are not committed accidentally.
 

@@ -9,6 +9,8 @@ from wiicon5.mcp.client import HttpMcpClient
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.web.admin_security import AdminSecurityConfig
 from wiicon5.web.server import run_http_server
+from wiicon5.workbench.metadata_explorer import MetadataExplorerService
+from wiicon5.workbench.preview import QueryPreviewService
 from wiicon5.workbench.smoke import McpSmokeTestService
 
 
@@ -23,9 +25,12 @@ def main() -> int:
     settings = Settings.from_env(root=root)
     agent = build_agent(settings)
     onboarding_manager = OnboardingManager(bot_instance_root=settings.bot_context.root, mcp_url=settings.mcp_url)
+    metadata_explorer = MetadataExplorerService.from_bot_instance(settings.bot_context.root)
+    preview_service = QueryPreviewService(metadata_lookup=metadata_explorer.metadata_object)
     smoke_service = McpSmokeTestService(
         bot_instance_root=settings.bot_context.root,
         mcp_client=HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds),
+        preview_service=preview_service,
     )
     admin_security = AdminSecurityConfig(
         enabled=settings.admin_enabled,
@@ -40,6 +45,8 @@ def main() -> int:
         host=args.host,
         port=args.port,
         onboarding_manager=onboarding_manager,
+        metadata_explorer=metadata_explorer,
+        preview_service=preview_service,
         smoke_service=smoke_service,
         admin_security=admin_security,
     )

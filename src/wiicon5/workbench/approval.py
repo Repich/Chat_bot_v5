@@ -26,6 +26,9 @@ class ApprovalRecord:
     ts: str = ""
     comment: str = ""
     smoke_id: str = ""
+    draft_hash: str = ""
+    preview_hash: str = ""
+    query_hash: str = ""
     regression_case_id: str = ""
     evidence: Dict[str, Any] = field(default_factory=dict)
 
@@ -39,6 +42,9 @@ class ApprovalRecord:
         approval_level: str = "candidate",
         comment: str = "",
         smoke_id: str = "",
+        draft_hash: str = "",
+        preview_hash: str = "",
+        query_hash: str = "",
         regression_case_id: str = "",
         evidence: Optional[Mapping[str, Any]] = None,
     ) -> "ApprovalRecord":
@@ -52,6 +58,9 @@ class ApprovalRecord:
             ts=utc_now(),
             comment=comment,
             smoke_id=smoke_id,
+            draft_hash=draft_hash,
+            preview_hash=preview_hash,
+            query_hash=query_hash,
             regression_case_id=regression_case_id,
             evidence=dict(evidence or {}),
         )
@@ -68,6 +77,9 @@ class ApprovalRecord:
             ts=str(data.get("ts") or ""),
             comment=str(data.get("comment") or ""),
             smoke_id=str(data.get("smoke_id") or ""),
+            draft_hash=str(data.get("draft_hash") or ""),
+            preview_hash=str(data.get("preview_hash") or ""),
+            query_hash=str(data.get("query_hash") or ""),
             regression_case_id=str(data.get("regression_case_id") or ""),
             evidence=dict(data.get("evidence", {})) if isinstance(data.get("evidence"), Mapping) else {},
         )
@@ -83,6 +95,9 @@ class ApprovalRecord:
             "ts": self.ts,
             "comment": self.comment,
             "smoke_id": self.smoke_id,
+            "draft_hash": self.draft_hash,
+            "preview_hash": self.preview_hash,
+            "query_hash": self.query_hash,
             "regression_case_id": self.regression_case_id,
             "evidence": jsonable(self.evidence),
         }
@@ -110,6 +125,9 @@ class ApprovalStore:
         approval_level: str = "candidate",
         comment: str = "",
         smoke_id: str = "",
+        draft_hash: str = "",
+        preview_hash: str = "",
+        query_hash: str = "",
         regression_case_id: str = "",
         evidence: Optional[Mapping[str, Any]] = None,
     ) -> ApprovalRecord:
@@ -120,6 +138,9 @@ class ApprovalStore:
             approval_level=approval_level,
             comment=comment,
             smoke_id=smoke_id,
+            draft_hash=draft_hash,
+            preview_hash=preview_hash,
+            query_hash=query_hash,
             regression_case_id=regression_case_id,
             evidence=evidence,
         )
@@ -151,13 +172,18 @@ class ApprovalStore:
         approval_level: str = "candidate",
         comment: str = "",
         smoke_id: str = "",
+        draft_hash: str = "",
+        preview_hash: str = "",
+        query_hash: str = "",
         regression_case_id: str = "",
         evidence: Optional[Mapping[str, Any]] = None,
     ) -> ApprovalRecord:
         normalized_draft_id = draft_id.strip()
         if not normalized_draft_id:
             raise ValueError("draft_id is required for approval.")
-        normalized_actor = actor.strip() or "admin"
+        normalized_actor = actor.strip()
+        if not normalized_actor:
+            raise ValueError("actor is required for approval.")
         if decision not in {APPROVED, REJECTED}:
             raise ValueError(f"Unsupported approval decision: {decision}")
         record = ApprovalRecord.create(
@@ -167,6 +193,9 @@ class ApprovalStore:
             approval_level=approval_level.strip() or "candidate",
             comment=comment,
             smoke_id=smoke_id,
+            draft_hash=draft_hash,
+            preview_hash=preview_hash,
+            query_hash=query_hash,
             regression_case_id=regression_case_id,
             evidence=evidence,
         )
@@ -185,6 +214,8 @@ class ApprovalStore:
                     "decision": record.decision,
                     "approval_level": record.approval_level,
                     "smoke_id": record.smoke_id,
+                    "draft_hash": record.draft_hash,
+                    "preview_hash": record.preview_hash,
                 },
             )
         return record

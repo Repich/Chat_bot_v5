@@ -52,6 +52,8 @@ class MetadataObjectView:
     confirmed: bool = False
     source_files: List[str] = field(default_factory=list)
     fields: List[MetadataFieldView] = field(default_factory=list)
+    field_hints: List[MetadataFieldView] = field(default_factory=list)
+    all_fields: List[MetadataFieldView] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -64,6 +66,8 @@ class MetadataObjectView:
             "confirmed": self.confirmed,
             "source_files": list(self.source_files),
             "fields": [item.to_dict() for item in self.fields],
+            "field_hints": [item.to_dict() for item in self.field_hints],
+            "all_fields": [item.to_dict() for item in self.all_fields],
         }
 
 
@@ -128,6 +132,8 @@ class MetadataExplorerService:
 def object_view(metadata: MetadataObject) -> MetadataObjectView:
     raw = metadata.raw
     field_items = [field_view(name, metadata.field_details.get(name, {})) for name in metadata.fields]
+    confirmed_fields = [item for item in field_items if item.confirmed]
+    field_hints = [item for item in field_items if not item.confirmed]
     return MetadataObjectView(
         full_name=metadata.full_name,
         synonym=metadata.synonym,
@@ -137,7 +143,9 @@ def object_view(metadata: MetadataObject) -> MetadataObjectView:
         confidence=float(raw.get("_confidence") or raw.get("confidence") or 0.0),
         confirmed=is_metadata_object_verified(metadata),
         source_files=[str(item) for item in raw.get("source_files", [])] if isinstance(raw.get("source_files"), list) else [],
-        fields=field_items,
+        fields=confirmed_fields,
+        field_hints=field_hints,
+        all_fields=field_items,
     )
 
 

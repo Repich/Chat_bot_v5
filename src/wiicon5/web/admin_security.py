@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import hmac
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -61,9 +62,9 @@ class AdminSecurityConfig:
 
 def token_matches(headers: Mapping[str, str], expected: str) -> bool:
     authorization = header_value(headers, "Authorization")
-    if authorization.startswith("Bearer ") and authorization[7:].strip() == expected:
+    if authorization.startswith("Bearer ") and hmac.compare_digest(authorization[7:].strip(), expected):
         return True
-    return header_value(headers, "X-WIICON5-Admin-Token") == expected
+    return hmac.compare_digest(header_value(headers, "X-WIICON5-Admin-Token"), expected)
 
 
 def header_value(headers: Mapping[str, str], name: str) -> str:

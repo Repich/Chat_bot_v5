@@ -25,9 +25,13 @@ class LearnedQueryBuilder(QueryBuilder):
             query = str(spec.get("query") or "").strip()
             if not query:
                 raise QueryBuildError(f"Learned skill {skill.skill_id} has no query.")
+            params = dict(spec.get("params") or {})
+            for key in list(params.keys()):
+                if key in inputs:
+                    params[key] = inputs[key]
             return QueryDraft(
                 query=query,
-                params=dict(spec.get("params") or {}),
+                params=params,
                 limit=int(spec.get("limit") or inputs.get("limit") or 100),
                 metadata_dependencies=[str(item) for item in spec.get("metadata_dependencies", []) or []],
                 reasoning=f"Built from learned fixed query skill {skill.skill_id}.",

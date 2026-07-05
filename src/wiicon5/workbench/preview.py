@@ -43,14 +43,16 @@ class QueryPreviewService:
         self.reviewer = reviewer or OneCQueryReviewer()
         self.metadata_lookup = metadata_lookup
 
-    def preview(self, draft: HumanSkillDraft) -> QueryPreviewResult:
+    def preview(self, draft: HumanSkillDraft, *, params: Optional[Dict[str, Any]] = None) -> QueryPreviewResult:
         issues = validate_recipe(draft)
         if issues:
             return QueryPreviewResult(ok=False, issues=issues)
-        query, params, limit = build_top_n_by_metric_query(draft)
-        safety = validate_read_only_query(query, params)
+        query, generated_params, limit = build_preview_query(draft)
+        effective_params = dict(generated_params)
+        effective_params.update(params or {})
+        safety = validate_read_only_query(query, effective_params)
         metadata_objects = metadata_objects_from_draft(draft, metadata_lookup=self.metadata_lookup)
-        review = self.reviewer.review(query=query, params=params, metadata_objects=metadata_objects)
+        review = self.reviewer.review(query=query, params=effective_params, metadata_objects=metadata_objects)
         all_issues = list(safety.issues)
         all_issues.extend(
             ValidationIssue(code=issue.code, message=issue.message, path="query_review")
@@ -59,7 +61,7 @@ class QueryPreviewService:
         return QueryPreviewResult(
             ok=safety.ok and review.ok,
             query=query,
-            params=params,
+            params=effective_params,
             limit=limit,
             issues=all_issues,
             safety=safety.to_dict(),
@@ -70,6 +72,11 @@ class QueryPreviewService:
 def validate_recipe(draft: HumanSkillDraft) -> List[ValidationIssue]:
     issues: List[ValidationIssue] = []
     calculation = draft.calculation
+    if calculation.kind == "trace_query":
+        query = str(calculation.raw.get("query") or "").strip()
+        if not query:
+            issues.append(ValidationIssue("missing_trace_query", "Trace query draft must contain calculation.raw.query.", "calculation.raw.query"))
+        return issues
     if calculation.kind != "top_n_by_metric":
         issues.append(
             ValidationIssue(
@@ -110,6 +117,20 @@ def validate_recipe(draft: HumanSkillDraft) -> List[ValidationIssue]:
                 )
             )
     return issues
+
+
+def build_preview_query(draft: HumanSkillDraft) -> tuple[str, Dict[str, Any], int]:
+    if draft.calculation.kind == "trace_query":
+        return build_trace_query(draft)
+    return build_top_n_by_metric_query(draft)
+
+
+def build_trace_query(draft: HumanSkillDraft) -> tuple[str, Dict[str, Any], int]:
+    raw = draft.calculation.raw
+    query = str(raw.get("query") or "").strip()
+    params = dict(raw.get("params") or {}) if isinstance(raw.get("params"), dict) else {}
+    limit = int(raw.get("limit") or draft.calculation.limit or 100)
+    return query, params, max(1, min(limit, 1000))
 
 
 def build_top_n_by_metric_query(draft: HumanSkillDraft) -> tuple[str, Dict[str, Any], int]:
@@ -173,8 +194,8 @@ def metadata_objects_from_draft(
                 "name": mapping.field_name,
                 "Имя": mapping.field_name,
                 "_category": "field",
-                "_source": "metadata_xml" if mapping.confirmed else "onboarding_index",
-                "_trust": "verified" if mapping.confirmed else "hint",
+                "_source": "workbench_draft",
+                "_trust": "hint",
             }
             for mapping in draft.field_mappings
             if mapping.source_alias == source.alias
@@ -186,8 +207,8 @@ def metadata_objects_from_draft(
                 fields=fields,
                 field_details=details,
                 raw={
-                    "_source": "metadata_xml" if source.trust == "verified" else "onboarding_index",
-                    "_trust": source.trust,
+                    "_source": "workbench_draft",
+                    "_trust": "hint",
                 },
             )
         )

@@ -18,6 +18,7 @@ from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 from wiicon5.web.server import make_handler
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
+from wiicon5.workbench.preview import QueryPreviewService
 from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.trace_import import TraceDraftImporter
 
@@ -58,10 +59,31 @@ class WebServerTests(unittest.TestCase):
                             fields=["Ссылка"],
                             field_details={"Ссылка": {"name": "Ссылка", "_source": "mcp", "_trust": "verified"}},
                             raw={"_source": "mcp", "_trust": "verified", "kind": "Справочник"},
-                        )
+                        ),
+                        MetadataObject(
+                            full_name="РегистрНакопления.ТоварыНаСкладах",
+                            synonym="Товары на складах",
+                            fields=["Номенклатура", "ВНаличии"],
+                            field_details={
+                                "Номенклатура": {
+                                    "name": "Номенклатура",
+                                    "_category": "dimension",
+                                    "_source": "metadata_xml",
+                                    "_trust": "verified",
+                                },
+                                "ВНаличии": {
+                                    "name": "ВНаличии",
+                                    "_category": "resource",
+                                    "_source": "metadata_xml",
+                                    "_trust": "verified",
+                                },
+                            },
+                            raw={"_source": "metadata_xml", "_trust": "verified", "kind": "РегистрНакопления"},
+                        ),
                     ]
                 )
             )
+            preview_service = QueryPreviewService(metadata_lookup=metadata_explorer.metadata_object)
             server = HTTPServer(
                 ("127.0.0.1", 0),
                 make_handler(
@@ -69,11 +91,13 @@ class WebServerTests(unittest.TestCase):
                     onboarding_manager=onboarding_manager,
                     metadata_explorer=metadata_explorer,
                     trace_importer=TraceDraftImporter(runs_root=runs_root),
+                    preview_service=preview_service,
                     smoke_service=McpSmokeTestService(
                         bot_instance_root=onboarding_manager.bot_instance_root,
                         mcp_client=DictMcpClient(
                             {"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]}
                         ),
+                        preview_service=preview_service,
                     ),
                 ),
             )
@@ -284,7 +308,11 @@ class WebServerTests(unittest.TestCase):
                 approve_draft_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/approve",
                     data=json.dumps(
-                        {"actor": "approver", "comment": "Smoke sample reviewed"},
+                        {
+                            "actor": "approver",
+                            "comment": "Smoke sample reviewed",
+                            "smoke_id": smoke_draft["smoke"]["smoke_id"],
+                        },
                         ensure_ascii=False,
                     ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
@@ -302,7 +330,12 @@ class WebServerTests(unittest.TestCase):
                 publish_candidate_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/publish-candidate",
                     data=json.dumps(
-                        {"actor": "publisher", "comment": "Publication sample reviewed"},
+                        {
+                            "actor": "publisher",
+                            "approve": True,
+                            "comment": "Publication sample reviewed",
+                            "smoke_id": smoke_draft["smoke"]["smoke_id"],
+                        },
                         ensure_ascii=False,
                     ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},

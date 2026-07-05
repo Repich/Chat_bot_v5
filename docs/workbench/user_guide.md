@@ -79,16 +79,21 @@ Before publication:
 
 1. Generate preview query.
 2. Review warnings and validation issues.
-3. Run MCP smoke test.
-4. Inspect sample rows.
-5. Approve only if the business meaning and result are correct.
+3. If the draft query has parameters, fill `Smoke params JSON` with test values.
+4. Run MCP smoke test.
+5. Inspect sample rows.
+6. Approve only if the business meaning and result are correct.
 
 Smoke test samples are intentionally limited; they are evidence, not a full data
 export.
+Approval and publication are tied to the current draft hash, preview hash, and
+successful `smoke_id`. If the draft changes after smoke, rerun smoke and approve
+the new result.
 
 ## 5. Publish And Promote
 
-Publishing creates a `candidate` skill. To make it runtime-active:
+Publishing requires an explicit approval comment and the latest successful
+`smoke_id`; it creates a `candidate` skill. To make it runtime-active:
 
 1. Create or choose regression cases.
 2. Run regression replay from the Workbench panel.

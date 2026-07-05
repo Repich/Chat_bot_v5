@@ -105,7 +105,7 @@ Evidence explains why a skill is trusted:
 - metadata objects confirmed by MCP or XML configuration dump;
 - fields confirmed by MCP or XML metadata;
 - query preview passed safety and query review;
-- smoke test executed successfully;
+- smoke test executed successfully for the current draft and preview hashes;
 - sample result reviewed by a human;
 - regression case created;
 - trace and audit events recorded.
@@ -117,8 +117,11 @@ against MCP or XML metadata.
 ### Approval
 
 Approval is a human action with actor, timestamp, comment, level, smoke test
-evidence, and optional regression evidence. Approval records are append-only
-audit facts and must not silently overwrite earlier approval history.
+evidence, `draft_hash`, `preview_hash`, `query_hash`, and optional regression
+evidence. Approval records are append-only audit facts and must not silently
+overwrite earlier approval history. A rejected approval can be superseded only by
+an explicit new approval action or by candidate publication with an explicit
+override flag and a new comment.
 
 ## Lifecycle
 
@@ -193,7 +196,9 @@ Before publishing a candidate, the system must verify:
 - query reviewer accepts the query;
 - no unresolved template parameters remain;
 - no empty list parameters will reach MCP;
-- smoke test has succeeded.
+- smoke test has succeeded for the current `draft_hash` and `preview_hash`;
+- human approval references the same `draft_hash`, `preview_hash`, and
+  successful `smoke_id`.
 
 Validation errors should be actionable for a 1C expert, not just Python
 exceptions.
@@ -306,4 +311,3 @@ The first useful MVP is:
 10. minimal web UI.
 
 The first implementation phases must not start with UI or raw query editing.
-

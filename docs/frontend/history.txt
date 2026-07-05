@@ -1,3 +1,9 @@
+5.0.0-alpha.46
+- Workbench metadata object cards continue to show confirmed fields and now use all_fields for field picker actions so hints remain visible but separated.
+- Added Smoke params JSON input to the Workbench panel for test values required by parameterized draft smoke runs.
+- Draft approval and candidate publication actions now send the latest successful smoke_id; publication sends explicit approve=true and approval comment.
+- No UI behavior changes from the module split; the web client source now lives outside the backend HTTP router.
+
 5.0.0-alpha.45
 - No frontend behavior changes. Release cleanup updated repository ignore rules for Workbench runtime evidence.
 

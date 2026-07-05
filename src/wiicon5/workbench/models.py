@@ -262,6 +262,7 @@ class HumanSkillDraft:
     field_mappings: List[FieldMapping] = field(default_factory=list)
     calculation: CalculationRecipe = field(default_factory=CalculationRecipe)
     presentation: PresentationRecipe = field(default_factory=PresentationRecipe)
+    output_artifact_type: str = ""
     tags: List[str] = field(default_factory=list)
     notes: str = ""
     source_kind: str = "manual"
@@ -285,6 +286,7 @@ class HumanSkillDraft:
             "field_mappings",
             "calculation",
             "presentation",
+            "output_artifact_type",
             "tags",
             "notes",
             "source_kind",
@@ -309,6 +311,7 @@ class HumanSkillDraft:
             presentation=PresentationRecipe.from_dict(
                 data.get("presentation") if isinstance(data.get("presentation"), Mapping) else {}
             ),
+            output_artifact_type=str(data.get("output_artifact_type") or ""),
             tags=[str(item) for item in list_value(data.get("tags"))],
             notes=str(data.get("notes") or ""),
             source_kind=str(data.get("source_kind") or "manual"),
@@ -334,6 +337,7 @@ class HumanSkillDraft:
                 "field_mappings": [item.to_dict() for item in self.field_mappings],
                 "calculation": self.calculation.to_dict(),
                 "presentation": self.presentation.to_dict(),
+                "output_artifact_type": self.output_artifact_type,
                 "tags": list(self.tags),
                 "notes": self.notes,
                 "source_kind": self.source_kind,

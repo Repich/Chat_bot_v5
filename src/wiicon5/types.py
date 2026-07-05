@@ -18,6 +18,8 @@ DEFAULT_TYPE_PARENTS: Dict[str, List[str]] = {
     "DocumentCountByPeriodTable": ["TypedTable"],
     "DocumentLineTable": ["TypedTable"],
     "DocumentListTable": ["TypedTable"],
+    "TopNMetricTable": ["AggregateTable"],
+    "WorkbenchQueryResultTable": ["TypedTable"],
     "UserAnswer": ["Answer"],
 }
 
