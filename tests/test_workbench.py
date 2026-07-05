@@ -13,8 +13,10 @@ from wiicon5.workbench import (
     HumanSkillDraft,
     HumanSkillDraftStore,
     MeasureRecipe,
+    MetadataExplorerService,
     SkillCatalogService,
 )
+from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
 from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
 
 
@@ -206,6 +208,66 @@ class SkillCatalogServiceTests(unittest.TestCase):
         self.assertEqual([item.skill.skill_id for item in snapshot.items], ["valid"])
         self.assertEqual(len(snapshot.errors), 1)
         self.assertIn("broken.json", snapshot.errors[0].path)
+
+
+class MetadataExplorerServiceTests(unittest.TestCase):
+    def test_metadata_explorer_returns_confirmed_and_hint_fields(self) -> None:
+        provider = StaticMetadataProvider(
+            [
+                MetadataObject(
+                    full_name="Справочник.Склады",
+                    synonym="Склады",
+                    fields=["Ссылка", "Наименование", "ТипСклада"],
+                    field_details={
+                        "Ссылка": {"name": "Ссылка", "_category": "standard_attribute", "_source": "mcp", "_trust": "verified"},
+                        "Наименование": {
+                            "name": "Наименование",
+                            "_category": "standard_attribute",
+                            "_source": "mcp",
+                            "_trust": "verified",
+                        },
+                        "ТипСклада": {
+                            "name": "ТипСклада",
+                            "_category": "attribute",
+                            "_source": "onboarding_index",
+                            "_trust": "hint",
+                            "type": "ПеречислениеСсылка.ТипыСкладов",
+                        },
+                    },
+                    raw={"_source": "mcp", "_trust": "verified", "kind": "Справочник"},
+                )
+            ]
+        )
+
+        service = MetadataExplorerService(provider=provider)
+        result = service.search("склад")
+        details = service.get_object("Справочник.Склады")
+
+        self.assertTrue(result["available"])
+        self.assertEqual(result["objects"][0]["full_name"], "Справочник.Склады")
+        fields = {item["name"]: item for item in details["object"]["fields"]}
+        self.assertTrue(fields["Ссылка"]["confirmed"])
+        self.assertFalse(fields["ТипСклада"]["confirmed"])
+        self.assertEqual(fields["ТипСклада"]["source"], "onboarding_index")
+
+
+class StaticMetadataProvider(MetadataProvider):
+    def __init__(self, objects: list[MetadataObject]) -> None:
+        self.objects = {item.full_name: item for item in objects}
+        self.last_requests = []
+
+    def search_objects(self, term: str) -> list[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        lowered = term.lower()
+        return [
+            item
+            for item in self.objects.values()
+            if lowered in item.full_name.lower() or lowered in item.synonym.lower()
+        ]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        return self.objects.get(full_name, MetadataObject(full_name=full_name))
 
 
 def skill_contract(skill_id: str, *, status: SkillStatus = SkillStatus.VERIFIED) -> SkillContract:

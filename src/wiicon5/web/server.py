@@ -10,6 +10,7 @@ from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.onboarding.status import OnboardingManager
+from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.skill_catalog import SkillCatalogService
 
 
@@ -23,6 +24,7 @@ def make_handler(
     agent: AgentOrchestrator,
     onboarding_manager: OnboardingManager | None = None,
     skill_catalog: SkillCatalogService | None = None,
+    metadata_explorer: MetadataExplorerService | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -30,6 +32,9 @@ def make_handler(
     effective_skill_catalog = skill_catalog or SkillCatalogService(
         global_skills_dir=PROJECT_ROOT / "skills",
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
+    )
+    effective_metadata_explorer = metadata_explorer or MetadataExplorerService.from_bot_instance(
+        effective_onboarding_manager.bot_instance_root
     )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
@@ -78,6 +83,19 @@ def make_handler(
                     self._send_json(404, {"ok": False, "error": "skill_not_found", "skill_id": skill_id})
                     return
                 self._send_json(200, {"ok": True, "skill": item.to_dict()})
+                return
+            if path == "/api/admin/metadata/search":
+                term = first_query_value(query, "q") or first_query_value(query, "term")
+                limit = int_or_default(first_query_value(query, "limit"), 20)
+                self._send_json(200, {"ok": True, **effective_metadata_explorer.search(term, limit=limit)})
+                return
+            if path == "/api/admin/metadata/object":
+                full_name = first_query_value(query, "full_name") or first_query_value(query, "name")
+                result = effective_metadata_explorer.get_object(full_name)
+                if not result.get("found"):
+                    self._send_json(404, {"ok": False, "error": "metadata_object_not_found", **result})
+                    return
+                self._send_json(200, {"ok": True, **result})
                 return
             if path == "/history/backend":
                 self._send_text(200, read_text_file(BACKEND_HISTORY_FILE))
@@ -182,6 +200,13 @@ def read_text_file(path: Path) -> str:
 def first_query_value(query: Dict[str, list[str]], name: str) -> str:
     values = query.get(name) or []
     return values[0].strip() if values else ""
+
+
+def int_or_default(value: str, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def conversation_summary(context) -> Dict[str, Any]:

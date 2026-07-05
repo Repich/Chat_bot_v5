@@ -11,10 +11,12 @@ from tempfile import TemporaryDirectory
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
+from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 from wiicon5.web.server import make_handler
+from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +42,23 @@ class WebServerTests(unittest.TestCase):
         )
         with TemporaryDirectory() as temp_dir:
             onboarding_manager = OnboardingManager(bot_instance_root=Path(temp_dir) / "bot")
-            server = HTTPServer(("127.0.0.1", 0), make_handler(agent, onboarding_manager=onboarding_manager))
+            metadata_explorer = MetadataExplorerService(
+                provider=StaticMetadataProvider(
+                    [
+                        MetadataObject(
+                            full_name="Справочник.Склады",
+                            synonym="Склады",
+                            fields=["Ссылка"],
+                            field_details={"Ссылка": {"name": "Ссылка", "_source": "mcp", "_trust": "verified"}},
+                            raw={"_source": "mcp", "_trust": "verified", "kind": "Справочник"},
+                        )
+                    ]
+                )
+            )
+            server = HTTPServer(
+                ("127.0.0.1", 0),
+                make_handler(agent, onboarding_manager=onboarding_manager, metadata_explorer=metadata_explorer),
+            )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -98,6 +116,22 @@ class WebServerTests(unittest.TestCase):
                     .read()
                     .decode("utf-8")
                 )
+                metadata_search = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/metadata/search?q=%D1%81%D0%BA%D0%BB%D0%B0%D0%B4",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                metadata_object = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/metadata/object?full_name=%D0%A1%D0%BF%D1%80%D0%B0%D0%B2%D0%BE%D1%87%D0%BD%D0%B8%D0%BA.%D0%A1%D0%BA%D0%BB%D0%B0%D0%B4%D1%8B",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
                 backend_history = urllib.request.urlopen(f"http://{host}:{port}/history/backend", timeout=5).read().decode("utf-8")
             finally:
                 server.shutdown()
@@ -123,6 +157,10 @@ class WebServerTests(unittest.TestCase):
         self.assertTrue(stock_skill["ok"])
         self.assertEqual(stock_skill["skill"]["skill_id"], "get_stock_balances")
         self.assertIn("source_path", stock_skill["skill"])
+        self.assertTrue(metadata_search["ok"])
+        self.assertEqual(metadata_search["objects"][0]["full_name"], "Справочник.Склады")
+        self.assertTrue(metadata_object["ok"])
+        self.assertEqual(metadata_object["object"]["fields"][0]["name"], "Ссылка")
         self.assertIn('input.addEventListener("keydown"', chat_page)
         self.assertIn("form.requestSubmit()", chat_page)
         self.assertIn("startTitleBlink", chat_page)
@@ -134,6 +172,25 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual([item["session_id"] for item in conversations["sessions"]], ["s1"])
         self.assertEqual(conversations["sessions"][0]["message_count"], 2)
         self.assertIn("5.0.0-alpha.2", backend_history)
+
+
+class StaticMetadataProvider(MetadataProvider):
+    def __init__(self, objects: list[MetadataObject]) -> None:
+        self.objects = {item.full_name: item for item in objects}
+        self.last_requests = []
+
+    def search_objects(self, term: str) -> list[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        lowered = term.lower()
+        return [
+            item
+            for item in self.objects.values()
+            if lowered in item.full_name.lower() or lowered in item.synonym.lower()
+        ]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        return self.objects.get(full_name, MetadataObject(full_name=full_name))
 
 
 if __name__ == "__main__":

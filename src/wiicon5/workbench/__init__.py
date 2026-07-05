@@ -1,6 +1,7 @@
 """Human-in-the-loop skill workbench."""
 
 from wiicon5.workbench.audit import WorkbenchAuditEvent, WorkbenchAuditLog
+from wiicon5.workbench.metadata_explorer import MetadataExplorerService, MetadataFieldView, MetadataObjectView
 from wiicon5.workbench.models import (
     CalculationRecipe,
     DataSourceRef,
@@ -26,6 +27,9 @@ __all__ = [
     "HumanSkillDraft",
     "HumanSkillDraftStore",
     "MeasureRecipe",
+    "MetadataExplorerService",
+    "MetadataFieldView",
+    "MetadataObjectView",
     "PresentationRecipe",
     "SkillCatalogItem",
     "SkillCatalogService",
