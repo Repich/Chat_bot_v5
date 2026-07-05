@@ -82,6 +82,29 @@ class AdminSecurityTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(payload["error"], "config_dump_not_allowed")
 
+    def test_raw_query_draft_editing_is_disabled_by_default(self) -> None:
+        with running_server(admin_security=AdminSecurityConfig()) as base_url:
+            status, payload = request_json(
+                f"{base_url}/api/admin/workbench/drafts",
+                method="POST",
+                payload=raw_query_draft_payload(),
+            )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["error"], "raw_query_edit_disabled")
+
+    def test_raw_query_draft_editing_can_be_enabled_explicitly(self) -> None:
+        with running_server(admin_security=AdminSecurityConfig(allow_raw_query_edit=True)) as base_url:
+            status, payload = request_json(
+                f"{base_url}/api/admin/workbench/drafts",
+                method="POST",
+                payload=raw_query_draft_payload(),
+            )
+
+        self.assertEqual(status, 201)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["draft"]["calculation"]["kind"], "trace_query")
+
 
 class running_server:
     def __init__(self, *, admin_security: AdminSecurityConfig, bot_root: Path | None = None) -> None:
@@ -148,6 +171,18 @@ def request_json(
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read().decode("utf-8"))
     return response.status, json.loads(response.read().decode("utf-8"))
+
+
+def raw_query_draft_payload() -> Dict[str, Any]:
+    return {
+        "actor": "architect",
+        "title": "Raw query draft",
+        "example_questions": ["Покажи тест"],
+        "calculation": {
+            "kind": "trace_query",
+            "raw": {"query": "ВЫБРАТЬ 1 КАК Значение", "params": {}, "limit": 1},
+        },
+    }
 
 
 if __name__ == "__main__":

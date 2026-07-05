@@ -12,6 +12,7 @@ WIICON5_ADMIN_ENABLED=true
 WIICON5_ADMIN_TOKEN=
 WIICON5_ADMIN_BIND_LOCAL_ONLY=true
 WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS=/path/to/config/root
+WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT=false
 ```
 
 Rules:
@@ -23,6 +24,9 @@ Rules:
   `Authorization: Bearer <token>` or `X-WIICON5-Admin-Token: <token>`.
 - `WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS` limits onboarding config dump paths. Use
   the platform path separator for multiple roots.
+- `WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT=false` keeps manual raw-query draft
+  editing disabled. Leave it off unless an architect is intentionally validating
+  raw queries through the full Workbench lifecycle.
 
 The regular `/chat`, `/health`, history, and version endpoints do not require the
 admin token.

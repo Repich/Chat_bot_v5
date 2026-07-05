@@ -26,6 +26,7 @@ class Settings:
     admin_token: str = ""
     admin_bind_local_only: bool = True
     admin_allowed_config_roots: Tuple[Path, ...] = ()
+    workbench_allow_raw_query_edit: bool = False
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None, root: Optional[Path] = None) -> "Settings":
@@ -54,6 +55,10 @@ class Settings:
             admin_allowed_config_roots=path_list_from_env(
                 values.get("WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS"),
                 default=(base, Path.home()),
+            ),
+            workbench_allow_raw_query_edit=bool_from_env(
+                values.get("WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT"),
+                default=False,
             ),
         )
 

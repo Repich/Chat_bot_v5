@@ -20,6 +20,7 @@ class AdminSecurityConfig:
     token: str = ""
     bind_local_only: bool = True
     allowed_config_roots: Sequence[Path] = ()
+    allow_raw_query_edit: bool = False
 
     def authorize(self, *, path: str, headers: Mapping[str, str], client_host: str) -> AdminAuthorizationResult:
         if not path.startswith("/api/admin/"):

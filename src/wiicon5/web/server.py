@@ -382,6 +382,9 @@ def make_handler(
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "admin")
                 draft_payload = payload.get("draft") if isinstance(payload.get("draft"), dict) else payload
+                if raw_query_edit_requested(draft_payload) and not effective_admin_security.allow_raw_query_edit:
+                    self._send_json(403, {"ok": False, "error": "raw_query_edit_disabled"})
+                    return
                 draft = HumanSkillDraft.from_dict(draft_payload)
                 created = effective_draft_store.create_draft(draft, actor=actor)
                 self._send_json(201, {"ok": True, "draft": created.to_dict()})
@@ -394,6 +397,9 @@ def make_handler(
                 actor = str(payload.get("actor") or "admin")
                 changes = payload.get("draft") if isinstance(payload.get("draft"), dict) else dict(payload)
                 changes.pop("actor", None)
+                if raw_query_edit_requested(changes) and not effective_admin_security.allow_raw_query_edit:
+                    self._send_json(403, {"ok": False, "error": "raw_query_edit_disabled"})
+                    return
                 updated = effective_draft_store.update_draft(draft_id, changes, actor=actor)
                 self._send_json(200, {"ok": True, "draft": updated.to_dict()})
             except KeyError:
@@ -842,6 +848,17 @@ def lifecycle_error_status(result) -> int:
     if "missing_actor" in codes or "missing_reason" in codes:
         return 400
     return 409
+
+
+def raw_query_edit_requested(payload: Dict[str, Any]) -> bool:
+    calculation = payload.get("calculation")
+    if not isinstance(calculation, dict):
+        return False
+    kind = str(calculation.get("kind") or "").strip()
+    raw = calculation.get("raw") if isinstance(calculation.get("raw"), dict) else {}
+    if kind in {"trace_query", "raw_query"}:
+        return True
+    return bool(raw.get("query"))
 
 
 def conversation_summary(context) -> Dict[str, Any]:

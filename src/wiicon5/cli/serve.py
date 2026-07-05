@@ -32,6 +32,7 @@ def main() -> int:
         token=settings.admin_token,
         bind_local_only=settings.admin_bind_local_only,
         allowed_config_roots=settings.admin_allowed_config_roots,
+        allow_raw_query_edit=settings.workbench_allow_raw_query_edit,
     )
     print(f"WIICON5 listening on http://{args.host}:{args.port}/chat")
     run_http_server(

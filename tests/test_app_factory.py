@@ -38,6 +38,7 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.admin_token, "")
         self.assertTrue(settings.admin_bind_local_only)
         self.assertIn(root, settings.admin_allowed_config_roots)
+        self.assertFalse(settings.workbench_allow_raw_query_edit)
 
     def test_settings_loads_admin_security_options(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -50,6 +51,7 @@ class AppFactoryTests(unittest.TestCase):
                     "WIICON5_ADMIN_TOKEN": "secret",
                     "WIICON5_ADMIN_BIND_LOCAL_ONLY": "false",
                     "WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS": os.pathsep.join([str(allowed_a), str(allowed_b)]),
+                    "WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT": "true",
                 },
                 root=root,
             )
@@ -58,6 +60,7 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.admin_token, "secret")
         self.assertFalse(settings.admin_bind_local_only)
         self.assertEqual(settings.admin_allowed_config_roots, (allowed_a, allowed_b))
+        self.assertTrue(settings.workbench_allow_raw_query_edit)
 
     def test_settings_loads_bot_instance_yaml(self) -> None:
         with TemporaryDirectory() as temp_dir:
