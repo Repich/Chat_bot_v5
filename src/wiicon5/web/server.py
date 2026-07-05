@@ -1317,6 +1317,59 @@ CHAT_HTML = """<!doctype html>
       line-height: 1.35;
       white-space: pre-wrap;
     }
+    .workbench-summary {
+      display: grid;
+      gap: 8px;
+    }
+    .workbench-heading {
+      margin: 4px 0 0;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .summary-card {
+      display: grid;
+      gap: 5px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .summary-card-title {
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .summary-card-subtitle {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+    .summary-line {
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr);
+      gap: 6px;
+      overflow-wrap: anywhere;
+    }
+    .summary-label {
+      color: var(--muted);
+      font-weight: 650;
+    }
+    .summary-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .summary-tag {
+      max-width: 100%;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
     @media (max-width: 760px) {
       body { overflow: hidden; }
       header { align-items: flex-start; flex-direction: column; }
@@ -1397,9 +1450,14 @@ CHAT_HTML = """<!doctype html>
                 <input id="metadataSearchInput" placeholder="Склады, Номенклатура, Регистр">
               </label>
               <button id="metadataSearchButton" class="secondary" type="button">Искать метаданные</button>
+              <label>Metadata full_name
+                <input id="metadataObjectInput" placeholder="РегистрНакопления.ТоварыНаСкладах">
+              </label>
+              <button id="metadataObjectButton" class="secondary" type="button">Открыть объект</button>
               <label>Draft ID
                 <input id="draftIdInput" placeholder="draft_...">
               </label>
+              <button id="draftDetailsButton" class="secondary" type="button">Открыть draft</button>
               <label>Новый draft
                 <input id="draftTitleInput" placeholder="Название навыка">
               </label>
@@ -1440,6 +1498,7 @@ CHAT_HTML = """<!doctype html>
               <label>Skill ID
                 <input id="skillLifecycleIdInput" placeholder="skill_...">
               </label>
+              <button id="skillDetailsButton" class="secondary" type="button">Открыть skill</button>
               <label>Причина изменения
                 <input id="skillLifecycleReasonInput" placeholder="Что проверено и почему меняем статус">
               </label>
@@ -1477,6 +1536,7 @@ CHAT_HTML = """<!doctype html>
                 <input id="regressionSessionPrefixInput" value="web-regression">
               </label>
               <button id="runRegressionButton" class="secondary" type="button">Run regression</button>
+              <div id="workbenchSummary" class="workbench-summary"></div>
               <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
             </div>
             <label>ProductRef JSON
@@ -1527,7 +1587,10 @@ CHAT_HTML = """<!doctype html>
     const synthesisCandidatesButton = document.getElementById("synthesisCandidatesButton");
     const metadataSearchInput = document.getElementById("metadataSearchInput");
     const metadataSearchButton = document.getElementById("metadataSearchButton");
+    const metadataObjectInput = document.getElementById("metadataObjectInput");
+    const metadataObjectButton = document.getElementById("metadataObjectButton");
     const draftIdInput = document.getElementById("draftIdInput");
+    const draftDetailsButton = document.getElementById("draftDetailsButton");
     const draftTitleInput = document.getElementById("draftTitleInput");
     const draftJsonInput = document.getElementById("draftJsonInput");
     const createDraftButton = document.getElementById("createDraftButton");
@@ -1550,6 +1613,7 @@ CHAT_HTML = """<!doctype html>
     const skillLifecycleTargetStatus = document.getElementById("skillLifecycleTargetStatus");
     const skillSuccessfulRunsInput = document.getElementById("skillSuccessfulRunsInput");
     const skillAdminApprovalInput = document.getElementById("skillAdminApprovalInput");
+    const skillDetailsButton = document.getElementById("skillDetailsButton");
     const skillPromoteButton = document.getElementById("skillPromoteButton");
     const skillRollbackButton = document.getElementById("skillRollbackButton");
     const skillDeprecateButton = document.getElementById("skillDeprecateButton");
@@ -1557,6 +1621,7 @@ CHAT_HTML = """<!doctype html>
     const regressionCasesPathInput = document.getElementById("regressionCasesPathInput");
     const regressionSessionPrefixInput = document.getElementById("regressionSessionPrefixInput");
     const runRegressionButton = document.getElementById("runRegressionButton");
+    const workbenchSummary = document.getElementById("workbenchSummary");
     const workbenchText = document.getElementById("workbenchText");
     let pending = false;
     let onboardingPollTimer = null;
@@ -1826,7 +1891,204 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
+    function asDisplayText(value) {
+      if (value === null || value === undefined || value === "") return "";
+      if (Array.isArray(value)) return value.map(asDisplayText).filter(Boolean).join(", ");
+      if (typeof value === "object") {
+        if (value["Представление"]) return String(value["Представление"]);
+        if (value.name) return String(value.name);
+        if (value.full_name) return String(value.full_name);
+        return JSON.stringify(value);
+      }
+      return String(value);
+    }
+
+    function appendWorkbenchHeading(text) {
+      const heading = document.createElement("p");
+      heading.className = "workbench-heading";
+      heading.textContent = text;
+      workbenchSummary.append(heading);
+      return heading;
+    }
+
+    function createSummaryCard(title, subtitle = "") {
+      const card = document.createElement("div");
+      card.className = "summary-card";
+      const titleNode = document.createElement("div");
+      titleNode.className = "summary-card-title";
+      titleNode.textContent = asDisplayText(title) || "Без названия";
+      card.append(titleNode);
+      if (subtitle) {
+        const subtitleNode = document.createElement("div");
+        subtitleNode.className = "summary-card-subtitle";
+        subtitleNode.textContent = asDisplayText(subtitle);
+        card.append(subtitleNode);
+      }
+      return card;
+    }
+
+    function appendSummaryLine(card, label, value) {
+      const text = asDisplayText(value);
+      if (!text) return;
+      const row = document.createElement("div");
+      row.className = "summary-line";
+      const labelNode = document.createElement("span");
+      labelNode.className = "summary-label";
+      labelNode.textContent = label;
+      const valueNode = document.createElement("span");
+      valueNode.textContent = text;
+      row.append(labelNode, valueNode);
+      card.append(row);
+    }
+
+    function appendSummaryTags(card, label, values) {
+      const items = Array.isArray(values) ? values.map(asDisplayText).filter(Boolean) : splitCommaSeparated(values);
+      if (!items.length) return;
+      const row = document.createElement("div");
+      row.className = "summary-line";
+      const labelNode = document.createElement("span");
+      labelNode.className = "summary-label";
+      labelNode.textContent = label;
+      const tags = document.createElement("span");
+      tags.className = "summary-tags";
+      items.slice(0, 12).forEach(item => {
+        const tag = document.createElement("span");
+        tag.className = "summary-tag";
+        tag.textContent = item;
+        tags.append(tag);
+      });
+      if (items.length > 12) {
+        const extra = document.createElement("span");
+        extra.className = "summary-tag";
+        extra.textContent = "+" + String(items.length - 12);
+        tags.append(extra);
+      }
+      row.append(labelNode, tags);
+      card.append(row);
+    }
+
+    function renderSummaryList(title, items, renderer, emptyText = "Нет данных.") {
+      appendWorkbenchHeading(title);
+      if (!Array.isArray(items) || !items.length) {
+        const card = createSummaryCard(emptyText);
+        workbenchSummary.append(card);
+        return;
+      }
+      items.slice(0, 20).forEach(item => workbenchSummary.append(renderer(item)));
+      if (items.length > 20) {
+        const card = createSummaryCard("Показаны первые 20 элементов", "Полный список доступен в JSON ниже.");
+        workbenchSummary.append(card);
+      }
+    }
+
+    function renderSkillCard(skill) {
+      const card = createSummaryCard(skill.title || skill.skill_id, skill.description || skill.skill_id);
+      appendSummaryLine(card, "Статус", skill.status);
+      appendSummaryLine(card, "Источник", skill.source || skill.source_kind);
+      appendSummaryLine(card, "Тип", skill.kind);
+      appendSummaryTags(card, "Outputs", skill.outputs);
+      appendSummaryTags(card, "Filters", skill.supported_filter_roles);
+      appendSummaryLine(card, "Path", skill.source_path);
+      return card;
+    }
+
+    function renderDraftCard(draft) {
+      const card = createSummaryCard(draft.title || draft.draft_id, draft.description || draft.draft_id);
+      appendSummaryLine(card, "Статус", draft.status);
+      appendSummaryLine(card, "Источник", draft.source_kind || draft.source);
+      appendSummaryTags(card, "Вопросы", draft.example_questions);
+      appendSummaryTags(card, "Объекты", (draft.data_sources || []).map(item => item.object_full_name || item.full_name || item.object));
+      appendSummaryTags(card, "Поля", (draft.field_mappings || []).map(item => `${item.role || "field"}: ${item.object_full_name || ""}.${item.field_name || ""}`));
+      return card;
+    }
+
+    function renderCandidateCard(candidate) {
+      const card = createSummaryCard(candidate.title || candidate.candidate_id, candidate.question || candidate.source_question || candidate.type);
+      appendSummaryLine(card, "Статус", candidate.status);
+      appendSummaryLine(card, "Тип", candidate.type || candidate.candidate_type);
+      appendSummaryLine(card, "Role", candidate.semantic_role || candidate.role);
+      appendSummaryLine(card, "Объект", candidate.object_full_name || candidate.object || candidate.metadata_object);
+      appendSummaryLine(card, "Confidence", candidate.confidence);
+      appendSummaryTags(card, "Evidence", candidate.evidence);
+      return card;
+    }
+
+    function renderMetadataObjectCard(object) {
+      const card = createSummaryCard(object.full_name || object.name, object.synonym || object.kind);
+      appendSummaryLine(card, "Тип", object.kind || object.object_kind);
+      appendSummaryLine(card, "Trust", object.trust || object.source);
+      appendSummaryTags(card, "Fields", (object.fields || []).map(item => `${item.name || ""}${item.kind ? " (" + item.kind + ")" : ""}`));
+      appendSummaryTags(card, "Hints", (object.field_hints || []).map(item => item.name || item.field_name));
+      return card;
+    }
+
+    function renderLifecycleCard(lifecycle) {
+      const skill = lifecycle.skill || {};
+      const card = createSummaryCard(skill.title || skill.skill_id || "Lifecycle result");
+      appendSummaryLine(card, "Before", lifecycle.before_status);
+      appendSummaryLine(card, "After", lifecycle.after_status);
+      appendSummaryLine(card, "OK", lifecycle.ok);
+      appendSummaryTags(card, "Issues", (lifecycle.issues || []).map(item => item.message || item.code || item));
+      return card;
+    }
+
+    function renderRegressionCard(regression, path) {
+      const card = createSummaryCard("Regression replay", path || regression.run_id);
+      appendSummaryLine(card, "OK", regression.ok);
+      appendSummaryLine(card, "Всего", regression.count);
+      appendSummaryLine(card, "Passed", regression.passed);
+      appendSummaryLine(card, "Failed", regression.failed);
+      appendSummaryTags(card, "Cases", (regression.results || []).map(item => `${item.case_id || "case"}: ${item.ok ? "ok" : "failed"}`));
+      return card;
+    }
+
+    function renderWorkbenchSummary(payload) {
+      workbenchSummary.replaceChildren();
+      if (!payload || typeof payload !== "object") return;
+      if (Array.isArray(payload.skills)) {
+        if (payload.skills[0] && payload.skills[0].skill_id && !skillLifecycleIdInput.value.trim()) {
+          skillLifecycleIdInput.value = payload.skills[0].skill_id;
+        }
+        renderSummaryList("Навыки", payload.skills, renderSkillCard);
+      }
+      if (payload.skill) {
+        if (payload.skill.skill_id) skillLifecycleIdInput.value = payload.skill.skill_id;
+        renderSummaryList("Карточка навыка", [payload.skill], renderSkillCard);
+      }
+      if (Array.isArray(payload.drafts)) {
+        renderSummaryList("Черновики", payload.drafts, renderDraftCard);
+      }
+      if (payload.draft) {
+        if (payload.draft.draft_id) draftIdInput.value = payload.draft.draft_id;
+        renderSummaryList("Карточка draft", [payload.draft], renderDraftCard);
+      }
+      if (Array.isArray(payload.candidates)) {
+        renderSummaryList("Кандидаты", payload.candidates, renderCandidateCard);
+      }
+      if (Array.isArray(payload.objects)) {
+        if (payload.objects[0] && payload.objects[0].full_name && !metadataObjectInput.value.trim()) {
+          metadataObjectInput.value = payload.objects[0].full_name;
+        }
+        renderSummaryList("Метаданные", payload.objects, renderMetadataObjectCard);
+      }
+      if (payload.object) {
+        if (payload.object.full_name) metadataObjectInput.value = payload.object.full_name;
+        renderSummaryList("Карточка объекта", [payload.object], renderMetadataObjectCard);
+      }
+      if (payload.lifecycle) {
+        renderSummaryList("Lifecycle", [payload.lifecycle], renderLifecycleCard);
+      }
+      if (payload.regression) {
+        renderSummaryList("Regression replay", [payload.regression], item => renderRegressionCard(item, payload.path));
+      }
+      if (!workbenchSummary.children.length) {
+        appendWorkbenchHeading("Технический результат");
+        workbenchSummary.append(createSummaryCard("Сводка недоступна для этого типа ответа", "Полный JSON показан ниже."));
+      }
+    }
+
     function showWorkbench(payload) {
+      renderWorkbenchSummary(payload);
       workbenchText.textContent = JSON.stringify(payload, null, 2);
     }
 
@@ -1837,6 +2099,21 @@ CHAT_HTML = """<!doctype html>
         showWorkbench(await response.json());
       } catch (error) {
         workbenchText.textContent = "Не удалось загрузить каталог навыков: " + String(error.message || error);
+      }
+    }
+
+    async function loadSkillDetails() {
+      const skillId = skillLifecycleIdInput.value.trim();
+      if (!skillId) {
+        skillLifecycleIdInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Загрузка карточки навыка...";
+      try {
+        const response = await fetch(`/api/admin/skills/catalog/${encodeURIComponent(skillId)}`, {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить карточку навыка: " + String(error.message || error);
       }
     }
 
@@ -1851,6 +2128,21 @@ CHAT_HTML = """<!doctype html>
         showWorkbench(data);
       } catch (error) {
         workbenchText.textContent = "Не удалось загрузить черновики: " + String(error.message || error);
+      }
+    }
+
+    async function loadDraftDetails() {
+      const draftId = draftIdInput.value.trim();
+      if (!draftId) {
+        draftIdInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Загрузка карточки draft...";
+      try {
+        const response = await fetch(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}`, {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить карточку draft: " + String(error.message || error);
       }
     }
 
@@ -1894,6 +2186,21 @@ CHAT_HTML = """<!doctype html>
         showWorkbench(await response.json());
       } catch (error) {
         workbenchText.textContent = "Не удалось выполнить поиск: " + String(error.message || error);
+      }
+    }
+
+    async function loadMetadataObject() {
+      const fullName = metadataObjectInput.value.trim();
+      if (!fullName) {
+        metadataObjectInput.focus();
+        return;
+      }
+      workbenchText.textContent = "Загрузка объекта метаданных...";
+      try {
+        const response = await fetch("/api/admin/metadata/object?full_name=" + encodeURIComponent(fullName), {cache: "no-store"});
+        showWorkbench(await response.json());
+      } catch (error) {
+        workbenchText.textContent = "Не удалось загрузить объект метаданных: " + String(error.message || error);
       }
     }
 
@@ -2172,10 +2479,13 @@ CHAT_HTML = """<!doctype html>
     frontendHistoryButton.addEventListener("click", () => showHistory("frontend"));
     startOnboardingButton.addEventListener("click", () => startOnboarding());
     skillCatalogButton.addEventListener("click", () => loadSkillCatalog());
+    skillDetailsButton.addEventListener("click", () => loadSkillDetails());
     draftListButton.addEventListener("click", () => loadDraftList());
+    draftDetailsButton.addEventListener("click", () => loadDraftDetails());
     onboardingCandidatesButton.addEventListener("click", () => loadOnboardingCandidates());
     synthesisCandidatesButton.addEventListener("click", () => loadSynthesisCandidates());
     metadataSearchButton.addEventListener("click", () => searchMetadata());
+    metadataObjectButton.addEventListener("click", () => loadMetadataObject());
     createDraftButton.addEventListener("click", () => createWorkbenchDraft());
     previewDraftButton.addEventListener("click", () => postDraftAction("preview"));
     smokeDraftButton.addEventListener("click", () => postDraftAction("smoke"));

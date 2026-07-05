@@ -1,3 +1,8 @@
+5.0.0-alpha.39
+- Added a human-readable Workbench summary panel above raw JSON results.
+- Skill catalogs, skill cards, drafts, candidates, metadata objects, lifecycle results, and regression replay now render concise business/technical cards.
+- Added Workbench actions to open a specific skill, draft, or metadata object by id/full_name.
+
 5.0.0-alpha.38
 - Added Skill Workbench controls for skill lifecycle actions: promote, rollback, deprecate, and block.
 - Added a web control to run regression replay from the Workbench settings panel.
