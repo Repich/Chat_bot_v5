@@ -1,3 +1,10 @@
+5.0.0-alpha.29
+- Added append-only Workbench approval records under the bot instance workspace.
+- Candidate publication now has a dry-run validation phase and cannot write a SkillContract without successful smoke and human approval.
+- The publish-candidate API records a human approval event with actor/comment evidence before writing the bot-specific candidate skill.
+- Publication evidence now includes the approval record used for the candidate.
+- Added tests for approval history, rejected approval gating, and publish-candidate approval evidence.
+
 5.0.0-alpha.28
 - Fixed formatting of postprocessed queries when a virtual balance table filter is moved into an external WHERE clause: the next query clause now starts on a new line, so logged queries remain copyable.
 - Added regression coverage that prevents GROUP BY from being concatenated to the moved IN-list filter.

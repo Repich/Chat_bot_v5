@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from wiicon5.workbench import (
+    ApprovalStore,
     CalculationRecipe,
     CandidatePublisher,
     DataSourceRef,
@@ -330,8 +331,29 @@ class McpSmokeTestServiceTests(unittest.TestCase):
         self.assertTrue(result_path_exists)
 
 
+class ApprovalStoreTests(unittest.TestCase):
+    def test_approval_store_appends_decisions_and_writes_audit(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot = Path(temp_dir) / "bot"
+            draft_store = HumanSkillDraftStore(bot_instance_root=bot, bot_id="client_a")
+            store = ApprovalStore(bot_instance_root=bot, bot_id="client_a", audit_log=draft_store.audit)
+
+            rejected = store.reject("draft_stock", actor="consultant", comment="Нужно уточнить смысл показателя")
+            approved = store.approve("draft_stock", actor="consultant", comment="Проверено на smoke")
+            history = store.history_for_draft("draft_stock")
+            latest = store.latest_candidate_approval("draft_stock")
+            events = draft_store.audit.read()
+
+        self.assertEqual(rejected.decision, "rejected")
+        self.assertEqual(approved.decision, "approved")
+        self.assertEqual([item.decision for item in history], ["rejected", "approved"])
+        self.assertEqual(latest.approval_id if latest else "", approved.approval_id)
+        self.assertEqual([item.event_type for item in events], ["workbench.approval.recorded", "workbench.approval.recorded"])
+        self.assertEqual(events[-1].object_id, "draft_stock")
+
+
 class CandidatePublisherTests(unittest.TestCase):
-    def test_publish_requires_successful_smoke_and_writes_candidate_skill(self) -> None:
+    def test_publish_requires_successful_smoke_approval_and_writes_candidate_skill(self) -> None:
         with TemporaryDirectory() as temp_dir:
             bot = Path(temp_dir) / "bot"
             draft = HumanSkillDraft.from_dict(
@@ -341,21 +363,48 @@ class CandidatePublisherTests(unittest.TestCase):
                     "example_questions": ["Покажи товар с самым большим остатком"],
                 }
             )
-            publisher = CandidatePublisher(bot_instance_root=bot)
+            approval_store = ApprovalStore(bot_instance_root=bot)
+            publisher = CandidatePublisher(bot_instance_root=bot, approval_store=approval_store)
             before_smoke = publisher.publish(draft)
             mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
             McpSmokeTestService(bot_instance_root=bot, mcp_client=mcp).run(draft)
+            before_approval = publisher.publish(draft)
+            approval = approval_store.approve(draft.draft_id, actor="consultant", comment="Sample reviewed.")
 
             published = publisher.publish(draft)
             skill_path_exists = Path(published.path).exists()
             evidence_path_exists = Path(published.evidence_path).exists()
 
         self.assertFalse(before_smoke.ok)
-        self.assertEqual(before_smoke.issues[-1].code, "missing_successful_smoke")
+        self.assertEqual([item.code for item in before_smoke.issues][-2:], ["missing_successful_smoke", "missing_human_approval"])
+        self.assertFalse(before_approval.ok)
+        self.assertEqual(before_approval.issues[-1].code, "missing_human_approval")
+        self.assertEqual(approval.decision, "approved")
         self.assertTrue(published.ok, published.to_dict())
         self.assertEqual(published.skill.status, SkillStatus.CANDIDATE)
+        self.assertEqual(published.approval.approval_id, approval.approval_id)
         self.assertTrue(skill_path_exists)
         self.assertTrue(evidence_path_exists)
+
+    def test_publish_rejects_latest_rejected_approval(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot = Path(temp_dir) / "bot"
+            draft = HumanSkillDraft.from_dict(
+                {
+                    **top_n_stock_draft().to_dict(),
+                    "draft_id": "draft_stock",
+                    "example_questions": ["Покажи товар с самым большим остатком"],
+                }
+            )
+            approval_store = ApprovalStore(bot_instance_root=bot)
+            mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Телевизор", "Количество": 10}]})
+            McpSmokeTestService(bot_instance_root=bot, mcp_client=mcp).run(draft)
+            approval_store.reject(draft.draft_id, actor="consultant", comment="Wrong business meaning.")
+
+            published = CandidatePublisher(bot_instance_root=bot, approval_store=approval_store).publish(draft)
+
+        self.assertFalse(published.ok)
+        self.assertEqual(published.issues[-1].code, "approval_rejected")
 
 
 class StaticMetadataProvider(MetadataProvider):

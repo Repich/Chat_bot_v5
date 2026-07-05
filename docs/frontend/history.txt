@@ -1,3 +1,7 @@
+5.0.0-alpha.29
+- Added Workbench controls for approval comments plus explicit approve/reject actions.
+- Workbench candidate publication now sends approval comments through the admin API.
+
 5.0.0-alpha.13
 - Fixed the training banner layout so a completed onboarding message no longer consumes the main viewport.
 - Expanded the chat area to use the available screen width and height.

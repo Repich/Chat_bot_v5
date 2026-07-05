@@ -10,10 +10,11 @@ from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.onboarding.status import OnboardingManager
+from wiicon5.workbench.approval import ApprovalStore
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.models import HumanSkillDraft
 from wiicon5.workbench.preview import QueryPreviewService
-from wiicon5.workbench.publish import CandidatePublisher
+from wiicon5.workbench.publish import APPROVAL_GATE_CODES, CandidatePublisher
 from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.store import HumanSkillDraftStore
@@ -35,6 +36,7 @@ def make_handler(
     trace_importer: TraceDraftImporter | None = None,
     preview_service: QueryPreviewService | None = None,
     smoke_service: McpSmokeTestService | None = None,
+    approval_store: ApprovalStore | None = None,
     candidate_publisher: CandidatePublisher | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
@@ -53,9 +55,15 @@ def make_handler(
     )
     effective_trace_importer = trace_importer or TraceDraftImporter(runs_root=PROJECT_ROOT / "runs")
     effective_preview_service = preview_service or QueryPreviewService()
+    effective_approval_store = approval_store or ApprovalStore(
+        bot_instance_root=effective_onboarding_manager.bot_instance_root,
+        bot_id=effective_onboarding_manager.bot_instance_root.name or "local",
+        audit_log=effective_draft_store.audit,
+    )
     effective_candidate_publisher = candidate_publisher or CandidatePublisher(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         preview_service=effective_preview_service,
+        approval_store=effective_approval_store,
     )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
@@ -97,6 +105,23 @@ def make_handler(
                 self._send_json(
                     200,
                     {"ok": True, "drafts": [draft.to_dict() for draft in effective_draft_store.list_drafts()]},
+                )
+                return
+            if path.startswith("/api/admin/workbench/drafts/") and path.endswith("/approvals"):
+                draft_id = unquote(path.split("/")[-2])
+                draft = effective_draft_store.get_draft(draft_id)
+                if draft is None:
+                    self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+                    return
+                approvals = effective_approval_store.history_for_draft(draft_id)
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "draft_id": draft_id,
+                        "approvals": [item.to_dict() for item in approvals],
+                        "latest": approvals[-1].to_dict() if approvals else None,
+                    },
                 )
                 return
             if path.startswith("/api/admin/workbench/drafts/"):
@@ -181,6 +206,14 @@ def make_handler(
                 if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/smoke"):
                     draft_id = unquote(parsed.path.split("/")[-2])
                     self._smoke_draft(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/approve"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._approve_draft(draft_id)
+                    return
+                if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/reject"):
+                    draft_id = unquote(parsed.path.split("/")[-2])
+                    self._reject_draft(draft_id)
                     return
                 if parsed.path.startswith("/api/admin/workbench/drafts/") and parsed.path.endswith("/publish-candidate"):
                     draft_id = unquote(parsed.path.split("/")[-2])
@@ -322,11 +355,65 @@ def make_handler(
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
 
+        def _approve_draft(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                effective_draft_store.require_draft(draft_id)
+                approval = effective_approval_store.approve(
+                    draft_id,
+                    actor=actor,
+                    approval_level=str(payload.get("approval_level") or "candidate"),
+                    comment=str(payload.get("comment") or ""),
+                    smoke_id=str(payload.get("smoke_id") or ""),
+                    regression_case_id=str(payload.get("regression_case_id") or ""),
+                    evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
+                )
+                self._send_json(200, {"ok": True, "approval": approval.to_dict()})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _reject_draft(self, draft_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                effective_draft_store.require_draft(draft_id)
+                approval = effective_approval_store.reject(
+                    draft_id,
+                    actor=actor,
+                    approval_level=str(payload.get("approval_level") or "candidate"),
+                    comment=str(payload.get("comment") or ""),
+                    evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
+                )
+                self._send_json(200, {"ok": True, "approval": approval.to_dict()})
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "draft_not_found", "draft_id": draft_id})
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
         def _publish_candidate(self, draft_id: str) -> None:
             try:
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "admin")
                 draft = effective_draft_store.require_draft(draft_id)
+                preflight = effective_candidate_publisher.validate(draft)
+                blocking_issues = [
+                    issue for issue in preflight.issues if issue.code not in APPROVAL_GATE_CODES
+                ]
+                if blocking_issues:
+                    self._send_json(200, {"ok": True, "publication": preflight.to_dict()})
+                    return
+                effective_approval_store.approve(
+                    draft_id,
+                    actor=actor,
+                    approval_level="candidate",
+                    comment=str(payload.get("comment") or ""),
+                    smoke_id=str(payload.get("smoke_id") or ""),
+                    regression_case_id=str(payload.get("regression_case_id") or ""),
+                    evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
+                )
                 published = effective_candidate_publisher.publish(draft)
                 if published.ok:
                     effective_draft_store.audit.append(
@@ -930,6 +1017,13 @@ CHAT_HTML = """<!doctype html>
                 <button id="smokeDraftButton" class="secondary" type="button">Smoke</button>
                 <button id="publishDraftButton" class="secondary" type="button">Candidate</button>
               </div>
+              <label>Комментарий approval
+                <input id="approvalCommentInput" placeholder="Что проверено человеком">
+              </label>
+              <div class="tool-row">
+                <button id="approveDraftButton" class="secondary" type="button">Approve</button>
+                <button id="rejectDraftButton" class="secondary" type="button">Reject</button>
+              </div>
               <pre id="workbenchText" class="admin-status">Workbench не загружен.</pre>
             </div>
             <label>ProductRef JSON
@@ -985,6 +1079,9 @@ CHAT_HTML = """<!doctype html>
     const previewDraftButton = document.getElementById("previewDraftButton");
     const smokeDraftButton = document.getElementById("smokeDraftButton");
     const publishDraftButton = document.getElementById("publishDraftButton");
+    const approvalCommentInput = document.getElementById("approvalCommentInput");
+    const approveDraftButton = document.getElementById("approveDraftButton");
+    const rejectDraftButton = document.getElementById("rejectDraftButton");
     const workbenchText = document.getElementById("workbenchText");
     let pending = false;
     let onboardingPollTimer = null;
@@ -1320,7 +1417,7 @@ CHAT_HTML = """<!doctype html>
       }
     }
 
-    async function postDraftAction(action) {
+    async function postDraftAction(action, extra = {}) {
       const draftId = draftIdInput.value.trim();
       if (!draftId) {
         draftIdInput.focus();
@@ -1330,7 +1427,7 @@ CHAT_HTML = """<!doctype html>
         const response = await fetch(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}/${action}`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({actor: "web-admin"})
+          body: JSON.stringify({actor: "web-admin", ...extra})
         });
         showWorkbench(await response.json());
       } catch (error) {
@@ -1478,6 +1575,12 @@ CHAT_HTML = """<!doctype html>
     createDraftButton.addEventListener("click", () => createWorkbenchDraft());
     previewDraftButton.addEventListener("click", () => postDraftAction("preview"));
     smokeDraftButton.addEventListener("click", () => postDraftAction("smoke"));
+    approveDraftButton.addEventListener("click", () => postDraftAction("approve", {
+      comment: approvalCommentInput.value.trim()
+    }));
+    rejectDraftButton.addEventListener("click", () => postDraftAction("reject", {
+      comment: approvalCommentInput.value.trim()
+    }));
     publishDraftButton.addEventListener("click", () => postDraftAction("publish-candidate"));
     sessionId.addEventListener("change", () => loadConversation());
     sessionId.addEventListener("blur", () => {

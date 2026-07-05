@@ -241,14 +241,43 @@ class WebServerTests(unittest.TestCase):
                     method="POST",
                 )
                 smoke_draft = json.loads(urllib.request.urlopen(smoke_draft_request, timeout=5).read().decode("utf-8"))
+                approve_draft_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/approve",
+                    data=json.dumps(
+                        {"actor": "approver", "comment": "Smoke sample reviewed"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                approved_draft = json.loads(urllib.request.urlopen(approve_draft_request, timeout=5).read().decode("utf-8"))
+                draft_approvals = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/approvals",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
                 publish_candidate_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/publish-candidate",
-                    data=json.dumps({"actor": "publisher"}, ensure_ascii=False).encode("utf-8"),
+                    data=json.dumps(
+                        {"actor": "publisher", "comment": "Publication sample reviewed"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
                 published_candidate = json.loads(
                     urllib.request.urlopen(publish_candidate_request, timeout=5).read().decode("utf-8")
+                )
+                draft_approvals_after_publish = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}/approvals",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
                 )
                 delete_draft_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/drafts/{draft_id}?actor=deleter",
@@ -290,6 +319,9 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("createDraftButton", chat_page)
         self.assertIn("previewDraftButton", chat_page)
         self.assertIn("smokeDraftButton", chat_page)
+        self.assertIn("approvalCommentInput", chat_page)
+        self.assertIn("approveDraftButton", chat_page)
+        self.assertIn("rejectDraftButton", chat_page)
         self.assertIn("publishDraftButton", chat_page)
         self.assertTrue(onboarding_status["ok"])
         self.assertFalse(onboarding_status["status"]["trained"])
@@ -310,8 +342,17 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("СУММА", preview_draft["preview"]["query"])
         self.assertTrue(smoke_draft["smoke"]["ok"], smoke_draft)
         self.assertEqual(smoke_draft["smoke"]["row_count"], 1)
+        self.assertTrue(approved_draft["approval"]["approval_id"])
+        self.assertEqual(approved_draft["approval"]["decision"], "approved")
+        self.assertEqual(draft_approvals["latest"]["approval_id"], approved_draft["approval"]["approval_id"])
         self.assertTrue(published_candidate["publication"]["ok"], published_candidate)
         self.assertEqual(published_candidate["publication"]["skill"]["status"], "candidate")
+        self.assertNotEqual(published_candidate["publication"]["approval"]["approval_id"], approved_draft["approval"]["approval_id"])
+        self.assertEqual(
+            draft_approvals_after_publish["latest"]["approval_id"],
+            published_candidate["publication"]["approval"]["approval_id"],
+        )
+        self.assertEqual(len(draft_approvals_after_publish["approvals"]), 2)
         self.assertTrue(deleted_draft["ok"])
         self.assertTrue(imported_draft["ok"])
         self.assertEqual(imported_draft["draft"]["source_kind"], "trace")
@@ -322,6 +363,7 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("Новое сообщение", chat_page)
         self.assertIn("loadSkillCatalog", chat_page)
         self.assertIn("postDraftAction", chat_page)
+        self.assertIn('postDraftAction("approve"', chat_page)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")
         self.assertEqual([item["role"] for item in conversation["messages"]], ["user", "assistant"])
