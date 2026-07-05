@@ -1,3 +1,7 @@
+5.0.0-alpha.43
+- Metadata object cards now include actions to use the object as a draft source and to place fields into group, metric, or filter slots of the guided draft builder.
+- Field selection remains generic and does not hard-code object-specific classifiers; consultants choose the business role through the builder.
+
 5.0.0-alpha.42
 - No frontend UI changes. Workbench preview results may now show metadata-review errors based on actual metadata lookup instead of draft-only confirmation.
 

@@ -1372,6 +1372,35 @@ CHAT_HTML = """<!doctype html>
       color: var(--muted);
       overflow-wrap: anywhere;
     }
+    .summary-action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .summary-action {
+      min-width: 0;
+      min-height: 28px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .summary-action:hover { background: #eef8f6; }
+    .field-picker {
+      display: grid;
+      gap: 6px;
+      padding-top: 4px;
+    }
+    .field-picker-row {
+      display: grid;
+      gap: 5px;
+      padding-top: 6px;
+      border-top: 1px solid var(--line);
+    }
     @media (max-width: 760px) {
       body { overflow: hidden; }
       header { align-items: flex-start; flex-direction: column; }
@@ -2108,9 +2137,62 @@ CHAT_HTML = """<!doctype html>
       const card = createSummaryCard(object.full_name || object.name, object.synonym || object.kind);
       appendSummaryLine(card, "Тип", object.kind || object.object_kind);
       appendSummaryLine(card, "Trust", object.trust || object.source);
-      appendSummaryTags(card, "Fields", (object.fields || []).map(item => `${item.name || ""}${item.kind ? " (" + item.kind + ")" : ""}`));
+      const actionRow = document.createElement("div");
+      actionRow.className = "summary-action-row";
+      const sourceButton = document.createElement("button");
+      sourceButton.className = "summary-action";
+      sourceButton.type = "button";
+      sourceButton.textContent = "Use as source";
+      sourceButton.addEventListener("click", () => applyMetadataSource(object.full_name || object.name || ""));
+      actionRow.append(sourceButton);
+      card.append(actionRow);
+      appendSummaryTags(card, "Fields", (object.fields || []).map(item => `${item.name || ""}${item.category ? " (" + item.category + ")" : ""}`));
       appendSummaryTags(card, "Hints", (object.field_hints || []).map(item => item.name || item.field_name));
+      appendMetadataFieldPicker(card, object);
       return card;
+    }
+
+    function appendMetadataFieldPicker(card, object) {
+      const fields = Array.isArray(object.fields) ? object.fields : [];
+      if (!fields.length) return;
+      const picker = document.createElement("div");
+      picker.className = "field-picker";
+      fields.slice(0, 20).forEach(field => {
+        const fieldName = field && field.name ? String(field.name) : "";
+        if (!fieldName) return;
+        const row = document.createElement("div");
+        row.className = "field-picker-row";
+        const caption = document.createElement("div");
+        caption.className = "summary-card-subtitle";
+        const flags = [];
+        if (field.category) flags.push(field.category);
+        if (field.type) flags.push(field.type);
+        if (field.confirmed === false) flags.push("hint");
+        caption.textContent = flags.length ? `${fieldName} - ${flags.join(", ")}` : fieldName;
+        const actions = document.createElement("div");
+        actions.className = "summary-action-row";
+        [
+          ["group", "Group"],
+          ["measure", "Metric"],
+          ["filter", "Filter"]
+        ].forEach(([target, label]) => {
+          const button = document.createElement("button");
+          button.className = "summary-action";
+          button.type = "button";
+          button.textContent = label;
+          button.addEventListener("click", () => applyMetadataField(object.full_name || object.name || "", fieldName, target));
+          actions.append(button);
+        });
+        row.append(caption, actions);
+        picker.append(row);
+      });
+      if (fields.length > 20) {
+        const note = document.createElement("div");
+        note.className = "summary-card-subtitle";
+        note.textContent = "Показаны первые 20 полей. Полный список доступен в JSON ниже.";
+        picker.append(note);
+      }
+      card.append(picker);
     }
 
     function renderLifecycleCard(lifecycle) {
@@ -2181,6 +2263,33 @@ CHAT_HTML = """<!doctype html>
     function showWorkbench(payload) {
       renderWorkbenchSummary(payload);
       workbenchText.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    function applyMetadataSource(fullName) {
+      const value = String(fullName || "").trim();
+      if (!value) return;
+      draftSourceObjectInput.value = value;
+      if (!draftSourceAliasInput.value.trim()) draftSourceAliasInput.value = "Источник";
+      workbenchText.textContent = "Источник 1С подставлен в draft builder: " + value;
+    }
+
+    function applyMetadataField(fullName, fieldName, target) {
+      applyMetadataSource(fullName);
+      const field = String(fieldName || "").trim();
+      if (!field) return;
+      if (target === "group") {
+        draftGroupFieldInput.value = field;
+        if (!draftGroupRoleInput.value.trim()) draftGroupRoleInput.value = field;
+      } else if (target === "measure") {
+        draftMeasureFieldInput.value = field;
+        if (!draftMeasureRoleInput.value.trim()) draftMeasureRoleInput.value = field;
+        if (!draftMeasureLabelInput.value.trim()) draftMeasureLabelInput.value = field;
+      } else if (target === "filter") {
+        draftFilterFieldInput.value = field;
+        if (!draftFilterRoleInput.value.trim()) draftFilterRoleInput.value = field;
+        if (!draftFilterParameterInput.value.trim()) draftFilterParameterInput.value = field;
+      }
+      workbenchText.textContent = "Поле подставлено в draft builder: " + field + " -> " + target;
     }
 
     async function loadSkillCatalog() {

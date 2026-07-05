@@ -63,6 +63,11 @@ For the first supported manual scenario, use the guided `top_n_by_metric` form:
 
 `Draft JSON` is an advanced override. Leave it empty for normal consultant use.
 
+Metadata object cards can fill the builder directly: use `Use as source` for the
+source object, then choose `Group`, `Metric`, or `Filter` near a field. The
+button only fills the form; preview still validates the resulting draft against
+available metadata.
+
 ## 4. Validate And Smoke
 
 Before publication:

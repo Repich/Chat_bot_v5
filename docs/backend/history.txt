@@ -1,3 +1,6 @@
+5.0.0-alpha.43
+- No backend API behavior changes. The web Workbench now lets experts populate draft builder fields directly from Metadata Explorer cards.
+
 5.0.0-alpha.42
 - Workbench query preview can now use a real metadata lookup from Metadata Explorer/onboarding index instead of trusting only draft-provided confirmed fields.
 - Web Workbench preview/publish flows wire the preview service to the metadata explorer, so manual draft field choices are checked against available metadata before smoke/publish.
