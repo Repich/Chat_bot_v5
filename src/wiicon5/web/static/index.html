@@ -11,11 +11,11 @@
     <header class="app-header">
       <div class="title-block">
         <h1>WIICON ChatBot 5</h1>
-        <span id="appVersion" class="version">version loading</span>
+        <span id="appVersion" class="version">загрузка версии</span>
       </div>
       <nav id="topNav" class="top-nav" aria-label="Разделы">
         <button class="nav-button active" type="button" data-view="chat">Чат</button>
-        <button class="nav-button" type="button" data-view="workbench">Workbench</button>
+        <button class="nav-button" type="button" data-view="workbench">Мастерская навыков</button>
         <button class="nav-button" type="button" data-view="metadata">Метаданные</button>
         <button class="nav-button" type="button" data-view="docs">Документация</button>
         <button class="nav-button" type="button" data-view="admin">Администрирование</button>
@@ -32,7 +32,7 @@
     <main class="view-host">
       <section id="view-chat" class="app-view active" data-view-panel="chat">
         <aside class="chat-sidebar">
-          <label class="field-label" for="sessionIdInput">Session ID</label>
+          <label class="field-label" for="sessionIdInput">Идентификатор сессии</label>
           <input id="sessionIdInput" class="text-input" type="text" value="web-test">
           <button id="newSessionButton" class="secondary-button" type="button">Новая сессия</button>
           <h2 class="panel-title">Сессии</h2>
@@ -41,7 +41,7 @@
             <summary>Настройки чата</summary>
             <div class="settings-content">
               <button id="reloadHistoryButton" class="secondary-button" type="button">Обновить диалог</button>
-              <label class="field-label" for="productRefInput">ProductRef JSON</label>
+              <label class="field-label" for="productRefInput">Контекст товара, JSON</label>
               <textarea id="productRefInput" class="text-area compact" spellcheck="false"></textarea>
             </div>
           </details>
@@ -60,22 +60,22 @@
       <section id="view-workbench" class="app-view" data-view-panel="workbench">
         <div class="workbench-layout">
           <aside class="workspace-sidebar">
-            <h2>Workbench</h2>
-            <p class="muted">Выберите очередь, откройте карточку и выполните следующее действие без ручного копирования ID.</p>
+            <h2>Мастерская навыков</h2>
+            <p class="muted">Выберите очередь, откройте карточку и выполните следующее действие без ручного копирования идентификатора.</p>
             <div class="workbench-tabs">
               <button id="skillCatalogButton" class="secondary-button" type="button">Навыки</button>
               <button id="draftListButton" class="secondary-button" type="button">Черновики</button>
               <button id="synthesisCandidatesButton" class="secondary-button" type="button">Кандидаты агента</button>
-              <button id="onboardingCandidatesButton" class="secondary-button" type="button">Кандидаты onboarding</button>
+              <button id="onboardingCandidatesButton" class="secondary-button" type="button">Кандидаты обучения</button>
             </div>
             <details class="advanced-panel">
-              <summary>Открыть по ID</summary>
-              <label class="field-label" for="skillDetailsInput">ID навыка</label>
+              <summary>Открыть по идентификатору</summary>
+              <label class="field-label" for="skillDetailsInput">Идентификатор навыка</label>
               <div class="inline-row">
                 <input id="skillDetailsInput" class="text-input" type="text" placeholder="skill_...">
                 <button id="skillDetailsButton" class="secondary-button" type="button">Открыть</button>
               </div>
-              <label class="field-label" for="draftDetailsInput">ID draft</label>
+              <label class="field-label" for="draftDetailsInput">Идентификатор черновика</label>
               <div class="inline-row">
                 <input id="draftDetailsInput" class="text-input" type="text" placeholder="draft_...">
                 <button id="draftDetailsButton" class="secondary-button" type="button">Открыть</button>
@@ -91,50 +91,50 @@
               </div>
               <div id="workbenchStepper" class="stepper">
                 <span class="step active" data-step="draft">Черновик</span>
-                <span class="step" data-step="preview">Preview</span>
-                <span class="step" data-step="smoke">Smoke</span>
-                <span class="step" data-step="approval">Approval</span>
-                <span class="step" data-step="candidate">Candidate</span>
-                <span class="step" data-step="verified">Verified</span>
+                <span class="step" data-step="preview">Предпросмотр</span>
+                <span class="step" data-step="smoke">Проверочный запуск</span>
+                <span class="step" data-step="approval">Утверждение</span>
+                <span class="step" data-step="candidate">Кандидат</span>
+                <span class="step" data-step="verified">Проверен</span>
               </div>
             </div>
 
             <div class="card">
               <div class="card-header">
-                <h2>Мастер draft</h2>
+                <h2>Мастер черновика</h2>
                 <span class="muted">ручное создание навыка</span>
               </div>
               <details class="advanced-panel draft-builder-details">
-                <summary>Создать draft вручную</summary>
-                <p class="workbench-hint">Обычно draft создается из карточки кандидата. Ручной мастер нужен, когда консультант уже знает объект 1С и поля.</p>
+                <summary>Создать черновик вручную</summary>
+                <p class="workbench-hint">Обычно черновик создается из карточки кандидата. Ручной мастер нужен, когда консультант уже знает объект 1С и поля.</p>
               <div class="draft-grid">
                 <label>Название навыка<input id="draftTitleInput" class="text-input" type="text" placeholder="Остатки по складу"></label>
                 <label>Пример вопроса<input id="draftExampleQuestionInput" class="text-input" type="text" placeholder="Какой вопрос должен закрывать навык"></label>
                 <label>Описание<input id="draftDescriptionInput" class="text-input" type="text" placeholder="Бизнес-смысл навыка"></label>
-                <label>Источник alias<input id="draftSourceAliasInput" class="text-input" type="text" value="Источник"></label>
+                <label>Псевдоним источника<input id="draftSourceAliasInput" class="text-input" type="text" value="Источник"></label>
                 <label>Источник 1С<input id="draftSourceObjectInput" class="text-input" type="text" placeholder="РегистрНакопления..."></label>
-                <label>Группировка role<input id="draftGroupRoleInput" class="text-input" type="text" value="product"></label>
-                <label>Группировка field<input id="draftGroupFieldInput" class="text-input" type="text" placeholder="Номенклатура"></label>
-                <label>Метрика role<input id="draftMeasureRoleInput" class="text-input" type="text" value="metric"></label>
-                <label>Метрика field<input id="draftMeasureFieldInput" class="text-input" type="text" placeholder="СуммаОстаток"></label>
-                <label>Метрика label<input id="draftMeasureLabelInput" class="text-input" type="text" placeholder="Сумма"></label>
-                <label>Агрегация<select id="draftAggregationInput" class="text-input"><option value="sum">sum</option><option value="count">count</option><option value="max">max</option><option value="min">min</option></select></label>
-                <label>Limit<input id="draftLimitInput" class="text-input" type="number" min="0" value="10"></label>
-                <label>Фильтр role<input id="draftFilterRoleInput" class="text-input" type="text" placeholder="warehouse_type"></label>
-                <label>Фильтр field<input id="draftFilterFieldInput" class="text-input" type="text" placeholder="Склад.ТипСклада"></label>
-                <label>Фильтр parameter<input id="draftFilterParameterInput" class="text-input" type="text" placeholder="ТипСклада"></label>
-                <label>Фильтр operator<select id="draftFilterOperatorInput" class="text-input"><option value="equals">equals</option><option value="contains">contains</option></select></label>
+                <label>Роль группировки<input id="draftGroupRoleInput" class="text-input" type="text" value="product"></label>
+                <label>Поле группировки<input id="draftGroupFieldInput" class="text-input" type="text" placeholder="Номенклатура"></label>
+                <label>Роль метрики<input id="draftMeasureRoleInput" class="text-input" type="text" value="metric"></label>
+                <label>Поле метрики<input id="draftMeasureFieldInput" class="text-input" type="text" placeholder="СуммаОстаток"></label>
+                <label>Название метрики<input id="draftMeasureLabelInput" class="text-input" type="text" placeholder="Сумма"></label>
+                <label>Агрегация<select id="draftAggregationInput" class="text-input"><option value="sum">сумма</option><option value="count">количество</option><option value="max">максимум</option><option value="min">минимум</option></select></label>
+                <label>Ограничение строк<input id="draftLimitInput" class="text-input" type="number" min="0" value="10"></label>
+                <label>Роль фильтра<input id="draftFilterRoleInput" class="text-input" type="text" placeholder="warehouse_type"></label>
+                <label>Поле фильтра<input id="draftFilterFieldInput" class="text-input" type="text" placeholder="Склад.ТипСклада"></label>
+                <label>Параметр фильтра<input id="draftFilterParameterInput" class="text-input" type="text" placeholder="ТипСклада"></label>
+                <label>Оператор фильтра<select id="draftFilterOperatorInput" class="text-input"><option value="equals">равно</option><option value="contains">содержит</option></select></label>
               </div>
-              <label class="checkbox-line"><input id="draftFieldsConfirmedInput" type="checkbox"> Fields confirmed</label>
+              <label class="checkbox-line"><input id="draftFieldsConfirmedInput" type="checkbox"> Поля подтверждены в метаданных</label>
               <details class="advanced-panel">
-                <summary>Технический JSON draft</summary>
+                <summary>Технический JSON черновика</summary>
                 <textarea id="draftJsonInput" class="text-area json-area" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
               </details>
               <div class="button-grid wide">
                 <button id="createDraftButton" class="primary-button" type="button">Создать</button>
-                <button id="previewDraftButton" class="secondary-button" type="button">Preview</button>
-                <button id="smokeDraftButton" class="secondary-button" type="button">Smoke</button>
-                <button id="publishDraftButton" class="secondary-button" type="button">Candidate</button>
+                <button id="previewDraftButton" class="secondary-button" type="button">Предпросмотр</button>
+                <button id="smokeDraftButton" class="secondary-button" type="button">Проверить</button>
+                <button id="publishDraftButton" class="secondary-button" type="button">Опубликовать кандидата</button>
               </div>
               </details>
             </div>
@@ -144,62 +144,62 @@
                 <h2>Результат</h2>
                 <button id="clearWorkbenchOutputButton" class="ghost-button" type="button">Очистить</button>
               </div>
-              <div id="workbenchSummary" class="summary-content">Workbench не загружен.</div>
+              <div id="workbenchSummary" class="summary-content">Мастерская навыков не загружена.</div>
               <div id="workbenchOutput" class="technical-output"></div>
             </div>
           </section>
 
           <aside class="workspace-inspector">
             <h2>Проверки</h2>
-            <label class="field-label" for="approvalCommentInput">Комментарий approval</label>
+            <label class="field-label" for="approvalCommentInput">Комментарий утверждения</label>
             <textarea id="approvalCommentInput" class="text-area compact" placeholder="Что проверено человеком"></textarea>
             <label class="field-label" for="smokeParamsInput">Тестовые параметры</label>
             <textarea id="smokeParamsInput" class="text-area compact" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
             <div class="button-grid">
-              <button id="approveDraftButton" class="secondary-button" type="button">Approve</button>
-              <button id="rejectDraftButton" class="secondary-button" type="button">Reject</button>
+              <button id="approveDraftButton" class="secondary-button" type="button">Утвердить</button>
+              <button id="rejectDraftButton" class="secondary-button" type="button">Отклонить</button>
             </div>
             <details class="advanced-panel">
-              <summary>Действия по ID</summary>
-              <label class="field-label" for="candidateIdInput">ID onboarding candidate</label>
+              <summary>Действия по идентификатору</summary>
+              <label class="field-label" for="candidateIdInput">Идентификатор кандидата обучения</label>
               <input id="candidateIdInput" class="text-input" type="text" placeholder="onb_...">
               <div class="button-grid">
-                <button id="candidateCreateDraftButton" class="secondary-button" type="button">Create draft</button>
-                <button id="candidateRejectButton" class="secondary-button" type="button">Reject</button>
+                <button id="candidateCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
+                <button id="candidateRejectButton" class="secondary-button" type="button">Отклонить</button>
               </div>
-              <label class="field-label" for="synthesisCandidateIdInput">ID agent candidate</label>
+              <label class="field-label" for="synthesisCandidateIdInput">Идентификатор кандидата агента</label>
               <input id="synthesisCandidateIdInput" class="text-input" type="text" placeholder="syn_...">
               <div class="button-grid">
-                <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Create draft</button>
-                <button id="synthesisRejectButton" class="secondary-button" type="button">Reject</button>
+                <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
+                <button id="synthesisRejectButton" class="secondary-button" type="button">Отклонить</button>
               </div>
-              <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Ignore similar</button>
+              <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Игнорировать похожие</button>
             </details>
             <details class="advanced-panel">
-              <summary>Lifecycle и regression</summary>
-              <label class="field-label" for="skillLifecycleIdInput">ID навыка</label>
+              <summary>Жизненный цикл и регрессия</summary>
+              <label class="field-label" for="skillLifecycleIdInput">Идентификатор навыка</label>
               <input id="skillLifecycleIdInput" class="text-input" type="text" placeholder="skill_...">
               <label class="field-label" for="skillLifecycleReasonInput">Причина изменения</label>
               <input id="skillLifecycleReasonInput" class="text-input" type="text" placeholder="Что проверено и почему меняем статус">
-              <label class="field-label" for="skillRegressionCasesInput">Regression case IDs</label>
+              <label class="field-label" for="skillRegressionCasesInput">Идентификаторы регрессионных проверок</label>
               <input id="skillRegressionCasesInput" class="text-input" type="text" placeholder="reg_case_1, reg_case_2">
               <label class="field-label" for="skillTargetStatusInput">Новый статус</label>
-              <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">verified</option><option value="stable">stable</option></select>
+              <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">проверен</option><option value="stable">стабилен</option></select>
               <label class="field-label" for="skillSuccessfulRunsInput">Успешных проверок</label>
               <input id="skillSuccessfulRunsInput" class="text-input" type="number" min="0" value="0">
-              <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Admin approval</label>
+              <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Подтверждено администратором</label>
               <div class="button-grid">
-                <button id="skillPromoteButton" class="secondary-button" type="button">Promote</button>
-                <button id="skillRollbackButton" class="secondary-button" type="button">Rollback</button>
-                <button id="skillDeprecateButton" class="secondary-button" type="button">Deprecate</button>
-                <button id="skillBlockButton" class="secondary-button" type="button">Block</button>
+                <button id="skillPromoteButton" class="secondary-button" type="button">Повысить статус</button>
+                <button id="skillRollbackButton" class="secondary-button" type="button">Откатить</button>
+                <button id="skillDeprecateButton" class="secondary-button" type="button">Пометить устаревшим</button>
+                <button id="skillBlockButton" class="secondary-button" type="button">Заблокировать</button>
               </div>
               <hr>
-              <label class="field-label" for="regressionCasesPathInput">Regression cases path</label>
+              <label class="field-label" for="regressionCasesPathInput">Путь к регрессионным проверкам</label>
               <input id="regressionCasesPathInput" class="text-input" type="text" placeholder="Пусто = bot_instance/regression">
-              <label class="field-label" for="regressionSessionPrefixInput">Session prefix</label>
+              <label class="field-label" for="regressionSessionPrefixInput">Префикс сессии</label>
               <input id="regressionSessionPrefixInput" class="text-input" type="text" value="web-regression">
-              <button id="runRegressionButton" class="secondary-button" type="button">Run regression</button>
+              <button id="runRegressionButton" class="secondary-button" type="button">Запустить регрессию</button>
             </details>
           </aside>
         </div>
@@ -243,8 +243,8 @@
         <div class="admin-grid">
           <section class="card">
             <h2>Доступ</h2>
-            <p id="adminTokenHint" class="muted">Admin token не настроен.</p>
-            <label class="field-label" for="adminTokenInput">Admin token</label>
+            <p id="adminTokenHint" class="muted">Административный токен не настроен.</p>
+            <label class="field-label" for="adminTokenInput">Административный токен</label>
             <input id="adminTokenInput" class="text-input" type="password" autocomplete="off" placeholder="X-WIICON5-Admin-Token">
             <div class="button-grid">
               <button id="saveAdminTokenButton" class="primary-button" type="button">Сохранить</button>
@@ -254,8 +254,8 @@
           <section class="card">
             <h2>История</h2>
             <div class="button-grid">
-              <button id="backendHistoryButton" class="secondary-button" type="button">Backend</button>
-              <button id="frontendHistoryButton" class="secondary-button" type="button">Frontend</button>
+              <button id="backendHistoryButton" class="secondary-button" type="button">История сервера</button>
+              <button id="frontendHistoryButton" class="secondary-button" type="button">История клиента</button>
             </div>
             <pre id="historyOutput" class="pre-output"></pre>
           </section>
@@ -267,7 +267,7 @@
             <div id="onboardingStatus" class="summary-content">Статус не загружен.</div>
           </section>
           <section class="card">
-            <h2>API status</h2>
+            <h2>Состояние API</h2>
             <pre id="adminStatusOutput" class="pre-output"></pre>
           </section>
         </div>

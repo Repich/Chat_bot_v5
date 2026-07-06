@@ -60,6 +60,36 @@
     return readValue("skillLifecycleIdInput") || readValue("skillDetailsInput") || state.workbench.selectedSkillId || "";
   }
 
+  const DRAFT_ACTION_LABELS = {
+    approve: "Утверждение черновика",
+    preview: "Предпросмотр черновика",
+    reject: "Отклонение черновика",
+    smoke: "Проверочный запуск черновика",
+    "publish-candidate": "Публикация кандидата",
+  };
+
+  const CANDIDATE_ACTION_LABELS = {
+    "create-draft": "создать черновик",
+    reject: "отклонить",
+    "ignore-similar": "игнорировать похожие",
+  };
+
+  const SKILL_ACTION_LABELS = {
+    block: "блокировка",
+    deprecate: "пометка устаревшим",
+    promote: "повышение статуса",
+    rollback: "откат",
+  };
+
+  const STEP_LABELS = {
+    approval: "утверждение",
+    candidate: "кандидат",
+    draft: "черновик",
+    preview: "предпросмотр",
+    smoke: "проверка",
+    verified: "проверен",
+  };
+
   function buildTopMetricDraftFromForm() {
     const raw = readValue("draftJsonInput");
     if (raw) {
@@ -139,7 +169,7 @@
 
   function applyMetadataSource(objectName) {
     setValue("draftSourceObjectInput", objectName);
-    window.WiiconApp.showInfo(`Источник draft заполнен: ${objectName}`);
+    window.WiiconApp.showInfo(`Источник черновика заполнен: ${objectName}`);
   }
 
   function applyMetadataField(fieldName, target) {
@@ -149,7 +179,7 @@
       filter: "draftFilterFieldInput",
     };
     setValue(idByTarget[target] || "draftGroupFieldInput", fieldName);
-    window.WiiconApp.showInfo(`Поле добавлено в draft: ${fieldName}`);
+    window.WiiconApp.showInfo(`Поле добавлено в черновик: ${fieldName}`);
   }
 
   async function loadSkillCatalog(button) {
@@ -166,7 +196,7 @@
 
   async function loadSkillDetailsById(skillId, button) {
     if (!skillId) {
-      throw new Error("Укажите Skill ID.");
+      throw new Error("Укажите идентификатор навыка.");
     }
     return runWorkbenchAction(button, "Загрузка навыка", () => api.fetchAdmin(`/api/admin/skills/catalog/${encodeURIComponent(skillId)}`), (data) => {
       setCurrentSkillId(skillId);
@@ -175,7 +205,7 @@
   }
 
   async function loadDraftList(button) {
-    return runWorkbenchAction(button, "Загрузка drafts", () => api.fetchAdmin("/api/admin/workbench/drafts"), (data) => data);
+    return runWorkbenchAction(button, "Загрузка черновиков", () => api.fetchAdmin("/api/admin/workbench/drafts"), (data) => data);
   }
 
   async function loadDraftDetails(button) {
@@ -185,9 +215,9 @@
 
   async function loadDraftDetailsById(draftId, button) {
     if (!draftId) {
-      throw new Error("Укажите Draft ID.");
+      throw new Error("Укажите идентификатор черновика.");
     }
-    return runWorkbenchAction(button, "Загрузка draft", () => api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}`), (data) => {
+    return runWorkbenchAction(button, "Загрузка черновика", () => api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}`), (data) => {
       setCurrentDraftId(draftId);
       setLifecycleStep("draft");
       return data;
@@ -198,7 +228,7 @@
     const draft = buildTopMetricDraftFromForm();
     return runWorkbenchAction(
       button,
-      "Создание draft",
+      "Создание черновика",
       () => api.fetchAdmin("/api/admin/workbench/drafts", { method: "POST", body: { actor: "web-workbench", draft } }),
       (data) => {
         const draftId = data.draft && data.draft.draft_id ? data.draft.draft_id : "";
@@ -214,7 +244,7 @@
   async function postDraftAction(action, button) {
     const draftId = currentDraftId();
     if (!draftId) {
-      throw new Error("Укажите Draft ID.");
+      throw new Error("Укажите идентификатор черновика.");
     }
     const payload = { actor: "web-workbench" };
     if (action === "smoke") {
@@ -228,7 +258,7 @@
         payload.approve = true;
       }
     }
-    const label = `Draft ${action}`;
+    const label = DRAFT_ACTION_LABELS[action] || "Действие с черновиком";
     return runWorkbenchAction(
       button,
       label,
@@ -252,7 +282,7 @@
   }
 
   async function loadOnboardingCandidates(button) {
-    return runWorkbenchAction(button, "Загрузка onboarding candidates", () => api.fetchAdmin("/api/admin/workbench/onboarding/candidates"), (data) => data);
+    return runWorkbenchAction(button, "Загрузка кандидатов обучения", () => api.fetchAdmin("/api/admin/workbench/onboarding/candidates"), (data) => data);
   }
 
   async function postCandidateAction(action, button) {
@@ -262,12 +292,12 @@
 
   async function postCandidateActionById(candidateId, action, button) {
     if (!candidateId) {
-      throw new Error("Укажите candidate ID.");
+      throw new Error("Укажите идентификатор кандидата.");
     }
     setCurrentCandidateId(candidateId, "onboarding");
     return runWorkbenchAction(
       button,
-      `Onboarding candidate ${action}`,
+      `Кандидат обучения: ${CANDIDATE_ACTION_LABELS[action] || action}`,
       () => api.fetchAdmin(`/api/admin/workbench/onboarding/candidates/${encodeURIComponent(candidateId)}/${action}`, {
         method: "POST",
         body: { actor: "web-workbench", comment: readValue("approvalCommentInput") },
@@ -284,7 +314,7 @@
   }
 
   async function loadSynthesisCandidates(button) {
-    return runWorkbenchAction(button, "Загрузка agent candidates", () => api.fetchAdmin("/api/admin/workbench/synthesis/candidates"), (data) => data);
+    return runWorkbenchAction(button, "Загрузка кандидатов агента", () => api.fetchAdmin("/api/admin/workbench/synthesis/candidates"), (data) => data);
   }
 
   async function postSynthesisCandidateAction(action, button) {
@@ -294,12 +324,12 @@
 
   async function postSynthesisCandidateActionById(candidateId, action, button) {
     if (!candidateId) {
-      throw new Error("Укажите agent candidate ID.");
+      throw new Error("Укажите идентификатор кандидата агента.");
     }
     setCurrentCandidateId(candidateId, "synthesis");
     return runWorkbenchAction(
       button,
-      `Agent candidate ${action}`,
+      `Кандидат агента: ${CANDIDATE_ACTION_LABELS[action] || action}`,
       () => api.fetchAdmin(`/api/admin/workbench/synthesis/candidates/${encodeURIComponent(candidateId)}/${action}`, {
         method: "POST",
         body: { actor: "web-workbench", comment: readValue("approvalCommentInput") },
@@ -322,7 +352,7 @@
 
   async function postSkillLifecycleActionById(skillId, action, button) {
     if (!skillId) {
-      throw new Error("Укажите Skill ID.");
+      throw new Error("Укажите идентификатор навыка.");
     }
     setCurrentSkillId(skillId);
     const regressionCaseIds = readValue("skillRegressionCasesInput")
@@ -331,7 +361,7 @@
       .filter(Boolean);
     return runWorkbenchAction(
       button,
-      `Skill ${action}`,
+      `Навык: ${SKILL_ACTION_LABELS[action] || action}`,
       () => api.fetchAdmin(`/api/admin/skills/${encodeURIComponent(skillId)}/${action}`, {
         method: "POST",
         body: {
@@ -355,7 +385,7 @@
   async function runRegressionReplay(button) {
     return runWorkbenchAction(
       button,
-      "Regression replay",
+      "Повтор регрессионных проверок",
       () => api.fetchAdmin("/api/admin/regression/run", {
         method: "POST",
         body: {
@@ -374,13 +404,13 @@
 
   function showTracePath(tracePath) {
     if (!tracePath) {
-      throw new Error("Trace path пустой.");
+      throw new Error("Путь трассировки пустой.");
     }
     const summary = window.WiiconApp.requiredElement("workbenchSummary");
     const output = window.WiiconApp.requiredElement("workbenchOutput");
-    summary.innerHTML = `<div class="empty-state"><h3>Trace кандидата</h3><p>${renderers.escapeHtml(tracePath)}</p></div>`;
-    output.innerHTML = renderers.renderJsonDetails("Trace path", { trace_path: tracePath });
-    window.WiiconApp.showInfo("Trace path открыт.");
+    summary.innerHTML = `<div class="empty-state"><h3>Трассировка кандидата</h3><p>${renderers.escapeHtml(tracePath)}</p></div>`;
+    output.innerHTML = renderers.renderJsonDetails("Путь трассировки", { trace_path: tracePath });
+    window.WiiconApp.showInfo("Путь трассировки открыт.");
   }
 
   function setLifecycleStep(step) {
@@ -393,7 +423,7 @@
     });
     const badge = window.WiiconApp.optionalElement("workbenchStatusBadge");
     if (badge) {
-      badge.textContent = step || "ожидание";
+      badge.textContent = STEP_LABELS[step] || "ожидание";
     }
   }
 

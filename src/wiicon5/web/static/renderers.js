@@ -14,6 +14,58 @@
     return JSON.stringify(value, null, 2);
   }
 
+  const DISPLAY_LABELS = {
+    active: "активен",
+    approved: "утвержден",
+    blocked: "заблокирован",
+    candidate: "кандидат",
+    deprecated: "устарел",
+    draft: "черновик",
+    fixed_query: "фиксированный запрос",
+    ignored: "игнорируется",
+    inactive: "неактивен",
+    learned_query: "обученный запрос",
+    metadata: "метаданные",
+    metadata_index: "индекс метаданных",
+    metadata_xml: "XML метаданные",
+    mcp: "MCP",
+    onboarding: "обучение",
+    onboarding_candidate: "кандидат обучения",
+    onboarding_index: "индекс обучения",
+    preview: "предпросмотр",
+    query_synthesis: "синтез запроса",
+    query_synthesis_ok: "синтез запроса",
+    rejected: "отклонен",
+    smoke: "проверочный запуск",
+    stable: "стабилен",
+    unknown: "неизвестно",
+    verified: "проверен",
+  };
+
+  const SUMMARY_LABELS = {
+    by_status: "по статусам",
+    total: "всего",
+  };
+
+  function displayLabel(value) {
+    const text = String(value == null ? "" : value);
+    return DISPLAY_LABELS[text] || text;
+  }
+
+  function summaryLabel(value) {
+    const text = String(value == null ? "" : value);
+    return SUMMARY_LABELS[text] || displayLabel(text);
+  }
+
+  function summaryValue(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.entries(value)
+        .map(([key, item]) => `${summaryLabel(key)}: ${summaryValue(item)}`)
+        .join("; ");
+    }
+    return displayLabel(value);
+  }
+
   function renderJsonDetails(title, value) {
     return `<details><summary>${escapeHtml(title || "Технический JSON")}</summary><pre>${escapeHtml(formatJson(value))}</pre></details>`;
   }
@@ -29,7 +81,7 @@
     if (!summary || typeof summary !== "object") {
       return "";
     }
-    return Object.entries(summary).map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`).join("; ");
+    return Object.entries(summary).map(([key, value]) => `${summaryLabel(key)}: ${summaryValue(value)}`).join("; ");
   }
 
   function renderSummaryBlock(summary) {
@@ -111,7 +163,7 @@
   }
 
   function renderStatusPill(status) {
-    return `<span class="status-pill">${escapeHtml(status || "unknown")}</span>`;
+    return `<span class="status-pill">${escapeHtml(displayLabel(status || "unknown"))}</span>`;
   }
 
   function renderTags(values) {
@@ -159,11 +211,11 @@
         </div>
         ${renderStatusPill(item.status || item.lifecycle_status || "active")}
       </div>
-      ${renderFacts({ ID: id, Runtime: item.runtime || item.implementation_strategy || "", Источник: item.source_path || item.source || "" })}
+      ${renderFacts({ Идентификатор: id, "Среда выполнения": displayLabel(item.runtime || item.implementation_strategy || ""), Источник: item.source_path || displayLabel(item.source || "") })}
       <div class="entity-actions">
         ${actionButton("Открыть", "open-skill", "skill-id", id, "primary-button")}
-        ${actionButton("Promote", "skill-promote", "skill-id", id, "secondary-button")}
-        ${actionButton("Block", "skill-block", "skill-id", id, "ghost-button")}
+        ${actionButton("Повысить статус", "skill-promote", "skill-id", id, "secondary-button")}
+        ${actionButton("Заблокировать", "skill-block", "skill-id", id, "ghost-button")}
       </div>
     </article>`;
   }
@@ -176,18 +228,18 @@
       <div class="entity-card-header">
         <div>
           <div class="entity-kind">Черновик навыка</div>
-          <h3>${escapeHtml(item.title || id || "Draft")}</h3>
+          <h3>${escapeHtml(item.title || id || "Черновик")}</h3>
         </div>
         ${renderStatusPill(item.status || item.source_kind || "draft")}
       </div>
       ${questions.length ? `<p class="entity-summary">${escapeHtml(questions.join("; "))}</p>` : ""}
-      ${renderFacts({ ID: id, Источник: item.source_kind || "", Обновлен: item.updated_at || "" })}
+      ${renderFacts({ Идентификатор: id, Источник: displayLabel(item.source_kind || ""), Обновлен: item.updated_at || "" })}
       <div class="entity-actions">
         ${actionButton("Открыть", "open-draft", "draft-id", id, "primary-button")}
-        ${actionButton("Preview", "draft-preview", "draft-id", id, "secondary-button")}
-        ${actionButton("Smoke", "draft-smoke", "draft-id", id, "secondary-button")}
-        ${actionButton("Approve", "draft-approve", "draft-id", id, "secondary-button")}
-        ${actionButton("Publish", "draft-publish", "draft-id", id, "secondary-button")}
+        ${actionButton("Предпросмотр", "draft-preview", "draft-id", id, "secondary-button")}
+        ${actionButton("Проверить", "draft-smoke", "draft-id", id, "secondary-button")}
+        ${actionButton("Утвердить", "draft-approve", "draft-id", id, "secondary-button")}
+        ${actionButton("Опубликовать", "draft-publish", "draft-id", id, "secondary-button")}
       </div>
     </article>`;
   }
@@ -222,18 +274,18 @@
     return `<article class="entity-card candidate-card" data-candidate-id="${escapeHtml(id)}">
       <div class="entity-card-header">
         <div>
-          <div class="entity-kind">${synthesis ? "Кандидат от агента" : "Кандидат onboarding"}</div>
+          <div class="entity-kind">${synthesis ? "Кандидат от агента" : "Кандидат обучения"}</div>
           <h3>${escapeHtml(question)}</h3>
         </div>
         ${renderStatusPill(item.status || "candidate")}
       </div>
-      ${answer ? `<p class="entity-summary">${escapeHtml(answer)}</p>` : `<p class="muted">Откройте кандидата или создайте draft, чтобы проверить навык.</p>`}
-      ${renderFacts({ ID: id, Строк: rowCount, Источник: source, Trace: item.trace_path || "" })}
+      ${answer ? `<p class="entity-summary">${escapeHtml(answer)}</p>` : `<p class="muted">Откройте кандидата или создайте черновик, чтобы проверить навык.</p>`}
+      ${renderFacts({ Идентификатор: id, Строк: rowCount, Источник: displayLabel(source), Трассировка: item.trace_path || "" })}
       ${renderTags(objects)}
       <div class="entity-actions">
-        ${actionButton("Создать draft", createAction, "candidate-id", id, "primary-button")}
+        ${actionButton("Создать черновик", createAction, "candidate-id", id, "primary-button")}
         ${actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}
-        ${item.trace_path ? actionButton("Открыть trace", "open-trace", "trace-path", item.trace_path, "secondary-button") : ""}
+        ${item.trace_path ? actionButton("Открыть трассировку", "open-trace", "trace-path", item.trace_path, "secondary-button") : ""}
         ${synthesis ? actionButton("Игнорировать похожие", "synthesis-ignore-similar", "candidate-id", id, "ghost-button") : ""}
       </div>
     </article>`;
@@ -251,7 +303,7 @@
   function renderDraftsResponse(data) {
     const drafts = data.drafts || [];
     if (!drafts.length) {
-      return `<div class="empty-state"><h3>Черновиков пока нет</h3><p>Создайте draft из кандидата или вручную через мастер.</p></div>`;
+      return `<div class="empty-state"><h3>Черновиков пока нет</h3><p>Создайте черновик из кандидата или вручную через мастер.</p></div>`;
     }
     return `<div class="summary-kpi">Черновиков: ${escapeHtml(summaryCount(data.summary, drafts.length))}</div>
       <div class="card-list entity-list">${drafts.slice(0, 50).map(renderDraftCard).join("")}</div>`;
@@ -260,10 +312,10 @@
   function renderCandidatesResponse(data) {
     const candidates = data.candidates || [];
     if (!candidates.length) {
-      return `<div class="empty-state"><h3>Кандидатов пока нет</h3><p>Они появятся после успешных ответов агента через query synthesis или после первоначального обучения.</p></div>`;
+      return `<div class="empty-state"><h3>Кандидатов пока нет</h3><p>Они появятся после успешных ответов агента через синтез запроса или после первоначального обучения.</p></div>`;
     }
     return `<div class="summary-kpi">Кандидатов: ${escapeHtml(summaryCount(data.summary, candidates.length))}</div>
-      <p class="workbench-hint">Выберите кандидата, проверьте смысл и создайте draft без ручного копирования ID.</p>
+      <p class="workbench-hint">Выберите кандидата, проверьте смысл и создайте черновик без ручного копирования идентификатора.</p>
       <div class="card-list entity-list">${candidates.slice(0, 50).map(renderCandidateCard).join("")}</div>`;
   }
 
@@ -277,19 +329,19 @@
   }
 
   function renderPreviewResult(preview) {
-    return `<p>${preview && preview.ok ? "Preview построен." : "Preview содержит замечания."}</p>${renderIssueList(preview && preview.issues)}`;
+    return `<p>${preview && preview.ok ? "Предпросмотр построен." : "Предпросмотр содержит замечания."}</p>${renderIssueList(preview && preview.issues)}`;
   }
 
   function renderSmokeResult(smoke) {
-    return `<p>Smoke ${smoke && smoke.ok ? "успешен" : "не прошел"}; строк: ${escapeHtml((smoke && smoke.row_count) || 0)}.</p>`;
+    return `<p>Проверочный запуск ${smoke && smoke.ok ? "успешен" : "не прошел"}; строк: ${escapeHtml((smoke && smoke.row_count) || 0)}.</p>`;
   }
 
   function renderPublicationResult(publication) {
-    return `<p>Публикация candidate: ${publication && publication.ok ? "готова" : "есть блокеры"}.</p>${renderIssueList(publication && publication.issues)}`;
+    return `<p>Публикация кандидата: ${publication && publication.ok ? "готова" : "есть блокеры"}.</p>${renderIssueList(publication && publication.issues)}`;
   }
 
   function renderLifecycleResult(lifecycle) {
-    return `<p>Lifecycle: ${escapeHtml((lifecycle && lifecycle.before_status) || "")} -> ${escapeHtml((lifecycle && lifecycle.after_status) || "")}</p>${renderIssueList(lifecycle && lifecycle.issues)}`;
+    return `<p>Жизненный цикл: ${escapeHtml(displayLabel((lifecycle && lifecycle.before_status) || ""))} -> ${escapeHtml(displayLabel((lifecycle && lifecycle.after_status) || ""))}</p>${renderIssueList(lifecycle && lifecycle.issues)}`;
   }
 
   function renderSummary(data) {

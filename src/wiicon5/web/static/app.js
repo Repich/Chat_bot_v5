@@ -33,7 +33,7 @@
   function requiredElement(id) {
     const element = document.getElementById(id);
     if (!element) {
-      throw new Error(`Required UI element is missing: ${id}`);
+      throw new Error(`Не найден обязательный элемент интерфейса: ${id}`);
     }
     return element;
   }
@@ -45,7 +45,7 @@
   function optionalBind(id, eventName, handler) {
     const element = optionalElement(id);
     if (!element) {
-      console.warn(`Optional UI element is missing: ${id}`);
+      console.warn(`Не найден необязательный элемент интерфейса: ${id}`);
       return null;
     }
     element.addEventListener(eventName, handler);
@@ -76,7 +76,7 @@
     const element = optionalElement("globalError");
     const message = error && error.stack ? error.stack : String(error && error.message ? error.message : error);
     if (element) {
-      element.textContent = `UI error: ${message}`;
+      element.textContent = `Ошибка интерфейса: ${message}`;
       element.classList.remove("hidden");
     }
   }
@@ -182,8 +182,8 @@
     const hint = optionalElement("adminTokenHint");
     if (hint) {
       hint.textContent = state.admin.tokenRequired
-        ? "Admin endpoints требуют token. Сохраните token здесь, после этого кнопки Workbench будут отправлять его в заголовках."
-        : "Admin token не требуется текущей конфигурацией.";
+        ? "Административные разделы требуют токен. Сохраните токен здесь, после этого кнопки мастерской навыков будут отправлять его в заголовках."
+        : "Административный токен не требуется текущей конфигурацией.";
     }
     const adminStatus = optionalElement("adminStatusOutput");
     if (adminStatus) {
@@ -206,7 +206,7 @@
     if (status.error) {
       if (banner) {
         banner.textContent = state.admin.tokenRequired && !state.admin.token
-          ? "Admin token не задан. Workbench и обучение будут недоступны до ввода token."
+          ? "Административный токен не задан. Мастерская навыков и обучение будут недоступны до ввода токена."
           : `Статус обучения не загружен: ${status.error}`;
         banner.className = "training-banner visible";
       }
@@ -393,7 +393,7 @@
       return `<article class="card metadata-object-card" data-object-name="${renderers.escapeHtml(name)}">
         ${renderers.renderMetadataObjectCard(object)}
         <div class="button-grid wide">
-          <button class="secondary-button metadata-source-button" type="button" data-object-name="${renderers.escapeHtml(name)}">Use as source</button>
+          <button class="secondary-button metadata-source-button" type="button" data-object-name="${renderers.escapeHtml(name)}">Использовать как источник</button>
           <button class="secondary-button metadata-open-button" type="button" data-object-name="${renderers.escapeHtml(name)}">Открыть</button>
         </div>
         <div class="field-picker">${fieldButtons}</div>
@@ -454,7 +454,7 @@
   function saveAdminToken() {
     state.admin.token = requiredElement("adminTokenInput").value.trim();
     state.storage.setItem(api.ADMIN_TOKEN_STORAGE_KEY, state.admin.token);
-    showInfo(state.admin.token ? "admin token сохранен" : "admin token пустой");
+    showInfo(state.admin.token ? "Административный токен сохранен" : "Административный токен пустой");
     loadOnboardingStatus();
   }
 
@@ -462,7 +462,7 @@
     state.admin.token = "";
     requiredElement("adminTokenInput").value = "";
     state.storage.removeItem(api.ADMIN_TOKEN_STORAGE_KEY);
-    showInfo("admin token очищен");
+    showInfo("Административный токен очищен");
     loadOnboardingStatus();
   }
 
@@ -521,7 +521,7 @@
     optionalBind("skillBlockButton", "click", (event) => window.WiiconWorkbench.postSkillLifecycleAction("block", event.currentTarget));
     optionalBind("runRegressionButton", "click", (event) => window.WiiconWorkbench.runRegressionReplay(event.currentTarget));
     optionalBind("clearWorkbenchOutputButton", "click", () => {
-      requiredElement("workbenchSummary").textContent = "Workbench очищен.";
+      requiredElement("workbenchSummary").textContent = "Мастерская навыков очищена.";
       requiredElement("workbenchOutput").innerHTML = "";
     });
     requiredElement("workbenchSummary").addEventListener("click", (event) => {

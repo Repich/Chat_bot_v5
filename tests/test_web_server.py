@@ -89,7 +89,7 @@ const html = window.WiiconRenderers.renderSummary({
 if (html.indexOf('Покажи клиента') < 0) {
   throw new Error('candidate question is missing: ' + html);
 }
-if (html.indexOf('Создать draft') < 0) {
+if (html.indexOf('Создать черновик') < 0) {
   throw new Error('candidate action is missing: ' + html);
 }
 if (html.indexOf('data-action="synthesis-create-draft"') < 0) {
@@ -687,7 +687,7 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
         self.assertIn("draftMeasureFieldInput", chat_page)
         self.assertIn("draftFieldsConfirmedInput", chat_page)
         self.assertIn("field-picker", static_app)
-        self.assertIn("Use as source", static_app)
+        self.assertIn("Использовать как источник", static_app)
         self.assertIn("skillLifecycleIdInput", chat_page)
         self.assertIn("skillDetailsButton", chat_page)
         self.assertIn("skillRegressionCasesInput", chat_page)

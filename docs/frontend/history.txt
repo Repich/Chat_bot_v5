@@ -1,3 +1,8 @@
+5.0.0-alpha.54
+- Переведены видимые подписи web-клиента, карточки мастерской навыков, сообщения действий, статусы и административные подсказки на русский язык.
+- Смешанные англо-русские подписи действий, разделов и карточек заменены на русские формулировки.
+- Внутренние имена действий API и технические ключи JSON оставлены без изменений, чтобы сохранить совместимость endpoint и уже сохраненных артефактов.
+
 5.0.0-alpha.53
 - Added an explicit "Открыть trace" action to Workbench candidate cards when trace_path is available.
 - Workbench now opens the selected candidate trace path in the summary/details area without requiring manual JSON inspection.
