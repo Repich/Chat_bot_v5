@@ -64,21 +64,26 @@
       error.textContent = message;
       error.classList.remove("hidden");
     }
-    const result = card.querySelector(".draft-action-result-local");
+    const result = localDraftResult(button);
     if (result) {
-      result.innerHTML = "";
-      result.classList.add("hidden");
+      result.innerHTML = `<p><strong>Действие не выполнено:</strong> ${renderers.escapeHtml(message)}</p>`;
+      result.className = "draft-action-feedback error";
+      result.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
     const commentInput = card.querySelector(".draft-comment-input");
     if (commentInput) {
-      commentInput.focus();
+      try {
+        commentInput.focus({ preventScroll: true });
+      } catch (error_) {
+        commentInput.focus();
+      }
     }
     window.WiiconApp.showInfo(message);
   }
 
   function localDraftResult(button) {
     const card = closestDraftCard(button);
-    return card ? card.querySelector(".draft-action-result-local") : null;
+    return card ? card.querySelector(".draft-action-feedback") || card.querySelector(".draft-action-result-local") : null;
   }
 
   function showDraftActionProgress(button, message) {
@@ -87,7 +92,7 @@
       return false;
     }
     target.innerHTML = `<p>${renderers.escapeHtml(message)}</p>`;
-    target.classList.remove("hidden");
+    target.className = "draft-action-feedback pending";
     target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     return true;
   }
@@ -98,7 +103,8 @@
       return false;
     }
     target.innerHTML = renderers.renderDraftActionResult(data) || `<p>${renderers.escapeHtml(data.notice || "Действие выполнено.")}</p>`;
-    target.classList.remove("hidden");
+    const blocked = data && data.publication && data.publication.ok === false;
+    target.className = `draft-action-feedback ${blocked ? "warning" : "success"}`;
     target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     return true;
   }

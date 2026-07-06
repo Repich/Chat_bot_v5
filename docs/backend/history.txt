@@ -1,3 +1,6 @@
+5.0.0-alpha.66
+- Backend API не менялся. Релиз улучшает видимость frontend-блокеров publish draft и добавляет cache-busting для static assets.
+
 5.0.0-alpha.65
 - Backend API не менялся. Релиз исправляет frontend-маршрутизацию кликов Workbench и видимость ошибок draft actions.
 

@@ -520,6 +520,10 @@
     </div>`;
   }
 
+  function renderDraftActionFeedback(id) {
+    return `<div class="draft-action-feedback hidden" data-draft-feedback-id="${escapeHtml(id)}"></div>`;
+  }
+
   function renderSkillCard(skill) {
     const item = skill || {};
     const id = item.skill_id || item.id || "";
@@ -581,6 +585,7 @@
         ${actionButton("Опубликовать как кандидат", "draft-publish", "draft-id", id, "secondary-button")}
         ${actionButton("Удалить", "draft-delete", "draft-id", id, "danger-button")}
       </div>
+      ${renderDraftActionFeedback(id)}
     </article>`;
   }
 
@@ -689,7 +694,10 @@
   }
 
   function renderPublicationResult(publication) {
-    return `<p>Публикация кандидата: ${publication && publication.ok ? "готова" : "есть блокеры"}.</p>${renderIssueList(publication && publication.issues)}`;
+    if (publication && publication.ok) {
+      return `<p><strong>Публикация выполнена.</strong> Черновик опубликован как кандидат навыка.</p>${renderIssueList(publication.issues)}`;
+    }
+    return `<p><strong>Публикация пока не выполнена.</strong> Нужно устранить блокеры.</p>${renderIssueList(publication && publication.issues)}`;
   }
 
   function renderApprovalResult(approval) {
@@ -764,7 +772,22 @@
     if (!Array.isArray(issues) || issues.length === 0) {
       return "";
     }
-    return `<ul>${issues.map((issue) => `<li>${escapeHtml(issue.message || issue.code || JSON.stringify(issue))}</li>`).join("")}</ul>`;
+    return `<ul>${issues.map((issue) => `<li>${escapeHtml(issueText(issue))}</li>`).join("")}</ul>`;
+  }
+
+  function issueText(issue) {
+    if (!issue || typeof issue !== "object") {
+      return String(issue || "");
+    }
+    const code = String(issue.code || "");
+    const known = {
+      missing_successful_smoke: "Сначала выполните успешный проверочный запуск черновика.",
+      missing_human_approval: "После успешной проверки утвердите черновик человеком.",
+      current_successful_smoke_required: "Перед утверждением или публикацией нужен успешный проверочный запуск текущей версии черновика.",
+      previous_approval_rejected: "Последнее решение по черновику было отклоняющим. Нужен новый цикл проверки.",
+      publish_approval_required: "Публикация требует явного подтверждения.",
+    };
+    return known[code] || issue.message || code || JSON.stringify(issue);
   }
 
   window.WiiconRenderers = {

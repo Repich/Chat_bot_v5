@@ -141,7 +141,7 @@ if (draftHtml.indexOf('Следующий шаг') < 0 || draftHtml.indexOf('dra
 if (draftHtml.indexOf('Запрос 1С') < 0 || draftHtml.indexOf('Утвердить проверку') < 0 || draftHtml.indexOf('Опубликовать как кандидат') < 0) {
   throw new Error('draft decision details are missing: ' + draftHtml);
 }
-if (draftHtml.indexOf('draft-comment-input') < 0 || draftHtml.indexOf('draft-smoke-params-input') < 0 || draftHtml.indexOf('draft-action-result-local') < 0) {
+if (draftHtml.indexOf('draft-comment-input') < 0 || draftHtml.indexOf('draft-smoke-params-input') < 0 || draftHtml.indexOf('draft-action-result-local') < 0 || draftHtml.indexOf('draft-action-feedback') < 0) {
   throw new Error('draft local action inputs are missing: ' + draftHtml);
 }
 if (draftHtml.indexOf('data-action="draft-delete"') < 0) {
@@ -176,6 +176,13 @@ const approvalAndDraftHtml = window.WiiconRenderers.renderSummary({
 });
 if (approvalAndDraftHtml.indexOf('Результат утверждения') < 0 || approvalAndDraftHtml.indexOf('appr_1') < 0 || approvalAndDraftHtml.indexOf('Черновик навыка') < 0) {
   throw new Error('approval result is not visible with draft card: ' + approvalAndDraftHtml);
+}
+const blockedPublishHtml = window.WiiconRenderers.renderSummary({
+  ok: true,
+  publication: { ok: false, issues: [{ code: 'missing_successful_smoke' }, { code: 'missing_human_approval' }] }
+});
+if (blockedPublishHtml.indexOf('Публикация пока не выполнена') < 0 || blockedPublishHtml.indexOf('Сначала выполните успешный проверочный запуск') < 0 || blockedPublishHtml.indexOf('утвердите черновик человеком') < 0) {
+  throw new Error('publish blockers are not visible in Russian: ' + blockedPublishHtml);
 }
 """
         subprocess.run(
@@ -783,6 +790,10 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("/static/app.js", chat_page)
         self.assertIn("/static/api.js", chat_page)
         self.assertIn("/static/workbench.js", chat_page)
+        self.assertIn("app.js?v=5.0.0-alpha.66", chat_page)
+        self.assertIn("workbench.js?v=5.0.0-alpha.66", chat_page)
+        self.assertIn("renderers.js?v=5.0.0-alpha.66", chat_page)
+        self.assertIn("styles.css?v=5.0.0-alpha.66", chat_page)
         self.assertIn("/static/renderers.js", chat_page)
         self.assertIn("topNav", chat_page)
         self.assertIn("view-chat", chat_page)
@@ -985,6 +996,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("showDraftCardError", static_workbench)
         self.assertIn("showDraftActionResult", static_workbench)
         self.assertIn("draft-action-result-local", static_workbench)
+        self.assertIn("draft-action-feedback", static_workbench)
         self.assertIn("Заполните комментарий в карточке черновика", static_workbench)
         self.assertIn("DRAFT_ACTION_NOTICES", static_workbench)
         self.assertIn("withButtonState(button, label", static_workbench)
@@ -995,6 +1007,8 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("postDraftAction(backendAction", static_app)
         self.assertIn("draft-delete", static_app)
         self.assertIn("draft-approve", static_renderers)
+        self.assertIn("missing_successful_smoke", static_renderers)
+        self.assertIn("Публикация пока не выполнена", static_renderers)
         self.assertIn("draft-comment-input", static_renderers)
         self.assertIn("draft-smoke-params-input", static_renderers)
         self.assertIn("renderApprovalResult", static_renderers)

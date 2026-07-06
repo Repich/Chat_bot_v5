@@ -637,6 +637,50 @@ label {
   grid-column: 1 / -1;
 }
 
+.draft-action-feedback {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--text);
+}
+
+.draft-action-feedback p {
+  margin: 0;
+}
+
+.draft-action-feedback.error {
+  border-color: #fecaca;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.draft-action-feedback.warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.draft-action-feedback.success {
+  border-color: #a7f3d0;
+  background: var(--ok-soft);
+  color: #065f46;
+}
+
+.draft-action-feedback.pending {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.draft-action-feedback .draft-action-result {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .draft-action-result {
   display: grid;
   gap: 8px;
