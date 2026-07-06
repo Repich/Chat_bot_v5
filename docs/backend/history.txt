@@ -1,3 +1,8 @@
+5.0.0-alpha.51
+- Sufficiency review now recognizes the answer subject from confirmed 1C object references and party requisites, not only from column names such as Контрагент or Клиент.
+- Valid rows with counterparty requisites and a debt metric are accepted as sufficient instead of being retried as incomplete partial results.
+- Added regression coverage for counterparty requisites with maximum debt so identical user questions do not diverge after a false insufficiency failure.
+
 5.0.0-alpha.50
 - Added /api/ui/config so the web client can see version, admin token requirements, localhost restriction, and raw-query-edit policy.
 - The HTTP server now serves the web client from wiicon5/web/static instead of embedding a large HTML string in backend code.

@@ -216,6 +216,125 @@ class QuerySynthesisTests(unittest.TestCase):
         assert review is not None
         self.assertTrue(review.sufficient)
 
+    def test_sufficiency_accepts_counterparty_ref_and_requisites_with_debt_metric(self) -> None:
+        review = deterministic_partial_review(
+            question="Покажи реквизиты клиента задолженность которого самая высокая",
+            columns=["Ссылка", "Наименование", "ИНН", "КПП", "НаименованиеПолное", "Задолженность"],
+            rows=[
+                {
+                    "Ссылка": {
+                        "_objectRef": True,
+                        "УникальныйИдентификатор": "aebe43f1-193c-11e4-bb59-000d884fd00d",
+                        "ТипОбъекта": "СправочникСсылка.Контрагенты",
+                        "Представление": "Альтаир",
+                    },
+                    "Наименование": "Альтаир",
+                    "ИНН": "7705260113",
+                    "КПП": "770601001",
+                    "НаименованиеПолное": "ООО \"Альтаир\"",
+                    "Задолженность": 194889,
+                }
+            ],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertTrue(review.sufficient)
+
+    def test_sufficiency_rejects_empty_counterparty_requisites_with_debt_metric(self) -> None:
+        review = deterministic_partial_review(
+            question="Покажи реквизиты клиента задолженность которого самая высокая",
+            columns=["Наименование", "ИНН", "КПП", "НаименованиеПолное", "Задолженность"],
+            rows=[
+                {
+                    "Наименование": "",
+                    "ИНН": "",
+                    "КПП": "",
+                    "НаименованиеПолное": "",
+                    "Задолженность": 194889,
+                }
+            ],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertFalse(review.sufficient)
+
+    def test_synthesis_accepts_counterparty_requisites_with_debt_metric(self) -> None:
+        counterparty_ref = {
+            "_objectRef": True,
+            "УникальныйИдентификатор": "aebe43f1-193c-11e4-bb59-000d884fd00d",
+            "ТипОбъекта": "СправочникСсылка.Контрагенты",
+            "Представление": "Альтаир",
+        }
+        query = """
+        ВЫБРАТЬ ПЕРВЫЕ 1
+            Контрагенты.Ссылка,
+            Контрагенты.Наименование,
+            Контрагенты.ИНН,
+            Контрагенты.КПП,
+            Контрагенты.НаименованиеПолное,
+            Расчеты.ДолгОстаток КАК Задолженность
+        ИЗ
+            Справочник.Контрагенты КАК Контрагенты
+                ВНУТРЕННЕЕ СОЕДИНЕНИЕ РегистрНакопления.РасчетыСКлиентамиПоДокументам.Остатки() КАК Расчеты
+                ПО Контрагенты.Ссылка = Расчеты.АналитикаУчетаПоПартнерам.Контрагент
+        УПОРЯДОЧИТЬ ПО
+            Задолженность УБЫВ
+        """
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["РасчетыСКлиентамиПоДокументам", "Контрагенты", "задолженность"]),
+                query_response(query),
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "Ссылка": counterparty_ref,
+                            "Наименование": "Альтаир",
+                            "ИНН": "7705260113",
+                            "КПП": "770601001",
+                            "НаименованиеПолное": "ООО \"Альтаир\"",
+                            "Задолженность": 194889,
+                        }
+                    ],
+                }
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=CounterpartyDebtMetadataProvider(),
+            mcp_client=mcp,
+            max_metadata_objects=30,
+        )
+
+        result = engine.run(
+            message="Покажи реквизиты клиента задолженность которого самая высокая",
+            intent=IntentResult(
+                intent_type=IntentType.DATA_QUESTION,
+                business_goal="Получить реквизиты клиента с максимальной задолженностью",
+                requires_1c_data=True,
+                expected_output="table",
+                domain_terms=["клиент", "задолженность", "реквизиты"],
+                relevant=True,
+            ),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertTrue(result.trace["attempts"][0]["result_sufficiency"]["sufficient"])
+        self.assertIn("Альтаир", result.message)
+        self.assertIn("194889", result.message)
+
     def test_sufficiency_rejects_document_amount_for_debt_question(self) -> None:
         review = deterministic_partial_review(
             question="Кто имеет дебиторскую задолженность по последней отгрузке и сколько?",
@@ -1539,6 +1658,64 @@ class FakeOnboardingEvidenceProvider:
             "query_patterns": [{"pattern_id": "evidence_query", "query": "ВЫБРАТЬ ..."}],
             "register_usage": [],
         }
+
+
+class CounterpartyDebtMetadataProvider(MetadataProvider):
+    def __init__(self) -> None:
+        self.counterparties = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "Справочник.Контрагенты",
+                "Синоним": "Контрагенты",
+                "СтандартныеРеквизиты": [
+                    {"Имя": "Ссылка", "Тип": "СправочникСсылка.Контрагенты"},
+                    {"Имя": "Наименование", "Тип": "Строка"},
+                    {"Имя": "Код", "Тип": "Строка"},
+                ],
+                "Реквизиты": [
+                    {"Имя": "ИНН", "Тип": "Строка"},
+                    {"Имя": "КПП", "Тип": "Строка"},
+                    {"Имя": "НаименованиеПолное", "Тип": "Строка"},
+                ],
+            }
+        )
+        self.debt_register = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "РегистрНакопления.РасчетыСКлиентамиПоДокументам",
+                "Синоним": "Расчеты с клиентами по документам",
+                "Измерения": [
+                    {
+                        "Имя": "АналитикаУчетаПоПартнерам",
+                        "Тип": "СправочникСсылка.КлючиАналитикиУчетаПоПартнерам",
+                    },
+                    {"Имя": "РасчетныйДокумент", "Тип": "ДокументСсылка"},
+                    {"Имя": "Валюта", "Тип": "СправочникСсылка.Валюты"},
+                ],
+                "Ресурсы": [
+                    {"Имя": "Долг", "Тип": "Число"},
+                    {"Имя": "ДолгУпр", "Тип": "Число"},
+                    {"Имя": "ДолгРегл", "Тип": "Число"},
+                ],
+            }
+        )
+        self.last_requests: List[Dict[str, object]] = []
+
+    def search_objects(self, term: str) -> List[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        lowered = term.lower()
+        result: List[MetadataObject] = []
+        if "контраг" in lowered or "клиент" in lowered or "реквиз" in lowered:
+            result.append(self.counterparties)
+        if "расчет" in lowered or "расчёт" in lowered or "задолж" in lowered or "долг" in lowered:
+            result.append(self.debt_register)
+        return result or [self.counterparties, self.debt_register]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        if full_name == self.counterparties.full_name:
+            return self.counterparties
+        if full_name == self.debt_register.full_name:
+            return self.debt_register
+        return metadata_object_from_payload({"ПолноеИмя": full_name})
 
 
 class RankingMetadataProvider(MetadataProvider):

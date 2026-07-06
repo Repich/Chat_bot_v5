@@ -1,3 +1,6 @@
+5.0.0-alpha.51
+- No frontend behavior changes. This release fixes backend sufficiency review for valid counterparty debt rows.
+
 5.0.0-alpha.50
 - Split the web client out of the Python HTTP router into static index.html, styles.css, api.js, renderers.js, workbench.js, and app.js.
 - Reworked the client into top-level Chat, Workbench, Metadata, Documentation, and Administration views instead of hiding Workbench controls inside chat settings.

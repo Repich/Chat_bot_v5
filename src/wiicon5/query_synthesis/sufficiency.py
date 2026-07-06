@@ -172,7 +172,7 @@ def deterministic_partial_review(
     lowered_question = question.lower()
     lowered_columns = " ".join(columns).lower()
     if rows and asks_subject_and_amount(lowered_question):
-        has_subject = any(marker in lowered_columns for marker in ["контрагент", "поставщик", "клиент", "партнер", "партнёр"])
+        has_subject = has_subject_evidence(question=lowered_question, columns=columns, rows=rows)
         has_debt_metric = any(marker in lowered_columns for marker in ["задолж", "долг", "к оплате", "коплате"])
         has_amount = has_debt_metric or any(
             marker in lowered_columns for marker in ["сумма", "остаток", "количество", "amount", "balance"]
@@ -261,6 +261,76 @@ def asks_subject_and_amount(question: str) -> bool:
     subject_markers = ["кому", "кто", "контрагент", "поставщик", "клиент", "партнер", "партнёр"]
     amount_markers = ["сколько", "сумма", "долг", "долж", "задолж"]
     return any(marker in question for marker in subject_markers) and any(marker in question for marker in amount_markers)
+
+
+def has_subject_evidence(*, question: str, columns: List[str], rows: List[Dict[str, Any]]) -> bool:
+    lowered_columns = " ".join(columns).lower()
+    if any(marker in lowered_columns for marker in ["контрагент", "поставщик", "клиент", "партнер", "партнёр"]):
+        return True
+    if rows_have_subject_object_ref(question=question, rows=rows):
+        return True
+    return rows_have_party_requisites(question=question, columns=columns, rows=rows)
+
+
+def rows_have_subject_object_ref(*, question: str, rows: List[Dict[str, Any]]) -> bool:
+    markers = subject_reference_markers(question)
+    for row in rows:
+        for value in walk_values(row):
+            if not isinstance(value, dict) or not value.get("_objectRef"):
+                continue
+            object_type = str(value.get("ТипОбъекта") or "").lower()
+            if "справочникссылка" not in object_type:
+                continue
+            if any(marker in object_type for marker in markers):
+                return True
+    return False
+
+
+def subject_reference_markers(question: str) -> List[str]:
+    markers: List[str] = []
+    if any(marker in question for marker in ["клиент", "контрагент", "поставщик", "покупател"]):
+        markers.extend(["контрагент", "партнер", "партнёр"])
+    if any(marker in question for marker in ["партнер", "партнёр"]):
+        markers.extend(["партнер", "партнёр", "контрагент"])
+    if any(marker in question for marker in ["кому", "кто"]):
+        markers.extend(["контрагент", "партнер", "партнёр", "организац", "физическ", "сотрудник"])
+    if not markers:
+        markers.extend(["контрагент", "партнер", "партнёр"])
+    result: List[str] = []
+    for marker in markers:
+        if marker not in result:
+            result.append(marker)
+    return result
+
+
+def rows_have_party_requisites(*, question: str, columns: List[str], rows: List[Dict[str, Any]]) -> bool:
+    if not any(marker in question for marker in ["клиент", "контрагент", "поставщик", "партнер", "партнёр", "кому", "кто"]):
+        return False
+    name_columns = columns_matching(columns, ["наименование", "наименованиеполное"])
+    party_id_columns = columns_matching(columns, ["инн", "кпп", "регистрационныйномер", "налоговыйномер"])
+    if not (name_columns and party_id_columns):
+        return False
+    for row in rows:
+        has_name_value = any(str(row.get(column) or "").strip() for column in name_columns)
+        has_party_id_value = any(str(row.get(column) or "").strip() for column in party_id_columns)
+        if has_name_value and has_party_id_value:
+            return True
+    return False
+
+
+def columns_matching(columns: List[str], expected: List[str]) -> List[str]:
+    lowered_expected = {item.lower() for item in expected}
+    return [column for column in columns if column.lower() in lowered_expected]
+
+
+def walk_values(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for item in value.values():
+            yield from walk_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from walk_values(item)
 
 
 def asks_debt(question: str) -> bool:
