@@ -19,27 +19,58 @@
     approved: "утвержден",
     blocked: "заблокирован",
     candidate: "кандидат",
+    city: "город",
+    context_artifact_lookup: "поиск в контексте диалога",
+    count: "подсчет",
+    data: "данные",
+    data_acquisition: "получение данных",
     deprecated: "устарел",
+    deterministic_count_entities: "детерминированный подсчет объектов",
+    deterministic_entity_list_renderer: "рендер списка объектов",
+    deterministic_table_renderer: "рендер таблицы",
+    document_kind: "вид документа",
+    document_type: "тип документа",
     draft: "черновик",
     fixed_query: "фиксированный запрос",
+    group_by: "группировка",
     ignored: "игнорируется",
     inactive: "неактивен",
+    learned: "обученный",
     learned_query: "обученный запрос",
+    limit: "ограничение строк",
+    measure: "метрика",
     metadata: "метаданные",
     metadata_index: "индекс метаданных",
     metadata_xml: "XML метаданные",
     mcp: "MCP",
+    name: "наименование",
+    number: "номер",
+    object_name: "имя объекта",
+    object_type: "тип объекта",
     onboarding: "обучение",
     onboarding_candidate: "кандидат обучения",
     onboarding_index: "индекс обучения",
+    period: "период",
+    period_granularity: "детализация периода",
     preview: "предпросмотр",
+    product: "номенклатура",
+    posted: "проведен",
+    presentation: "формирование ответа",
     query_synthesis: "синтез запроса",
     query_synthesis_ok: "синтез запроса",
     rejected: "отклонен",
+    semantic_binding_query: "запрос по binding метаданных",
+    semantic_document_count_query: "подсчет документов по метаданным",
+    semantic_document_list_query: "список документов по метаданным",
+    semantic_measure_query: "запрос метрики по binding метаданных",
     smoke: "проверочный запуск",
     stable: "стабилен",
+    transform: "преобразование данных",
     unknown: "неизвестно",
     verified: "проверен",
+    warehouse: "склад",
+    warehouse_type: "тип склада",
+    year: "год",
   };
 
   const SUMMARY_LABELS = {
@@ -182,6 +213,135 @@
     return `<dl class="entity-facts">${entries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
   }
 
+  function renderInfoSection(title, body) {
+    if (!body) {
+      return "";
+    }
+    return `<section class="entity-section"><h4>${escapeHtml(title)}</h4>${body}</section>`;
+  }
+
+  function compactList(values, limit) {
+    const result = [];
+    for (const value of Array.isArray(values) ? values : []) {
+      const text = String(value || "").trim();
+      if (text && !result.includes(text)) {
+        result.push(text);
+      }
+      if (result.length >= (limit || 10)) {
+        break;
+      }
+    }
+    return result;
+  }
+
+  function portLabel(port) {
+    const item = port || {};
+    const required = item.required === false ? "необязательный" : "обязательный";
+    const defaultText = item.default === undefined || item.default === null ? "" : `, по умолчанию: ${displayLabel(item.default)}`;
+    const description = item.description ? ` — ${item.description}` : "";
+    return `${item.name || "port"}: ${item.type || "unknown"} (${required}${defaultText})${description}`;
+  }
+
+  function renderPortList(ports, emptyText) {
+    const items = Array.isArray(ports) ? ports : [];
+    if (!items.length) {
+      return `<p class="muted">${escapeHtml(emptyText || "Нет.")}</p>`;
+    }
+    return `<ul class="compact-list">${items.map((port) => `<li>${escapeHtml(portLabel(port))}</li>`).join("")}</ul>`;
+  }
+
+  function outputTypes(skill) {
+    return (Array.isArray(skill.outputs) ? skill.outputs : []).map((output) => output && output.type).filter(Boolean);
+  }
+
+  function inputTypes(skill) {
+    return (Array.isArray(skill.inputs) ? skill.inputs : []).map((input) => input && input.type).filter(Boolean);
+  }
+
+  function visibleCapabilities(skill) {
+    return compactList((skill.capabilities || []).filter((item) => !String(item || "").startsWith("produce:")), 12);
+  }
+
+  function producedArtifacts(skill) {
+    const fromOutputs = outputTypes(skill);
+    const fromCapabilities = (skill.capabilities || [])
+      .map((item) => String(item || ""))
+      .filter((item) => item.startsWith("produce:"))
+      .map((item) => item.slice("produce:".length));
+    return compactList([...fromOutputs, ...fromCapabilities], 8);
+  }
+
+  function skillPurpose(skill) {
+    const strategy = skill.implementation_strategy || skill.runtime || "";
+    if (strategy === "deterministic_entity_list_renderer") {
+      return "Формирует читаемый ответ пользователю из уже найденного списка ссылок на объекты. Не выполняет запросы к 1С и не меняет факты.";
+    }
+    if (strategy === "deterministic_table_renderer") {
+      return "Формирует читаемый ответ пользователю из табличного результата. Не выполняет запросы к 1С и не пересчитывает данные.";
+    }
+    if (strategy === "deterministic_count_entities") {
+      return "Считает количество элементов в уже полученном списке объектов. Нужен для вопросов вида «сколько найдено».";
+    }
+    if (strategy === "context_artifact_lookup") {
+      return "Берет уже разрешенную сущность из контекста диалога, чтобы следующий навык мог использовать ее без повторного поиска.";
+    }
+    if (strategy === "semantic_binding_query") {
+      return "Получает объекты 1С через MCP, используя binding к метаданным текущей конфигурации и семантические фильтры.";
+    }
+    if (strategy === "semantic_measure_query") {
+      return "Получает числовую метрику или остатки через MCP, используя binding к регистрам/таблицам текущей конфигурации.";
+    }
+    if (strategy === "semantic_document_count_query") {
+      return "Строит read-only запрос к документам 1С и возвращает количество документов с группировкой по периоду.";
+    }
+    if (strategy === "semantic_document_list_query") {
+      return "Строит read-only запрос к документам 1С и возвращает список документов выбранного типа за период.";
+    }
+    if (strategy === "learned_query") {
+      return "Навык, созданный агентом по успешному запросу. Повторно использует сохраненную схему выборки и проверяет зависимость от метаданных конфигурации.";
+    }
+    return skill.description || "Описание навыка не заполнено.";
+  }
+
+  function skillApplicability(skill) {
+    const outputs = producedArtifacts(skill);
+    const inputs = inputTypes(skill);
+    const filters = compactList(skill.supported_filter_roles || [], 12).map(displayLabel);
+    const capabilities = visibleCapabilities(skill);
+    const parts = [];
+    if (outputs.length) {
+      parts.push(`когда плану нужен результат типа ${outputs.join(", ")}`);
+    }
+    if (inputs.length) {
+      parts.push(`и уже доступны входы ${inputs.join(", ")}`);
+    }
+    if (filters.length) {
+      parts.push(`поддерживаемые фильтры: ${filters.join(", ")}`);
+    }
+    if (capabilities.length) {
+      parts.push(`ключевые признаки: ${capabilities.map(displayLabel).join(", ")}`);
+    }
+    if (!parts.length && skill.description) {
+      parts.push(skill.description);
+    }
+    return parts.length ? `<p>${escapeHtml(parts.join("; "))}.</p>` : "";
+  }
+
+  function implementationFacts(skill) {
+    const implementation = skill.implementation && typeof skill.implementation === "object" ? skill.implementation : {};
+    const metrics = Array.isArray(implementation.metrics) ? implementation.metrics.map((metric) => metric.label || metric.expression).filter(Boolean).join(", ") : "";
+    const dependencies = Array.isArray(implementation.metadata_dependencies) ? implementation.metadata_dependencies.join(", ") : "";
+    return renderFacts({
+      "Роль": displayLabel(skill.semantic_role || ""),
+      "Тип навыка": displayLabel(skill.kind || ""),
+      "Стратегия": displayLabel(skill.implementation_strategy || skill.runtime || ""),
+      "Источник данных": implementation.source || "",
+      "Метрики": metrics,
+      "Зависимости метаданных": dependencies,
+      "Файл контракта": skill.source_path || displayLabel(skill.source || ""),
+    });
+  }
+
   function metadataObjectNames(candidate) {
     if (!candidate || !Array.isArray(candidate.metadata_objects)) {
       return [];
@@ -203,6 +363,7 @@
   function renderSkillCard(skill) {
     const item = skill || {};
     const id = item.skill_id || item.id || "";
+    const outputs = producedArtifacts(item);
     return `<article class="entity-card skill-card" data-skill-id="${escapeHtml(id)}">
       <div class="entity-card-header">
         <div>
@@ -211,7 +372,14 @@
         </div>
         ${renderStatusPill(item.status || item.lifecycle_status || "active")}
       </div>
-      ${renderFacts({ Идентификатор: id, "Среда выполнения": displayLabel(item.runtime || item.implementation_strategy || ""), Источник: item.source_path || displayLabel(item.source || "") })}
+      ${renderInfoSection("Что делает", `<p>${escapeHtml(skillPurpose(item))}</p>`)}
+      ${renderInfoSection("Когда выбирается", skillApplicability(item))}
+      ${renderInfoSection("Что принимает", renderPortList(item.inputs, "Входные данные не требуются."))}
+      ${renderInfoSection("Что возвращает", renderPortList(item.outputs, "Выходной артефакт не описан."))}
+      ${outputs.length ? renderTags(outputs) : ""}
+      ${renderInfoSection("Технический контракт", implementationFacts(item))}
+      ${renderTags(item.tags)}
+      ${item.description ? renderJsonDetails("Исходное описание контракта", { description: item.description, capabilities: item.capabilities || [] }) : ""}
       <div class="entity-actions">
         ${actionButton("Открыть", "open-skill", "skill-id", id, "primary-button")}
         ${actionButton("Отметить проверенным", "skill-promote", "skill-id", id, "secondary-button")}

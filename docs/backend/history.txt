@@ -1,3 +1,6 @@
+5.0.0-alpha.58
+- Backend behavior is unchanged. This release expands frontend rendering of existing skill contract fields.
+
 5.0.0-alpha.57
 - Backend behavior is unchanged. This release only clarifies frontend lifecycle action labels.
 

@@ -110,6 +110,47 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
             capture_output=True,
         )
 
+    @unittest.skipUnless(shutil.which("osascript"), "JavaScriptCore renderer check requires osascript")
+    def test_static_renderers_show_skill_contract_details(self) -> None:
+        script = """
+ObjC.import('Foundation');
+var window = {};
+const path = $.NSString.stringWithUTF8String('src/wiicon5/web/static/renderers.js');
+const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null).js;
+eval(text);
+const html = window.WiiconRenderers.renderSummary({
+  ok: true,
+  skill: {
+    skill_id: 'render_entity_list_answer',
+    kind: 'presentation',
+    status: 'stable',
+    description: 'Render a typed entity reference list into a user-facing answer without changing facts.',
+    capabilities: ['render_answer', 'produce:UserAnswer'],
+    inputs: [{ name: 'items', type: 'EntityRefList', required: true, description: 'Typed entity reference list' }],
+    outputs: [{ name: 'answer', type: 'UserAnswer', required: true, description: 'Final user answer' }],
+    tags: ['presentation'],
+    supported_filter_roles: [],
+    implementation_strategy: 'deterministic_entity_list_renderer',
+    source_path: '/tmp/render_entity_list_answer.json'
+  }
+});
+for (const expected of ['Что делает', 'Когда выбирается', 'Что принимает', 'Что возвращает', 'EntityRefList', 'UserAnswer', 'рендер списка объектов']) {
+  if (html.indexOf(expected) < 0) {
+    throw new Error('skill detail is missing ' + expected + ': ' + html);
+  }
+}
+if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
+  throw new Error('old technical-only skill card leaked into renderer: ' + html);
+}
+"""
+        subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            cwd=PROJECT_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
     def test_run_http_server_accepts_cli_workbench_dependencies(self) -> None:
         question = "Привет"
         agent = AgentOrchestrator(
