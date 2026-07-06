@@ -214,7 +214,7 @@
       ${renderFacts({ Идентификатор: id, "Среда выполнения": displayLabel(item.runtime || item.implementation_strategy || ""), Источник: item.source_path || displayLabel(item.source || "") })}
       <div class="entity-actions">
         ${actionButton("Открыть", "open-skill", "skill-id", id, "primary-button")}
-        ${actionButton("Повысить статус", "skill-promote", "skill-id", id, "secondary-button")}
+        ${actionButton("Отметить проверенным", "skill-promote", "skill-id", id, "secondary-button")}
         ${actionButton("Заблокировать", "skill-block", "skill-id", id, "ghost-button")}
       </div>
     </article>`;

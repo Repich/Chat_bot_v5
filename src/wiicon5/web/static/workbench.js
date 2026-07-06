@@ -77,7 +77,7 @@
   const SKILL_ACTION_LABELS = {
     block: "блокировка",
     deprecate: "пометка устаревшим",
-    promote: "повышение статуса",
+    promote: "изменение статуса навыка",
     rollback: "откат",
   };
 
