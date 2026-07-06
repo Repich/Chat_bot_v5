@@ -655,15 +655,12 @@ def make_handler(
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "").strip()
                 comment = str(payload.get("comment") or "").strip()
-                smoke_id = str(payload.get("smoke_id") or "").strip()
+                requested_smoke_id = str(payload.get("smoke_id") or "").strip()
                 if not actor:
                     self._send_json(400, {"ok": False, "error": "actor_required"})
                     return
                 if not comment:
                     self._send_json(400, {"ok": False, "error": "approval_comment_required"})
-                    return
-                if not smoke_id:
-                    self._send_json(400, {"ok": False, "error": "smoke_id_required"})
                     return
                 draft = effective_draft_store.require_draft(draft_id)
                 preview = effective_preview_service.preview(draft)
@@ -676,7 +673,8 @@ def make_handler(
                     draft_hash=draft_hash(draft),
                     preview_hash=fingerprints["preview_hash"],
                 )
-                if smoke is None or str(smoke.get("smoke_id") or "") != smoke_id:
+                smoke_id = str((smoke or {}).get("smoke_id") or "")
+                if smoke is None or (requested_smoke_id and smoke_id != requested_smoke_id):
                     self._send_json(400, {"ok": False, "error": "current_successful_smoke_required"})
                     return
                 approval = effective_approval_store.approve(
@@ -727,7 +725,7 @@ def make_handler(
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "").strip()
                 comment = str(payload.get("comment") or "").strip()
-                smoke_id = str(payload.get("smoke_id") or "").strip()
+                requested_smoke_id = str(payload.get("smoke_id") or "").strip()
                 if not actor:
                     self._send_json(400, {"ok": False, "error": "actor_required"})
                     return
@@ -736,9 +734,6 @@ def make_handler(
                     return
                 if not comment:
                     self._send_json(400, {"ok": False, "error": "approval_comment_required"})
-                    return
-                if not smoke_id:
-                    self._send_json(400, {"ok": False, "error": "smoke_id_required"})
                     return
                 draft = effective_draft_store.require_draft(draft_id)
                 trace = effective_workbench_trace.start(
@@ -781,7 +776,8 @@ def make_handler(
                     draft_hash=draft_hash(draft),
                     preview_hash=fingerprints["preview_hash"],
                 )
-                if smoke is None or str(smoke.get("smoke_id") or "") != smoke_id:
+                smoke_id = str((smoke or {}).get("smoke_id") or "")
+                if smoke is None or (requested_smoke_id and smoke_id != requested_smoke_id):
                     self._send_json(400, {"ok": False, "error": "current_successful_smoke_required"})
                     return
                 effective_approval_store.approve(

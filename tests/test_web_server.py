@@ -534,7 +534,6 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
                         {
                             "actor": "approver",
                             "comment": "Smoke sample reviewed",
-                            "smoke_id": smoke_draft["smoke"]["smoke_id"],
                         },
                         ensure_ascii=False,
                     ).encode("utf-8"),
@@ -557,7 +556,6 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
                             "actor": "publisher",
                             "approve": True,
                             "comment": "Publication sample reviewed",
-                            "smoke_id": smoke_draft["smoke"]["smoke_id"],
                         },
                         ensure_ascii=False,
                     ).encode("utf-8"),
@@ -801,9 +799,11 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
         self.assertTrue(smoke_trace_file_exists)
         self.assertTrue(approved_draft["approval"]["approval_id"])
         self.assertEqual(approved_draft["approval"]["decision"], "approved")
+        self.assertEqual(approved_draft["approval"]["smoke_id"], smoke_draft["smoke"]["smoke_id"])
         self.assertEqual(draft_approvals["latest"]["approval_id"], approved_draft["approval"]["approval_id"])
         self.assertTrue(published_candidate["publication"]["ok"], published_candidate)
         self.assertEqual(published_candidate["publication"]["skill"]["status"], "candidate")
+        self.assertEqual(published_candidate["publication"]["approval"]["smoke_id"], smoke_draft["smoke"]["smoke_id"])
         self.assertTrue(publish_trace_file_exists)
         self.assertNotEqual(published_candidate["publication"]["approval"]["approval_id"], approved_draft["approval"]["approval_id"])
         self.assertTrue(regression_run["ok"], regression_run)

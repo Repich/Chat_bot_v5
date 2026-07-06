@@ -74,7 +74,7 @@
 
   function showFatalUiError(error) {
     const element = optionalElement("globalError");
-    const message = error && error.stack ? error.stack : String(error && error.message ? error.message : error);
+    const message = error && error.message ? error.message : String(error || "");
     if (element) {
       element.textContent = `Ошибка интерфейса: ${message}`;
       element.classList.remove("hidden");

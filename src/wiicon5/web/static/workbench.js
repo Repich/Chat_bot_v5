@@ -242,27 +242,35 @@
   }
 
   async function postDraftAction(action, button) {
-    const draftId = currentDraftId();
-    if (!draftId) {
-      throw new Error("Укажите идентификатор черновика.");
-    }
-    const payload = { actor: "web-workbench" };
-    if (action === "smoke") {
-      payload.params = parseJsonInput("smokeParamsInput", {});
-    }
-    if (action === "approve" || action === "reject" || action === "publish-candidate") {
-      payload.actor = "web-approver";
-      payload.comment = readValue("approvalCommentInput");
-      payload.smoke_id = window.WiiconState.workbench.latestSmokeId;
-      if (action === "publish-candidate") {
-        payload.approve = true;
-      }
-    }
     const label = DRAFT_ACTION_LABELS[action] || "Действие с черновиком";
     return runWorkbenchAction(
       button,
       label,
-      () => api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}/${action}`, { method: "POST", body: payload }),
+      () => {
+        const draftId = currentDraftId();
+        if (!draftId) {
+          throw new Error("Укажите идентификатор черновика.");
+        }
+        const payload = { actor: "web-workbench" };
+        if (action === "smoke") {
+          payload.params = parseJsonInput("smokeParamsInput", {});
+        }
+        if (action === "approve" || action === "reject" || action === "publish-candidate") {
+          const comment = readValue("approvalCommentInput");
+          if (!comment) {
+            throw new Error("Заполните комментарий: что проверено человеком и почему действие можно выполнить.");
+          }
+          payload.actor = "web-approver";
+          payload.comment = comment;
+          if (window.WiiconState.workbench.latestSmokeId) {
+            payload.smoke_id = window.WiiconState.workbench.latestSmokeId;
+          }
+          if (action === "publish-candidate") {
+            payload.approve = true;
+          }
+        }
+        return api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}/${action}`, { method: "POST", body: payload });
+      },
       (data) => {
         if (data.smoke && data.smoke.smoke_id) {
           window.WiiconState.workbench.latestSmokeId = data.smoke.smoke_id;

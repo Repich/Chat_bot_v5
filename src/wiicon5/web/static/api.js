@@ -11,6 +11,46 @@
     }
   }
 
+  const ERROR_MESSAGES = {
+    actor_required: "Не указан исполнитель действия.",
+    approval_comment_required: "Заполните комментарий: что проверено человеком и почему действие можно выполнить.",
+    current_successful_smoke_required: "Перед утверждением или публикацией запустите успешную проверку черновика. Если черновик менялся после проверки, запустите проверку заново.",
+    draft_not_found: "Черновик не найден. Обновите список черновиков и откройте нужную карточку снова.",
+    missing_admin_approval: "Для этого изменения нужно явное подтверждение администратора.",
+    missing_human_approval: "Для этого действия требуется утверждение человеком.",
+    missing_regression_case: "Перед повышением статуса нужен связанный регрессионный сценарий.",
+    missing_successful_regression_replay: "Перед повышением статуса нужно успешно прогнать регрессионные проверки.",
+    previous_approval_rejected: "Последнее решение по черновику было отклоняющим. Для публикации нужен новый успешный цикл проверки.",
+    preview_failed: "Предпросмотр запроса не прошел проверку. Исправьте черновик и повторите предпросмотр.",
+    publish_approval_required: "Публикация требует явного подтверждения.",
+    smoke_id_required: "Перед утверждением запустите проверку черновика.",
+    wrong_approval_level: "Утверждение выполнено не для уровня публикации кандидата.",
+  };
+
+  function issueMessage(issue) {
+    if (!issue || typeof issue !== "object") {
+      return "";
+    }
+    const code = String(issue.code || "");
+    return ERROR_MESSAGES[code] || issue.message || code;
+  }
+
+  function firstIssueMessage(data) {
+    const containers = [data.lifecycle, data.publication, data.preview, data.smoke];
+    for (const container of containers) {
+      const issues = container && Array.isArray(container.issues) ? container.issues : [];
+      if (issues.length) {
+        return issueMessage(issues[0]);
+      }
+    }
+    return "";
+  }
+
+  function backendErrorMessage(data, response) {
+    const code = data && data.error ? String(data.error) : "";
+    return (data && data.message) || ERROR_MESSAGES[code] || firstIssueMessage(data || {}) || code || `HTTP ${response.status}`;
+  }
+
   function adminHeaders(extraHeaders) {
     const headers = Object.assign({}, extraHeaders || {});
     const state = window.WiiconState || {};
@@ -45,7 +85,7 @@
       }
     }
     if (!response.ok || data.ok === false) {
-      const message = data.message || data.error || `HTTP ${response.status}`;
+      const message = backendErrorMessage(data, response);
       throw new ApiError(message, { status: response.status, url, payload: data });
     }
     return data;
