@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 import threading
 import unittest
 import urllib.error
@@ -18,6 +21,7 @@ from wiicon5.mcp.client import DictMcpClient
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
+from wiicon5.web.admin_security import AdminSecurityConfig
 from wiicon5.web.server import make_handler, run_http_server
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.preview import QueryPreviewService
@@ -29,6 +33,38 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class WebServerTests(unittest.TestCase):
+    def assertStaticRequiredElementsExist(self, html: str, *scripts: str) -> None:
+        ids = set(re.findall(r'id="([^"]+)"', html))
+        required_ids = set()
+        for script in scripts:
+            required_ids.update(re.findall(r'requiredElement\("([^"]+)"\)', script))
+        self.assertFalse(required_ids - ids, f"Missing required DOM ids: {sorted(required_ids - ids)}")
+
+    def assertButtonBindings(self, html: str, script: str, button_ids: list[str]) -> None:
+        ids = set(re.findall(r'id="([^"]+)"', html))
+        for button_id in button_ids:
+            self.assertIn(button_id, ids)
+            self.assertIn(f'optionalBind("{button_id}"', script)
+
+    @unittest.skipUnless(shutil.which("osascript"), "JavaScriptCore syntax check requires osascript")
+    def test_static_javascript_syntax(self) -> None:
+        script = """
+ObjC.import('Foundation');
+const files = ['api.js', 'renderers.js', 'workbench.js', 'app.js'];
+for (const file of files) {
+  const path = $.NSString.stringWithUTF8String('src/wiicon5/web/static/' + file);
+  const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null).js;
+  new Function(text);
+}
+"""
+        subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            cwd=PROJECT_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
     def test_run_http_server_accepts_cli_workbench_dependencies(self) -> None:
         question = "Привет"
         agent = AgentOrchestrator(
@@ -82,6 +118,55 @@ class WebServerTests(unittest.TestCase):
                         preview_service=preview_service,
                         smoke_service=smoke_service,
                     )
+
+    def test_admin_token_config_and_authorization(self) -> None:
+        agent = AgentOrchestrator(
+            registry=SkillRegistry.load_from_dir(PROJECT_ROOT / "skills"),
+            decomposer=ScriptedGoalDecomposer({}),
+        )
+        with TemporaryDirectory() as temp_dir:
+            onboarding_manager = OnboardingManager(bot_instance_root=Path(temp_dir) / "bot")
+            server = HTTPServer(
+                ("127.0.0.1", 0),
+                make_handler(
+                    agent,
+                    onboarding_manager=onboarding_manager,
+                    admin_security=AdminSecurityConfig(token="secret-token"),
+                ),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                ui_config = json.loads(
+                    urllib.request.urlopen(f"http://{host}:{port}/api/ui/config", timeout=5).read().decode("utf-8")
+                )
+                try:
+                    urllib.request.urlopen(f"http://{host}:{port}/api/admin/onboarding/status", timeout=5).read()
+                    denied_status = 200
+                except urllib.error.HTTPError as exc:
+                    denied_status = exc.code
+                    denied_body = json.loads(exc.read().decode("utf-8"))
+                request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/onboarding/status",
+                    headers={"X-WIICON5-Admin-Token": "secret-token"},
+                )
+                allowed = json.loads(urllib.request.urlopen(request, timeout=5).read().decode("utf-8"))
+                static_api = (
+                    urllib.request.urlopen(f"http://{host}:{port}/static/api.js", timeout=5).read().decode("utf-8")
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertTrue(ui_config["ok"])
+        self.assertTrue(ui_config["config"]["admin"]["token_required"])
+        self.assertEqual(denied_status, 401)
+        self.assertEqual(denied_body["error"], "admin_token_required")
+        self.assertTrue(allowed["ok"])
+        self.assertIn("function adminHeaders", static_api)
+        self.assertIn("X-WIICON5-Admin-Token", static_api)
 
     def test_health_and_chat_return_json(self) -> None:
         question = "Привет"
@@ -165,6 +250,9 @@ class WebServerTests(unittest.TestCase):
                 version = json.loads(
                     urllib.request.urlopen(f"http://{host}:{port}/api/version", timeout=5).read().decode("utf-8")
                 )
+                ui_config = json.loads(
+                    urllib.request.urlopen(f"http://{host}:{port}/api/ui/config", timeout=5).read().decode("utf-8")
+                )
                 onboarding_status = json.loads(
                     urllib.request.urlopen(
                         f"http://{host}:{port}/api/admin/onboarding/status",
@@ -213,6 +301,16 @@ class WebServerTests(unittest.TestCase):
                 )
                 chat_page_response = urllib.request.urlopen(f"http://{host}:{port}/chat", timeout=5)
                 chat_page = chat_page_response.read().decode("utf-8")
+                static_css_response = urllib.request.urlopen(f"http://{host}:{port}/static/styles.css", timeout=5)
+                static_css = static_css_response.read().decode("utf-8")
+                static_app = urllib.request.urlopen(f"http://{host}:{port}/static/app.js", timeout=5).read().decode("utf-8")
+                static_api = urllib.request.urlopen(f"http://{host}:{port}/static/api.js", timeout=5).read().decode("utf-8")
+                static_workbench = (
+                    urllib.request.urlopen(f"http://{host}:{port}/static/workbench.js", timeout=5).read().decode("utf-8")
+                )
+                static_renderers = (
+                    urllib.request.urlopen(f"http://{host}:{port}/static/renderers.js", timeout=5).read().decode("utf-8")
+                )
                 request = urllib.request.Request(
                     f"http://{host}:{port}/chat",
                     data=json.dumps({"message": question, "session_id": "s1"}, ensure_ascii=False).encode("utf-8"),
@@ -486,30 +584,36 @@ class WebServerTests(unittest.TestCase):
 
         self.assertTrue(health["ok"])
         self.assertEqual(version["version"], (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertTrue(ui_config["ok"])
+        self.assertEqual(ui_config["config"]["version"], version["version"])
+        self.assertFalse(ui_config["config"]["admin"]["token_required"])
         self.assertIn("text/html", chat_page_response.headers["Content-Type"])
+        self.assertIn("text/css", static_css_response.headers["Content-Type"])
         self.assertIn("WIICON ChatBot 5", chat_page)
+        self.assertIn("/static/app.js", chat_page)
+        self.assertIn("/static/api.js", chat_page)
+        self.assertIn("/static/workbench.js", chat_page)
+        self.assertIn("/static/renderers.js", chat_page)
+        self.assertIn("topNav", chat_page)
+        self.assertIn("view-chat", chat_page)
+        self.assertIn("view-workbench", chat_page)
+        self.assertIn("view-metadata", chat_page)
+        self.assertIn("view-docs", chat_page)
+        self.assertIn("view-admin", chat_page)
         self.assertIn("chatForm", chat_page)
         self.assertIn("appVersion", chat_page)
         self.assertIn("sessionList", chat_page)
         self.assertIn("newSessionButton", chat_page)
         self.assertIn("settingsDetails", chat_page)
         self.assertIn("reloadHistoryButton", chat_page)
+        self.assertIn("trainingBanner", chat_page)
         self.assertIn("documentationPanel", chat_page)
         self.assertIn("docsSelect", chat_page)
         self.assertIn("docsOpenButton", chat_page)
-        self.assertIn("loadDocumentationIndex", chat_page)
-        self.assertIn("openSelectedDocumentation", chat_page)
-        self.assertIn("renderMarkdownContent", chat_page)
-        self.assertIn("createStorage", chat_page)
-        self.assertIn("storage.getItem", chat_page)
-        self.assertIn("admin-subpanel", chat_page)
-        self.assertIn("Создать или проверить draft", chat_page)
-        self.assertIn("Approval, публикация и кандидаты", chat_page)
-        self.assertIn("Lifecycle и regression", chat_page)
-        self.assertIn("Отладка запроса", chat_page)
-        self.assertIn("trainingBanner", chat_page)
         self.assertIn("startOnboardingButton", chat_page)
-        self.assertIn("workbenchPanel", chat_page)
+        self.assertIn("adminTokenInput", chat_page)
+        self.assertIn("workbench-layout", chat_page)
+        self.assertIn("workspace-inspector", chat_page)
         self.assertIn("skillCatalogButton", chat_page)
         self.assertIn("draftListButton", chat_page)
         self.assertIn("onboardingCandidatesButton", chat_page)
@@ -537,8 +641,8 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("draftGroupFieldInput", chat_page)
         self.assertIn("draftMeasureFieldInput", chat_page)
         self.assertIn("draftFieldsConfirmedInput", chat_page)
-        self.assertIn("field-picker", chat_page)
-        self.assertIn("Use as source", chat_page)
+        self.assertIn("field-picker", static_app)
+        self.assertIn("Use as source", static_app)
         self.assertIn("skillLifecycleIdInput", chat_page)
         self.assertIn("skillDetailsButton", chat_page)
         self.assertIn("skillRegressionCasesInput", chat_page)
@@ -549,6 +653,61 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("runRegressionButton", chat_page)
         self.assertIn("regressionCasesPathInput", chat_page)
         self.assertIn("publishDraftButton", chat_page)
+        self.assertIn(".workbench-layout", static_css)
+        self.assertIn("ADMIN_TOKEN_STORAGE_KEY", static_api)
+        self.assertIn("function adminHeaders", static_api)
+        self.assertIn("function fetchAdmin", static_api)
+        self.assertIn("X-WIICON5-Admin-Token", static_api)
+        self.assertIn("requiredElement", static_app)
+        self.assertIn("optionalBind", static_app)
+        self.assertIn("showFatalUiError", static_app)
+        self.assertIn("window.addEventListener(\"error\"", static_app)
+        self.assertIn("window.addEventListener(\"unhandledrejection\"", static_app)
+        self.assertIn("withButtonState", static_app)
+        self.assertIn("runAction", static_app)
+        self.assertIn("runWorkbenchAction", static_app)
+        self.assertIn('messageInput").addEventListener("keydown"', static_app)
+        self.assertIn("requestSubmit()", static_app)
+        self.assertIn("startTitleBlink", static_app)
+        self.assertIn("Новое сообщение", static_app)
+        self.assertIn("loadDocumentationIndex", static_app)
+        self.assertIn("openSelectedDocumentation", static_app)
+        self.assertIn("renderMarkdownContent", static_renderers)
+        self.assertIn("renderSkillCard", static_renderers)
+        self.assertIn("renderDraftCard", static_renderers)
+        self.assertIn("renderMetadataObjectCard", static_renderers)
+        self.assertIn("renderJsonDetails", static_renderers)
+        self.assertIn("loadSkillCatalog", static_workbench)
+        self.assertIn("loadOnboardingCandidates", static_workbench)
+        self.assertIn("loadSynthesisCandidates", static_workbench)
+        self.assertIn("postDraftAction", static_workbench)
+        self.assertIn("postCandidateAction", static_workbench)
+        self.assertIn("postSynthesisCandidateAction", static_workbench)
+        self.assertIn("postSkillLifecycleAction", static_workbench)
+        self.assertIn("runRegressionReplay", static_workbench)
+        self.assertIn("renderWorkbenchSummary", static_workbench)
+        self.assertIn("buildTopMetricDraftFromForm", static_workbench)
+        self.assertStaticRequiredElementsExist(chat_page, static_app)
+        self.assertButtonBindings(
+            chat_page,
+            static_app,
+            [
+                "skillCatalogButton",
+                "draftListButton",
+                "metadataSearchButton",
+                "createDraftButton",
+                "previewDraftButton",
+                "smokeDraftButton",
+                "approveDraftButton",
+                "publishDraftButton",
+                "skillPromoteButton",
+                "runRegressionButton",
+            ],
+        )
+        self.assertIn("/api/admin/skills/catalog", static_workbench)
+        self.assertIn("/api/admin/workbench/drafts", static_workbench)
+        self.assertIn("/api/admin/metadata/search", static_app)
+        self.assertIn("/api/admin/regression/run", static_workbench)
         self.assertTrue(onboarding_status["ok"])
         self.assertFalse(onboarding_status["status"]["trained"])
         self.assertTrue(onboarding_candidates["ok"])
@@ -605,30 +764,12 @@ class WebServerTests(unittest.TestCase):
         self.assertTrue(imported_draft["ok"])
         self.assertEqual(imported_draft["draft"]["source_kind"], "trace")
         self.assertEqual(imported_draft["draft"]["example_questions"], ["Покажи товар с самым большим остатком"])
-        self.assertIn('input.addEventListener("keydown"', chat_page)
-        self.assertIn("form.requestSubmit()", chat_page)
-        self.assertIn("startTitleBlink", chat_page)
-        self.assertIn("Новое сообщение", chat_page)
-        self.assertIn("loadSkillCatalog", chat_page)
-        self.assertIn("loadOnboardingCandidates", chat_page)
-        self.assertIn("loadSynthesisCandidates", chat_page)
-        self.assertIn("postDraftAction", chat_page)
-        self.assertIn("postCandidateAction", chat_page)
-        self.assertIn("postSynthesisCandidateAction", chat_page)
-        self.assertIn("postSkillLifecycleAction", chat_page)
-        self.assertIn("runRegressionReplay", chat_page)
-        self.assertIn("renderWorkbenchSummary", chat_page)
-        self.assertIn("renderSkillCard", chat_page)
-        self.assertIn("renderDraftCard", chat_page)
-        self.assertIn("renderMetadataObjectCard", chat_page)
-        self.assertIn("applyMetadataSource", chat_page)
-        self.assertIn("applyMetadataField", chat_page)
-        self.assertIn("loadSkillDetails", chat_page)
-        self.assertIn("loadDraftDetails", chat_page)
-        self.assertIn("loadMetadataObject", chat_page)
-        self.assertIn("buildTopMetricDraftFromForm", chat_page)
-        self.assertIn('postDraftAction("approve"', chat_page)
-        self.assertIn('postSkillLifecycleAction("promote"', chat_page)
+        self.assertIn("applyMetadataSource", static_workbench)
+        self.assertIn("applyMetadataField", static_workbench)
+        self.assertIn("loadSkillDetails", static_workbench)
+        self.assertIn("loadDraftDetails", static_workbench)
+        self.assertIn('postDraftAction("approve"', static_app)
+        self.assertIn('postSkillLifecycleAction("promote"', static_app)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")
         self.assertEqual([item["role"] for item in conversation["messages"]], ["user", "assistant"])

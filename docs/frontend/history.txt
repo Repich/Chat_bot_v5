@@ -1,3 +1,9 @@
+5.0.0-alpha.50
+- Split the web client out of the Python HTTP router into static index.html, styles.css, api.js, renderers.js, workbench.js, and app.js.
+- Reworked the client into top-level Chat, Workbench, Metadata, Documentation, and Administration views instead of hiding Workbench controls inside chat settings.
+- Added admin token storage and token-aware fetchAdmin/adminHeaders wrappers for all Workbench admin API calls.
+- Added safe DOM helpers, global UI error reporting, shared button busy/error states, and Workbench result cards with raw JSON hidden in technical details.
+
 5.0.0-alpha.49
 - Added a safe in-memory storage fallback so Safari private browsing does not stop the page script before button handlers are registered.
 - Collapsed advanced Workbench draft, approval, candidate, lifecycle, regression, and debug controls into explicit subpanels so settings stay readable by default.

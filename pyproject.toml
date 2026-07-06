@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wiicon-chatbot-v5"
-version = "5.0.0a49"
+version = "5.0.0a50"
 description = "Skill-first WIICON ChatBot 5 core"
 requires-python = ">=3.9"
 dependencies = []
@@ -14,6 +14,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 wiicon5 = [
+  "web/static/*.html",
+  "web/static/*.css",
+  "web/static/*.js",
   "knowledge/one_c_wiki/*.md",
   "knowledge/one_c_wiki/raw/*.md",
   "knowledge/one_c_wiki/sources/*.md",

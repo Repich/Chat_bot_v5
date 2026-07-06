@@ -1,3 +1,8 @@
+5.0.0-alpha.50
+- Added /api/ui/config so the web client can see version, admin token requirements, localhost restriction, and raw-query-edit policy.
+- The HTTP server now serves the web client from wiicon5/web/static instead of embedding a large HTML string in backend code.
+- Added guarded static file serving for /static/* with no-store cache headers and path traversal protection.
+
 5.0.0-alpha.49
 - No backend behavior changes. This release keeps the alpha.48 server startup wiring and updates the client shell.
 

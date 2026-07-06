@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Dict, Type
@@ -26,7 +27,6 @@ from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 from wiicon5.workbench.trace import WorkbenchTraceWriter
 from wiicon5.workbench.trace_import import TraceDraftImporter
 from wiicon5.web.admin_security import AdminSecurityConfig
-from wiicon5.web.workbench_ui import CHAT_HTML
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -34,6 +34,7 @@ VERSION_FILE = PROJECT_ROOT / "VERSION"
 DOCS_ROOT = PROJECT_ROOT / "docs"
 BACKEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "backend" / "history.txt"
 FRONTEND_HISTORY_FILE = PROJECT_ROOT / "docs" / "frontend" / "history.txt"
+STATIC_ROOT = Path(__file__).resolve().parent / "static"
 
 
 def make_handler(
@@ -110,6 +111,9 @@ def make_handler(
                 return
             if path == "/api/version":
                 self._send_json(200, {"ok": True, "service": "wiicon5", "version": current_version()})
+                return
+            if path == "/api/ui/config":
+                self._send_json(200, {"ok": True, "config": ui_config(effective_admin_security)})
                 return
             if path == "/api/docs":
                 self._send_json(200, {"ok": True, "docs": documentation_index()})
@@ -260,8 +264,15 @@ def make_handler(
             if path == "/history/frontend":
                 self._send_text(200, read_text_file(FRONTEND_HISTORY_FILE))
                 return
+            if path.startswith("/static/"):
+                static_file = static_file_from_path(path)
+                if static_file is None:
+                    self._send_json(404, {"ok": False, "error": "static_not_found"})
+                    return
+                self._send_static_file(200, static_file)
+                return
             if path in {"/", "/chat"}:
-                self._send_html(200, CHAT_HTML)
+                self._send_static_file(200, STATIC_ROOT / "index.html")
                 return
             self._send_json(404, {"ok": False, "error": "not_found"})
 
@@ -934,10 +945,15 @@ def make_handler(
             self.end_headers()
             self.wfile.write(raw)
 
-        def _send_html(self, status_code: int, html: str) -> None:
-            raw = html.encode("utf-8")
+        def _send_static_file(self, status_code: int, path: Path) -> None:
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                self._send_json(404, {"ok": False, "error": "static_not_found"})
+                return
+            content_type = static_content_type(path)
             self.send_response(status_code)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
@@ -1000,6 +1016,47 @@ def read_text_file(path: Path) -> str:
         return path.read_text(encoding="utf-8").strip() + "\n"
     except OSError:
         return "История изменений пока не найдена.\n"
+
+
+def ui_config(admin_security: AdminSecurityConfig) -> Dict[str, Any]:
+    return {
+        "version": current_version(),
+        "admin": {
+            "enabled": admin_security.enabled,
+            "token_required": bool(admin_security.token),
+            "local_only": admin_security.bind_local_only,
+            "raw_query_edit_allowed": admin_security.allow_raw_query_edit,
+        },
+        "bot": {"id": "local", "name": "WIICON ChatBot 5"},
+    }
+
+
+def static_file_from_path(path: str) -> Path | None:
+    requested = unquote(path.removeprefix("/static/")).strip("/")
+    if not requested:
+        return None
+    candidate = (STATIC_ROOT / requested).resolve()
+    static_root = STATIC_ROOT.resolve()
+    try:
+        candidate.relative_to(static_root)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def static_content_type(path: Path) -> str:
+    if path.suffix == ".js":
+        return "application/javascript; charset=utf-8"
+    if path.suffix == ".css":
+        return "text/css; charset=utf-8"
+    if path.suffix in {".html", ".htm"}:
+        return "text/html; charset=utf-8"
+    guessed = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    if guessed.startswith("text/"):
+        return f"{guessed}; charset=utf-8"
+    return guessed
 
 
 def documentation_index() -> list[Dict[str, str]]:

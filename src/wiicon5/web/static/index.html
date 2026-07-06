@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WIICON ChatBot 5</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="app-header">
+      <div class="title-block">
+        <h1>WIICON ChatBot 5</h1>
+        <span id="appVersion" class="version">version loading</span>
+      </div>
+      <nav id="topNav" class="top-nav" aria-label="Разделы">
+        <button class="nav-button active" type="button" data-view="chat">Чат</button>
+        <button class="nav-button" type="button" data-view="workbench">Workbench</button>
+        <button class="nav-button" type="button" data-view="metadata">Метаданные</button>
+        <button class="nav-button" type="button" data-view="docs">Документация</button>
+        <button class="nav-button" type="button" data-view="admin">Администрирование</button>
+      </nav>
+      <div class="status">
+        <span class="dot"></span>
+        <span id="appStatus">готов</span>
+      </div>
+    </header>
+
+    <div id="trainingBanner" class="training-banner"></div>
+    <div id="globalError" class="global-error hidden" role="alert"></div>
+
+    <main class="view-host">
+      <section id="view-chat" class="app-view active" data-view-panel="chat">
+        <aside class="chat-sidebar">
+          <label class="field-label" for="sessionIdInput">Session ID</label>
+          <input id="sessionIdInput" class="text-input" type="text" value="web-test">
+          <button id="newSessionButton" class="secondary-button" type="button">Новая сессия</button>
+          <h2 class="panel-title">Сессии</h2>
+          <div id="sessionList" class="session-list">Сохраненных сессий пока нет.</div>
+          <details id="settingsDetails" class="settings-panel">
+            <summary>Настройки чата</summary>
+            <div class="settings-content">
+              <button id="reloadHistoryButton" class="secondary-button" type="button">Обновить диалог</button>
+              <label class="field-label" for="productRefInput">ProductRef JSON</label>
+              <textarea id="productRefInput" class="text-area compact" spellcheck="false"></textarea>
+            </div>
+          </details>
+        </aside>
+        <section class="dialog-panel">
+          <div id="messages" class="messages">
+            <div class="message assistant">Добрый день. Задайте вопрос по WIICON или WIIC.</div>
+          </div>
+          <form id="chatForm" class="composer">
+            <textarea id="messageInput" class="text-area message-input" placeholder="Введите сообщение"></textarea>
+            <button id="sendButton" class="primary-button" type="submit">Отправить</button>
+          </form>
+        </section>
+      </section>
+
+      <section id="view-workbench" class="app-view" data-view-panel="workbench">
+        <div class="workbench-layout">
+          <aside class="workspace-sidebar">
+            <h2>Workbench</h2>
+            <p class="muted">Навыки, черновики, кандидаты и проверки вынесены из настроек чата в отдельное рабочее пространство.</p>
+            <div class="button-grid">
+              <button id="skillCatalogButton" class="secondary-button" type="button">Навыки</button>
+              <button id="draftListButton" class="secondary-button" type="button">Черновики</button>
+              <button id="onboardingCandidatesButton" class="secondary-button" type="button">Onboarding candidates</button>
+              <button id="synthesisCandidatesButton" class="secondary-button" type="button">Agent candidates</button>
+            </div>
+            <label class="field-label" for="skillDetailsInput">Skill ID</label>
+            <div class="inline-row">
+              <input id="skillDetailsInput" class="text-input" type="text" placeholder="skill_...">
+              <button id="skillDetailsButton" class="secondary-button" type="button">Открыть</button>
+            </div>
+            <label class="field-label" for="draftDetailsInput">Draft ID</label>
+            <div class="inline-row">
+              <input id="draftDetailsInput" class="text-input" type="text" placeholder="draft_...">
+              <button id="draftDetailsButton" class="secondary-button" type="button">Открыть</button>
+            </div>
+          </aside>
+
+          <section class="workspace-main">
+            <div class="card">
+              <div class="card-header">
+                <h2>Lifecycle</h2>
+                <span id="workbenchStatusBadge" class="badge">ожидание</span>
+              </div>
+              <div id="workbenchStepper" class="stepper">
+                <span class="step active" data-step="draft">Draft</span>
+                <span class="step" data-step="preview">Preview</span>
+                <span class="step" data-step="smoke">Smoke</span>
+                <span class="step" data-step="approval">Approval</span>
+                <span class="step" data-step="candidate">Candidate</span>
+                <span class="step" data-step="verified">Verified</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <h2>Новый draft</h2>
+                <span class="muted">guided top_n_by_metric</span>
+              </div>
+              <div class="draft-grid">
+                <label>Название навыка<input id="draftTitleInput" class="text-input" type="text" placeholder="Остатки по складу"></label>
+                <label>Пример вопроса<input id="draftExampleQuestionInput" class="text-input" type="text" placeholder="Какой вопрос должен закрывать навык"></label>
+                <label>Описание<input id="draftDescriptionInput" class="text-input" type="text" placeholder="Бизнес-смысл навыка"></label>
+                <label>Источник alias<input id="draftSourceAliasInput" class="text-input" type="text" value="Источник"></label>
+                <label>Источник 1С<input id="draftSourceObjectInput" class="text-input" type="text" placeholder="РегистрНакопления..."></label>
+                <label>Группировка role<input id="draftGroupRoleInput" class="text-input" type="text" value="product"></label>
+                <label>Группировка field<input id="draftGroupFieldInput" class="text-input" type="text" placeholder="Номенклатура"></label>
+                <label>Метрика role<input id="draftMeasureRoleInput" class="text-input" type="text" value="metric"></label>
+                <label>Метрика field<input id="draftMeasureFieldInput" class="text-input" type="text" placeholder="СуммаОстаток"></label>
+                <label>Метрика label<input id="draftMeasureLabelInput" class="text-input" type="text" placeholder="Сумма"></label>
+                <label>Агрегация<select id="draftAggregationInput" class="text-input"><option value="sum">sum</option><option value="count">count</option><option value="max">max</option><option value="min">min</option></select></label>
+                <label>Limit<input id="draftLimitInput" class="text-input" type="number" min="0" value="10"></label>
+                <label>Фильтр role<input id="draftFilterRoleInput" class="text-input" type="text" placeholder="warehouse_type"></label>
+                <label>Фильтр field<input id="draftFilterFieldInput" class="text-input" type="text" placeholder="Склад.ТипСклада"></label>
+                <label>Фильтр parameter<input id="draftFilterParameterInput" class="text-input" type="text" placeholder="ТипСклада"></label>
+                <label>Фильтр operator<select id="draftFilterOperatorInput" class="text-input"><option value="equals">equals</option><option value="contains">contains</option></select></label>
+              </div>
+              <label class="checkbox-line"><input id="draftFieldsConfirmedInput" type="checkbox"> Fields confirmed</label>
+              <details class="advanced-panel">
+                <summary>Технический JSON draft</summary>
+                <textarea id="draftJsonInput" class="text-area json-area" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
+              </details>
+              <div class="button-grid wide">
+                <button id="createDraftButton" class="primary-button" type="button">Создать</button>
+                <button id="previewDraftButton" class="secondary-button" type="button">Preview</button>
+                <button id="smokeDraftButton" class="secondary-button" type="button">Smoke</button>
+                <button id="publishDraftButton" class="secondary-button" type="button">Candidate</button>
+              </div>
+            </div>
+
+            <div class="card result-card">
+              <div class="card-header">
+                <h2>Результат</h2>
+                <button id="clearWorkbenchOutputButton" class="ghost-button" type="button">Очистить</button>
+              </div>
+              <div id="workbenchSummary" class="summary-content">Workbench не загружен.</div>
+              <div id="workbenchOutput" class="technical-output"></div>
+            </div>
+          </section>
+
+          <aside class="workspace-inspector">
+            <h2>Проверки</h2>
+            <label class="field-label" for="approvalCommentInput">Комментарий approval</label>
+            <textarea id="approvalCommentInput" class="text-area compact" placeholder="Что проверено человеком"></textarea>
+            <label class="field-label" for="smokeParamsInput">Smoke params JSON</label>
+            <textarea id="smokeParamsInput" class="text-area compact" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
+            <div class="button-grid">
+              <button id="approveDraftButton" class="secondary-button" type="button">Approve</button>
+              <button id="rejectDraftButton" class="secondary-button" type="button">Reject</button>
+            </div>
+            <label class="field-label" for="candidateIdInput">Onboarding candidate ID</label>
+            <input id="candidateIdInput" class="text-input" type="text" placeholder="onb_...">
+            <div class="button-grid">
+              <button id="candidateCreateDraftButton" class="secondary-button" type="button">Create draft</button>
+              <button id="candidateRejectButton" class="secondary-button" type="button">Reject</button>
+            </div>
+            <label class="field-label" for="synthesisCandidateIdInput">Agent candidate ID</label>
+            <input id="synthesisCandidateIdInput" class="text-input" type="text" placeholder="syn_...">
+            <div class="button-grid">
+              <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Create draft</button>
+              <button id="synthesisRejectButton" class="secondary-button" type="button">Reject</button>
+            </div>
+            <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Ignore similar</button>
+            <hr>
+            <label class="field-label" for="skillLifecycleIdInput">Lifecycle Skill ID</label>
+            <input id="skillLifecycleIdInput" class="text-input" type="text" placeholder="skill_...">
+            <label class="field-label" for="skillLifecycleReasonInput">Причина изменения</label>
+            <input id="skillLifecycleReasonInput" class="text-input" type="text" placeholder="Что проверено и почему меняем статус">
+            <label class="field-label" for="skillRegressionCasesInput">Regression case IDs</label>
+            <input id="skillRegressionCasesInput" class="text-input" type="text" placeholder="reg_case_1, reg_case_2">
+            <label class="field-label" for="skillTargetStatusInput">Target status</label>
+            <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">verified</option><option value="stable">stable</option></select>
+            <label class="field-label" for="skillSuccessfulRunsInput">Successful runs</label>
+            <input id="skillSuccessfulRunsInput" class="text-input" type="number" min="0" value="0">
+            <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Admin approval</label>
+            <div class="button-grid">
+              <button id="skillPromoteButton" class="secondary-button" type="button">Promote</button>
+              <button id="skillRollbackButton" class="secondary-button" type="button">Rollback</button>
+              <button id="skillDeprecateButton" class="secondary-button" type="button">Deprecate</button>
+              <button id="skillBlockButton" class="secondary-button" type="button">Block</button>
+            </div>
+            <hr>
+            <label class="field-label" for="regressionCasesPathInput">Regression cases path</label>
+            <input id="regressionCasesPathInput" class="text-input" type="text" placeholder="Пусто = bot_instance/regression">
+            <label class="field-label" for="regressionSessionPrefixInput">Session prefix</label>
+            <input id="regressionSessionPrefixInput" class="text-input" type="text" value="web-regression">
+            <button id="runRegressionButton" class="secondary-button" type="button">Run regression</button>
+          </aside>
+        </div>
+      </section>
+
+      <section id="view-metadata" class="app-view" data-view-panel="metadata">
+        <div class="two-column-page">
+          <aside class="workspace-sidebar">
+            <h2>Метаданные</h2>
+            <label class="field-label" for="metadataSearchInput">Поиск</label>
+            <input id="metadataSearchInput" class="text-input" type="text" placeholder="Склады, Номенклатура, Регистр">
+            <button id="metadataSearchButton" class="primary-button" type="button">Искать метаданные</button>
+            <label class="field-label" for="metadataObjectInput">Полное имя объекта</label>
+            <input id="metadataObjectInput" class="text-input" type="text" placeholder="Справочник.Склады">
+            <button id="metadataObjectButton" class="secondary-button" type="button">Открыть объект</button>
+          </aside>
+          <section class="workspace-main">
+            <div id="metadataResults" class="card-list">Введите запрос для поиска по индексу конфигурации.</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-docs" class="app-view" data-view-panel="docs">
+        <div class="two-column-page">
+          <aside class="workspace-sidebar" id="documentationPanel">
+            <h2>Документация</h2>
+            <select id="docsSelect" class="text-input"></select>
+            <div class="button-grid">
+              <button id="docsReloadButton" class="secondary-button" type="button">Обновить</button>
+              <button id="docsOpenButton" class="primary-button" type="button">Открыть</button>
+            </div>
+            <div id="docsIndex" class="card-list small"></div>
+          </aside>
+          <section class="workspace-main">
+            <article id="docsContent" class="doc-content">Документация не загружена.</article>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-admin" class="app-view" data-view-panel="admin">
+        <div class="admin-grid">
+          <section class="card">
+            <h2>Доступ</h2>
+            <p id="adminTokenHint" class="muted">Admin token не настроен.</p>
+            <label class="field-label" for="adminTokenInput">Admin token</label>
+            <input id="adminTokenInput" class="text-input" type="password" autocomplete="off" placeholder="X-WIICON5-Admin-Token">
+            <div class="button-grid">
+              <button id="saveAdminTokenButton" class="primary-button" type="button">Сохранить</button>
+              <button id="clearAdminTokenButton" class="secondary-button" type="button">Очистить</button>
+            </div>
+          </section>
+          <section class="card">
+            <h2>История</h2>
+            <div class="button-grid">
+              <button id="backendHistoryButton" class="secondary-button" type="button">Backend</button>
+              <button id="frontendHistoryButton" class="secondary-button" type="button">Frontend</button>
+            </div>
+            <pre id="historyOutput" class="pre-output"></pre>
+          </section>
+          <section class="card">
+            <h2>Первоначальное обучение</h2>
+            <label class="field-label" for="configDumpInput">Выгрузка конфигурации</label>
+            <input id="configDumpInput" class="text-input" type="text" placeholder="/path/to/1c/config">
+            <button id="startOnboardingButton" class="primary-button" type="button">Запустить обучение</button>
+            <div id="onboardingStatus" class="summary-content">Статус не загружен.</div>
+          </section>
+          <section class="card">
+            <h2>API status</h2>
+            <pre id="adminStatusOutput" class="pre-output"></pre>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/api.js"></script>
+  <script src="/static/renderers.js"></script>
+  <script src="/static/workbench.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
