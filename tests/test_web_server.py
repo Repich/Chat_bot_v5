@@ -276,6 +276,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
             runs_root = Path(temp_dir) / "runs"
             write_trace(runs_root / "agent_001")
             write_onboarding_candidate(onboarding_manager.bot_instance_root)
+            write_synthesis_candidates(onboarding_manager.bot_instance_root)
             write_regression_case(onboarding_manager.bot_instance_root)
             metadata_explorer = MetadataExplorerService(
                 provider=StaticMetadataProvider(
@@ -356,6 +357,35 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                     .decode("utf-8")
                 )
                 synthesis_candidates = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/synthesis/candidates",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                synthesis_candidates_all = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/synthesis/candidates?status=all",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                synthesis_candidate_id = synthesis_candidates["candidates"][0]["candidate_id"]
+                reject_synthesis_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/synthesis/candidates/{synthesis_candidate_id}/reject",
+                    data=json.dumps(
+                        {"actor": "candidate-admin", "comment": "Неверный бизнес-смысл"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                rejected_synthesis_candidate = json.loads(
+                    urllib.request.urlopen(reject_synthesis_request, timeout=5).read().decode("utf-8")
+                )
+                synthesis_candidates_after_reject = json.loads(
                     urllib.request.urlopen(
                         f"http://{host}:{port}/api/admin/workbench/synthesis/candidates",
                         timeout=5,
@@ -770,6 +800,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("postCandidateActionById", static_workbench)
         self.assertIn("postSynthesisCandidateAction", static_workbench)
         self.assertIn("postSynthesisCandidateActionById", static_workbench)
+        self.assertIn("/api/admin/workbench/synthesis/candidates?status=candidate", static_workbench)
         self.assertIn("postSkillLifecycleAction", static_workbench)
         self.assertIn("postSkillLifecycleActionById", static_workbench)
         self.assertIn("runRegressionReplay", static_workbench)
@@ -777,7 +808,10 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("showTracePath", static_workbench)
         self.assertIn("buildTopMetricDraftFromForm", static_workbench)
         self.assertIn('requiredElement("workbenchSummary").addEventListener("click"', static_app)
+        self.assertIn("event.preventDefault();", static_app)
+        self.assertIn("event.stopPropagation();", static_app)
         self.assertIn("synthesis-create-draft", static_renderers)
+        self.assertIn("synthesis-reject", static_renderers)
         self.assertIn("open-trace", static_renderers)
         self.assertIn("open-trace", static_app)
         self.assertIn("open-draft", static_renderers)
@@ -806,7 +840,11 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertTrue(onboarding_candidates["ok"])
         self.assertEqual(onboarding_candidates["summary"]["total"], 1)
         self.assertTrue(synthesis_candidates["ok"])
-        self.assertEqual(synthesis_candidates["summary"]["total"], 0)
+        self.assertEqual(synthesis_candidates["summary"]["total"], 1)
+        self.assertEqual(synthesis_candidates["candidates"][0]["candidate_id"], "syn_active")
+        self.assertEqual(synthesis_candidates_all["summary"]["total"], 2)
+        self.assertEqual(rejected_synthesis_candidate["candidate"]["status"], "rejected")
+        self.assertEqual(synthesis_candidates_after_reject["summary"]["total"], 0)
         self.assertEqual(candidate_draft["draft"]["source_kind"], "onboarding_candidate")
         self.assertEqual(rejected_candidate["rejection"]["candidate_id"], onboarding_candidate_id)
         self.assertTrue(skill_catalog["ok"])
@@ -964,6 +1002,40 @@ def write_onboarding_candidate(bot_root: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def write_synthesis_candidates(bot_root: Path) -> None:
+    candidates = bot_root / "workbench" / "candidates" / "synthesis"
+    candidates.mkdir(parents=True, exist_ok=True)
+    base = {
+        "trace_path": "/runs/agent_test",
+        "query": "ВЫБРАТЬ 1 КАК Значение",
+        "params": {},
+        "limit": 1,
+        "answer": "Тестовый ответ",
+        "row_count": 1,
+        "final_artifact_type": "UserAnswer",
+        "metadata_objects": [],
+        "created_at": "2026-07-06T10:00:00+00:00",
+        "seen_count": 1,
+        "payload": {},
+    }
+    active = {
+        **base,
+        "candidate_id": "syn_active",
+        "question": "Активный кандидат",
+        "status": "candidate",
+        "updated_at": "2026-07-06T10:01:00+00:00",
+    }
+    rejected = {
+        **base,
+        "candidate_id": "syn_rejected",
+        "question": "Отклоненный кандидат",
+        "status": "rejected",
+        "updated_at": "2026-07-06T10:02:00+00:00",
+    }
+    (candidates / "syn_active.json").write_text(json.dumps(active, ensure_ascii=False), encoding="utf-8")
+    (candidates / "syn_rejected.json").write_text(json.dumps(rejected, ensure_ascii=False), encoding="utf-8")
 
 
 def write_regression_case(bot_root: Path) -> None:

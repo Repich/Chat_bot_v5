@@ -479,10 +479,12 @@
 
   function renderCandidatesResponse(data) {
     const candidates = data.candidates || [];
+    const notice = data.notice ? `<p class="workbench-hint">${escapeHtml(data.notice)}</p>` : "";
     if (!candidates.length) {
-      return `<div class="empty-state"><h3>Кандидатов пока нет</h3><p>Они появятся после успешных ответов агента через синтез запроса или после первоначального обучения.</p></div>`;
+      return `${notice}<div class="empty-state"><h3>Кандидатов пока нет</h3><p>Они появятся после успешных ответов агента через синтез запроса или после первоначального обучения.</p></div>`;
     }
     return `<div class="summary-kpi">Кандидатов: ${escapeHtml(summaryCount(data.summary, candidates.length))}</div>
+      ${notice}
       <p class="workbench-hint">Выберите кандидата, проверьте смысл и создайте черновик без ручного копирования идентификатора.</p>
       <div class="card-list entity-list">${candidates.slice(0, 50).map(renderCandidateCard).join("")}</div>`;
   }

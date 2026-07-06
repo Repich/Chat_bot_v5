@@ -177,7 +177,8 @@ def make_handler(
                 return
             if path == "/api/admin/workbench/synthesis/candidates":
                 limit = int_or_default(first_query_value(query, "limit"), 200)
-                status = first_query_value(query, "status")
+                raw_status = first_query_value(query, "status")
+                status = "" if raw_status == "all" else raw_status or "candidate"
                 term = first_query_value(query, "q") or first_query_value(query, "term")
                 candidates = effective_synthesis_candidate_store.list_candidates(
                     limit=limit,

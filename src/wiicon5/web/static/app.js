@@ -527,6 +527,8 @@
       if (!actionButton) {
         return;
       }
+      event.preventDefault();
+      event.stopPropagation();
       const action = actionButton.dataset.action;
       const candidateId = actionButton.dataset.candidateId || "";
       const draftId = actionButton.dataset.draftId || "";

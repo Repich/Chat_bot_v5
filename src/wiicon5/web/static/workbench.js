@@ -322,7 +322,7 @@
   }
 
   async function loadSynthesisCandidates(button) {
-    return runWorkbenchAction(button, "Загрузка кандидатов агента", () => api.fetchAdmin("/api/admin/workbench/synthesis/candidates"), (data) => data);
+    return runWorkbenchAction(button, "Загрузка кандидатов агента", () => api.fetchAdmin("/api/admin/workbench/synthesis/candidates?status=candidate"), (data) => data);
   }
 
   async function postSynthesisCandidateAction(action, button) {
@@ -342,11 +342,18 @@
         method: "POST",
         body: { actor: "web-workbench", comment: readValue("approvalCommentInput") },
       }),
-      (data) => {
+      async (data) => {
         const draftId = data.draft && data.draft.draft_id ? data.draft.draft_id : "";
         if (draftId) {
           setCurrentDraftId(draftId);
           setLifecycleStep("draft");
+        }
+        if (action === "reject" || action === "ignore-similar") {
+          const list = await api.fetchAdmin("/api/admin/workbench/synthesis/candidates?status=candidate");
+          return Object.assign({}, list, {
+            notice: action === "reject" ? `Кандидат ${candidateId} отклонен.` : `Похожие кандидаты для ${candidateId} будут игнорироваться.`,
+            action_result: data,
+          });
         }
         return data;
       }
