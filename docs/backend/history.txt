@@ -1,3 +1,7 @@
+5.0.0-alpha.52
+- No backend behavior changes. This release updates the Workbench frontend and adds frontend regression coverage.
+- Local Workbench candidate evidence under bot_instances/*/workbench/candidates/ is now ignored by Git.
+
 5.0.0-alpha.51
 - Sufficiency review now recognizes the answer subject from confirmed 1C object references and party requisites, not only from column names such as Контрагент or Клиент.
 - Valid rows with counterparty requisites and a debt metric are accepted as sufficient instead of being retried as incomplete partial results.

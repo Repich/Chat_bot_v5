@@ -524,6 +524,45 @@
       requiredElement("workbenchSummary").textContent = "Workbench очищен.";
       requiredElement("workbenchOutput").innerHTML = "";
     });
+    requiredElement("workbenchSummary").addEventListener("click", (event) => {
+      const actionButton = event.target.closest("[data-action]");
+      if (!actionButton) {
+        return;
+      }
+      const action = actionButton.dataset.action;
+      const candidateId = actionButton.dataset.candidateId || "";
+      const draftId = actionButton.dataset.draftId || "";
+      const skillId = actionButton.dataset.skillId || "";
+      if (action === "open-skill") {
+        window.WiiconWorkbench.loadSkillDetailsById(skillId, actionButton);
+        return;
+      }
+      if (action === "skill-promote" || action === "skill-block") {
+        const lifecycleAction = action === "skill-promote" ? "promote" : "block";
+        window.WiiconWorkbench.postSkillLifecycleActionById(skillId, lifecycleAction, actionButton);
+        return;
+      }
+      if (action === "open-draft") {
+        window.WiiconWorkbench.loadDraftDetailsById(draftId, actionButton);
+        return;
+      }
+      if (action.startsWith("draft-")) {
+        const draftAction = action.replace("draft-", "");
+        const backendAction = draftAction === "publish" ? "publish-candidate" : draftAction;
+        window.WiiconWorkbench.setCurrentDraftId(draftId);
+        window.WiiconWorkbench.postDraftAction(backendAction, actionButton);
+        return;
+      }
+      if (action.startsWith("synthesis-")) {
+        const synthesisAction = action.replace("synthesis-", "");
+        window.WiiconWorkbench.postSynthesisCandidateActionById(candidateId, synthesisAction, actionButton);
+        return;
+      }
+      if (action.startsWith("onboarding-")) {
+        const onboardingAction = action.replace("onboarding-", "");
+        window.WiiconWorkbench.postCandidateActionById(candidateId, onboardingAction, actionButton);
+      }
+    });
 
     optionalBind("metadataSearchButton", "click", (event) => loadMetadataSearch(event.currentTarget));
     optionalBind("metadataObjectButton", "click", (event) => loadMetadataObject(event.currentTarget));

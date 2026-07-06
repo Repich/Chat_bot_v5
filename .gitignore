@@ -13,6 +13,7 @@ runs/
 bot_instances/*/onboarding/
 bot_instances/*/runs/
 bot_instances/*/workbench/drafts/
+bot_instances/*/workbench/candidates/
 bot_instances/*/workbench/approvals/
 bot_instances/*/workbench/smoke/
 bot_instances/*/workbench/audit/

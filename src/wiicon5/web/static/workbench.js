@@ -30,6 +30,26 @@
     }
   }
 
+  function setCurrentDraftId(draftId) {
+    window.WiiconState.workbench.selectedDraftId = draftId || "";
+    setValue("draftDetailsInput", draftId || "");
+  }
+
+  function setCurrentSkillId(skillId) {
+    window.WiiconState.workbench.selectedSkillId = skillId || "";
+    setValue("skillDetailsInput", skillId || "");
+    setValue("skillLifecycleIdInput", skillId || "");
+  }
+
+  function setCurrentCandidateId(candidateId, kind) {
+    window.WiiconState.workbench.selectedCandidateId = candidateId || "";
+    if (kind === "synthesis") {
+      setValue("synthesisCandidateIdInput", candidateId || "");
+    } else if (kind === "onboarding") {
+      setValue("candidateIdInput", candidateId || "");
+    }
+  }
+
   function currentDraftId() {
     const state = window.WiiconState;
     return readValue("draftDetailsInput") || state.workbench.selectedDraftId || "";
@@ -141,12 +161,15 @@
 
   async function loadSkillDetails(button) {
     const skillId = readValue("skillDetailsInput") || currentSkillId();
+    return loadSkillDetailsById(skillId, button);
+  }
+
+  async function loadSkillDetailsById(skillId, button) {
     if (!skillId) {
       throw new Error("Укажите Skill ID.");
     }
     return runWorkbenchAction(button, "Загрузка навыка", () => api.fetchAdmin(`/api/admin/skills/catalog/${encodeURIComponent(skillId)}`), (data) => {
-      window.WiiconState.workbench.selectedSkillId = skillId;
-      setValue("skillLifecycleIdInput", skillId);
+      setCurrentSkillId(skillId);
       return data;
     });
   }
@@ -157,11 +180,16 @@
 
   async function loadDraftDetails(button) {
     const draftId = currentDraftId();
+    return loadDraftDetailsById(draftId, button);
+  }
+
+  async function loadDraftDetailsById(draftId, button) {
     if (!draftId) {
       throw new Error("Укажите Draft ID.");
     }
     return runWorkbenchAction(button, "Загрузка draft", () => api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}`), (data) => {
-      window.WiiconState.workbench.selectedDraftId = draftId;
+      setCurrentDraftId(draftId);
+      setLifecycleStep("draft");
       return data;
     });
   }
@@ -175,8 +203,7 @@
       (data) => {
         const draftId = data.draft && data.draft.draft_id ? data.draft.draft_id : "";
         if (draftId) {
-          window.WiiconState.workbench.selectedDraftId = draftId;
-          setValue("draftDetailsInput", draftId);
+          setCurrentDraftId(draftId);
         }
         setLifecycleStep("draft");
         return data;
@@ -230,9 +257,14 @@
 
   async function postCandidateAction(action, button) {
     const candidateId = readValue("candidateIdInput");
+    return postCandidateActionById(candidateId, action, button);
+  }
+
+  async function postCandidateActionById(candidateId, action, button) {
     if (!candidateId) {
       throw new Error("Укажите candidate ID.");
     }
+    setCurrentCandidateId(candidateId, "onboarding");
     return runWorkbenchAction(
       button,
       `Onboarding candidate ${action}`,
@@ -240,7 +272,14 @@
         method: "POST",
         body: { actor: "web-workbench", comment: readValue("approvalCommentInput") },
       }),
-      (data) => data
+      (data) => {
+        const draftId = data.draft && data.draft.draft_id ? data.draft.draft_id : "";
+        if (draftId) {
+          setCurrentDraftId(draftId);
+          setLifecycleStep("draft");
+        }
+        return data;
+      }
     );
   }
 
@@ -250,9 +289,14 @@
 
   async function postSynthesisCandidateAction(action, button) {
     const candidateId = readValue("synthesisCandidateIdInput");
+    return postSynthesisCandidateActionById(candidateId, action, button);
+  }
+
+  async function postSynthesisCandidateActionById(candidateId, action, button) {
     if (!candidateId) {
       throw new Error("Укажите agent candidate ID.");
     }
+    setCurrentCandidateId(candidateId, "synthesis");
     return runWorkbenchAction(
       button,
       `Agent candidate ${action}`,
@@ -260,15 +304,27 @@
         method: "POST",
         body: { actor: "web-workbench", comment: readValue("approvalCommentInput") },
       }),
-      (data) => data
+      (data) => {
+        const draftId = data.draft && data.draft.draft_id ? data.draft.draft_id : "";
+        if (draftId) {
+          setCurrentDraftId(draftId);
+          setLifecycleStep("draft");
+        }
+        return data;
+      }
     );
   }
 
   async function postSkillLifecycleAction(action, button) {
     const skillId = currentSkillId();
+    return postSkillLifecycleActionById(skillId, action, button);
+  }
+
+  async function postSkillLifecycleActionById(skillId, action, button) {
     if (!skillId) {
       throw new Error("Укажите Skill ID.");
     }
+    setCurrentSkillId(skillId);
     const regressionCaseIds = readValue("skillRegressionCasesInput")
       .split(",")
       .map((item) => item.trim())
@@ -338,17 +394,25 @@
     applyMetadataSource,
     applyMetadataField,
     buildTopMetricDraftFromForm,
+    setCurrentDraftId,
+    setCurrentSkillId,
+    setCurrentCandidateId,
     loadSkillCatalog,
     loadSkillDetails,
+    loadSkillDetailsById,
     loadDraftList,
     loadDraftDetails,
+    loadDraftDetailsById,
     createDraft,
     postDraftAction,
     loadOnboardingCandidates,
     postCandidateAction,
+    postCandidateActionById,
     loadSynthesisCandidates,
     postSynthesisCandidateAction,
+    postSynthesisCandidateActionById,
     postSkillLifecycleAction,
+    postSkillLifecycleActionById,
     runRegressionReplay,
     runWorkbenchAction,
     renderWorkbenchSummary,

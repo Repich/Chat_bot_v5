@@ -61,33 +61,36 @@
         <div class="workbench-layout">
           <aside class="workspace-sidebar">
             <h2>Workbench</h2>
-            <p class="muted">Навыки, черновики, кандидаты и проверки вынесены из настроек чата в отдельное рабочее пространство.</p>
-            <div class="button-grid">
+            <p class="muted">Выберите очередь, откройте карточку и выполните следующее действие без ручного копирования ID.</p>
+            <div class="workbench-tabs">
               <button id="skillCatalogButton" class="secondary-button" type="button">Навыки</button>
               <button id="draftListButton" class="secondary-button" type="button">Черновики</button>
-              <button id="onboardingCandidatesButton" class="secondary-button" type="button">Onboarding candidates</button>
-              <button id="synthesisCandidatesButton" class="secondary-button" type="button">Agent candidates</button>
+              <button id="synthesisCandidatesButton" class="secondary-button" type="button">Кандидаты агента</button>
+              <button id="onboardingCandidatesButton" class="secondary-button" type="button">Кандидаты onboarding</button>
             </div>
-            <label class="field-label" for="skillDetailsInput">Skill ID</label>
-            <div class="inline-row">
-              <input id="skillDetailsInput" class="text-input" type="text" placeholder="skill_...">
-              <button id="skillDetailsButton" class="secondary-button" type="button">Открыть</button>
-            </div>
-            <label class="field-label" for="draftDetailsInput">Draft ID</label>
-            <div class="inline-row">
-              <input id="draftDetailsInput" class="text-input" type="text" placeholder="draft_...">
-              <button id="draftDetailsButton" class="secondary-button" type="button">Открыть</button>
-            </div>
+            <details class="advanced-panel">
+              <summary>Открыть по ID</summary>
+              <label class="field-label" for="skillDetailsInput">ID навыка</label>
+              <div class="inline-row">
+                <input id="skillDetailsInput" class="text-input" type="text" placeholder="skill_...">
+                <button id="skillDetailsButton" class="secondary-button" type="button">Открыть</button>
+              </div>
+              <label class="field-label" for="draftDetailsInput">ID draft</label>
+              <div class="inline-row">
+                <input id="draftDetailsInput" class="text-input" type="text" placeholder="draft_...">
+                <button id="draftDetailsButton" class="secondary-button" type="button">Открыть</button>
+              </div>
+            </details>
           </aside>
 
           <section class="workspace-main">
             <div class="card">
               <div class="card-header">
-                <h2>Lifecycle</h2>
+                <h2>Состояние выбранного объекта</h2>
                 <span id="workbenchStatusBadge" class="badge">ожидание</span>
               </div>
               <div id="workbenchStepper" class="stepper">
-                <span class="step active" data-step="draft">Draft</span>
+                <span class="step active" data-step="draft">Черновик</span>
                 <span class="step" data-step="preview">Preview</span>
                 <span class="step" data-step="smoke">Smoke</span>
                 <span class="step" data-step="approval">Approval</span>
@@ -98,9 +101,12 @@
 
             <div class="card">
               <div class="card-header">
-                <h2>Новый draft</h2>
-                <span class="muted">guided top_n_by_metric</span>
+                <h2>Мастер draft</h2>
+                <span class="muted">ручное создание навыка</span>
               </div>
+              <details class="advanced-panel draft-builder-details">
+                <summary>Создать draft вручную</summary>
+                <p class="workbench-hint">Обычно draft создается из карточки кандидата. Ручной мастер нужен, когда консультант уже знает объект 1С и поля.</p>
               <div class="draft-grid">
                 <label>Название навыка<input id="draftTitleInput" class="text-input" type="text" placeholder="Остатки по складу"></label>
                 <label>Пример вопроса<input id="draftExampleQuestionInput" class="text-input" type="text" placeholder="Какой вопрос должен закрывать навык"></label>
@@ -130,6 +136,7 @@
                 <button id="smokeDraftButton" class="secondary-button" type="button">Smoke</button>
                 <button id="publishDraftButton" class="secondary-button" type="button">Candidate</button>
               </div>
+              </details>
             </div>
 
             <div class="card result-card">
@@ -146,49 +153,54 @@
             <h2>Проверки</h2>
             <label class="field-label" for="approvalCommentInput">Комментарий approval</label>
             <textarea id="approvalCommentInput" class="text-area compact" placeholder="Что проверено человеком"></textarea>
-            <label class="field-label" for="smokeParamsInput">Smoke params JSON</label>
+            <label class="field-label" for="smokeParamsInput">Тестовые параметры</label>
             <textarea id="smokeParamsInput" class="text-area compact" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
             <div class="button-grid">
               <button id="approveDraftButton" class="secondary-button" type="button">Approve</button>
               <button id="rejectDraftButton" class="secondary-button" type="button">Reject</button>
             </div>
-            <label class="field-label" for="candidateIdInput">Onboarding candidate ID</label>
-            <input id="candidateIdInput" class="text-input" type="text" placeholder="onb_...">
-            <div class="button-grid">
-              <button id="candidateCreateDraftButton" class="secondary-button" type="button">Create draft</button>
-              <button id="candidateRejectButton" class="secondary-button" type="button">Reject</button>
-            </div>
-            <label class="field-label" for="synthesisCandidateIdInput">Agent candidate ID</label>
-            <input id="synthesisCandidateIdInput" class="text-input" type="text" placeholder="syn_...">
-            <div class="button-grid">
-              <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Create draft</button>
-              <button id="synthesisRejectButton" class="secondary-button" type="button">Reject</button>
-            </div>
-            <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Ignore similar</button>
-            <hr>
-            <label class="field-label" for="skillLifecycleIdInput">Lifecycle Skill ID</label>
-            <input id="skillLifecycleIdInput" class="text-input" type="text" placeholder="skill_...">
-            <label class="field-label" for="skillLifecycleReasonInput">Причина изменения</label>
-            <input id="skillLifecycleReasonInput" class="text-input" type="text" placeholder="Что проверено и почему меняем статус">
-            <label class="field-label" for="skillRegressionCasesInput">Regression case IDs</label>
-            <input id="skillRegressionCasesInput" class="text-input" type="text" placeholder="reg_case_1, reg_case_2">
-            <label class="field-label" for="skillTargetStatusInput">Target status</label>
-            <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">verified</option><option value="stable">stable</option></select>
-            <label class="field-label" for="skillSuccessfulRunsInput">Successful runs</label>
-            <input id="skillSuccessfulRunsInput" class="text-input" type="number" min="0" value="0">
-            <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Admin approval</label>
-            <div class="button-grid">
-              <button id="skillPromoteButton" class="secondary-button" type="button">Promote</button>
-              <button id="skillRollbackButton" class="secondary-button" type="button">Rollback</button>
-              <button id="skillDeprecateButton" class="secondary-button" type="button">Deprecate</button>
-              <button id="skillBlockButton" class="secondary-button" type="button">Block</button>
-            </div>
-            <hr>
-            <label class="field-label" for="regressionCasesPathInput">Regression cases path</label>
-            <input id="regressionCasesPathInput" class="text-input" type="text" placeholder="Пусто = bot_instance/regression">
-            <label class="field-label" for="regressionSessionPrefixInput">Session prefix</label>
-            <input id="regressionSessionPrefixInput" class="text-input" type="text" value="web-regression">
-            <button id="runRegressionButton" class="secondary-button" type="button">Run regression</button>
+            <details class="advanced-panel">
+              <summary>Действия по ID</summary>
+              <label class="field-label" for="candidateIdInput">ID onboarding candidate</label>
+              <input id="candidateIdInput" class="text-input" type="text" placeholder="onb_...">
+              <div class="button-grid">
+                <button id="candidateCreateDraftButton" class="secondary-button" type="button">Create draft</button>
+                <button id="candidateRejectButton" class="secondary-button" type="button">Reject</button>
+              </div>
+              <label class="field-label" for="synthesisCandidateIdInput">ID agent candidate</label>
+              <input id="synthesisCandidateIdInput" class="text-input" type="text" placeholder="syn_...">
+              <div class="button-grid">
+                <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Create draft</button>
+                <button id="synthesisRejectButton" class="secondary-button" type="button">Reject</button>
+              </div>
+              <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Ignore similar</button>
+            </details>
+            <details class="advanced-panel">
+              <summary>Lifecycle и regression</summary>
+              <label class="field-label" for="skillLifecycleIdInput">ID навыка</label>
+              <input id="skillLifecycleIdInput" class="text-input" type="text" placeholder="skill_...">
+              <label class="field-label" for="skillLifecycleReasonInput">Причина изменения</label>
+              <input id="skillLifecycleReasonInput" class="text-input" type="text" placeholder="Что проверено и почему меняем статус">
+              <label class="field-label" for="skillRegressionCasesInput">Regression case IDs</label>
+              <input id="skillRegressionCasesInput" class="text-input" type="text" placeholder="reg_case_1, reg_case_2">
+              <label class="field-label" for="skillTargetStatusInput">Новый статус</label>
+              <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">verified</option><option value="stable">stable</option></select>
+              <label class="field-label" for="skillSuccessfulRunsInput">Успешных проверок</label>
+              <input id="skillSuccessfulRunsInput" class="text-input" type="number" min="0" value="0">
+              <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Admin approval</label>
+              <div class="button-grid">
+                <button id="skillPromoteButton" class="secondary-button" type="button">Promote</button>
+                <button id="skillRollbackButton" class="secondary-button" type="button">Rollback</button>
+                <button id="skillDeprecateButton" class="secondary-button" type="button">Deprecate</button>
+                <button id="skillBlockButton" class="secondary-button" type="button">Block</button>
+              </div>
+              <hr>
+              <label class="field-label" for="regressionCasesPathInput">Regression cases path</label>
+              <input id="regressionCasesPathInput" class="text-input" type="text" placeholder="Пусто = bot_instance/regression">
+              <label class="field-label" for="regressionSessionPrefixInput">Session prefix</label>
+              <input id="regressionSessionPrefixInput" class="text-input" type="text" value="web-regression">
+              <button id="runRegressionButton" class="secondary-button" type="button">Run regression</button>
+            </details>
           </aside>
         </div>
       </section>

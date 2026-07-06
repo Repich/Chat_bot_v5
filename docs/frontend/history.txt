@@ -1,3 +1,10 @@
+5.0.0-alpha.52
+- Fixed Workbench renderer priority so responses containing both summary and candidates/skills/drafts/objects render the entity list instead of only total/by_status.
+- Reworked Workbench result cards for skills, drafts, metadata objects, and candidates with human-readable titles, statuses, facts, tags, and primary actions.
+- Added card-level actions for agent/onboarding candidates, drafts, and skills so users can create drafts or run next checks without copying IDs into side-panel fields.
+- Moved manual ID actions and the raw draft builder into advanced sections, leaving the main Workbench flow centered on queues and cards.
+- Added JavaScriptCore regression coverage for agent candidates with summary plus candidate rows.
+
 5.0.0-alpha.51
 - No frontend behavior changes. This release fixes backend sufficiency review for valid counterparty debt rows.
 

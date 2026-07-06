@@ -65,6 +65,48 @@ for (const file of files) {
             capture_output=True,
         )
 
+    @unittest.skipUnless(shutil.which("osascript"), "JavaScriptCore renderer check requires osascript")
+    def test_static_renderers_show_candidates_before_summary(self) -> None:
+        script = """
+ObjC.import('Foundation');
+var window = {};
+const path = $.NSString.stringWithUTF8String('src/wiicon5/web/static/renderers.js');
+const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null).js;
+eval(text);
+const html = window.WiiconRenderers.renderSummary({
+  ok: true,
+  candidates: [{
+    candidate_id: 'syn_test',
+    question: 'Покажи клиента с максимальной задолженностью',
+    answer: 'Альтаир, задолженность 194889',
+    row_count: 1,
+    status: 'candidate',
+    trace_path: '/tmp/trace',
+    metadata_objects: [{ full_name: 'РегистрНакопления.РасчетыСКлиентамиПоДокументам' }]
+  }],
+  summary: { total: 1, by_status: { candidate: 1 } }
+});
+if (html.indexOf('Покажи клиента') < 0) {
+  throw new Error('candidate question is missing: ' + html);
+}
+if (html.indexOf('Создать draft') < 0) {
+  throw new Error('candidate action is missing: ' + html);
+}
+if (html.indexOf('data-action="synthesis-create-draft"') < 0) {
+  throw new Error('candidate action binding is missing: ' + html);
+}
+if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') > html.indexOf('total:')) {
+  throw new Error('summary rendered before candidates: ' + html);
+}
+"""
+        subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            cwd=PROJECT_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
     def test_run_http_server_accepts_cli_workbench_dependencies(self) -> None:
         question = "Привет"
         agent = AgentOrchestrator(
@@ -676,17 +718,25 @@ for (const file of files) {
         self.assertIn("renderSkillCard", static_renderers)
         self.assertIn("renderDraftCard", static_renderers)
         self.assertIn("renderMetadataObjectCard", static_renderers)
+        self.assertIn("renderCandidateCard", static_renderers)
+        self.assertIn("renderCandidatesResponse", static_renderers)
         self.assertIn("renderJsonDetails", static_renderers)
         self.assertIn("loadSkillCatalog", static_workbench)
         self.assertIn("loadOnboardingCandidates", static_workbench)
         self.assertIn("loadSynthesisCandidates", static_workbench)
         self.assertIn("postDraftAction", static_workbench)
         self.assertIn("postCandidateAction", static_workbench)
+        self.assertIn("postCandidateActionById", static_workbench)
         self.assertIn("postSynthesisCandidateAction", static_workbench)
+        self.assertIn("postSynthesisCandidateActionById", static_workbench)
         self.assertIn("postSkillLifecycleAction", static_workbench)
+        self.assertIn("postSkillLifecycleActionById", static_workbench)
         self.assertIn("runRegressionReplay", static_workbench)
         self.assertIn("renderWorkbenchSummary", static_workbench)
         self.assertIn("buildTopMetricDraftFromForm", static_workbench)
+        self.assertIn('requiredElement("workbenchSummary").addEventListener("click"', static_app)
+        self.assertIn("synthesis-create-draft", static_renderers)
+        self.assertIn("open-draft", static_renderers)
         self.assertStaticRequiredElementsExist(chat_page, static_app)
         self.assertButtonBindings(
             chat_page,
