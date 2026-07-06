@@ -155,6 +155,28 @@ const draftListHtml = window.WiiconRenderers.renderSummary({
 if (draftListHtml.indexOf('draft_existing удален') < 0) {
   throw new Error('draft list notice is missing: ' + draftListHtml);
 }
+const previewAndDraftHtml = window.WiiconRenderers.renderSummary({
+  ok: true,
+  notice: 'Предпросмотр построен.',
+  draft: {
+    draft_id: 'draft_existing',
+    title: 'Черновик',
+    status: 'draft',
+    calculation: { kind: 'trace_query', raw: { query: 'ВЫБРАТЬ 1', limit: 1 } }
+  },
+  preview: { ok: true, query: 'ВЫБРАТЬ 1', params: { Период: '2026-01-01' }, limit: 1, issues: [], safety: { ok: true } }
+});
+if (previewAndDraftHtml.indexOf('Результат предпросмотра') < 0 || previewAndDraftHtml.indexOf('Черновик навыка') < 0 || previewAndDraftHtml.indexOf('draft-comment-input') < 0) {
+  throw new Error('preview replaced draft card: ' + previewAndDraftHtml);
+}
+const approvalAndDraftHtml = window.WiiconRenderers.renderSummary({
+  ok: true,
+  draft: { draft_id: 'draft_existing', title: 'Черновик', status: 'draft' },
+  approval: { approval_id: 'appr_1', decision: 'approved', comment: 'Проверено', smoke_id: 'smoke_1' }
+});
+if (approvalAndDraftHtml.indexOf('Результат утверждения') < 0 || approvalAndDraftHtml.indexOf('appr_1') < 0 || approvalAndDraftHtml.indexOf('Черновик навыка') < 0) {
+  throw new Error('approval result is not visible with draft card: ' + approvalAndDraftHtml);
+}
 """
         subprocess.run(
             ["osascript", "-l", "JavaScript", "-e", script],
@@ -959,11 +981,15 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("readDraftComment", static_workbench)
         self.assertIn("showDraftCardError", static_workbench)
         self.assertIn("Заполните комментарий в карточке черновика", static_workbench)
+        self.assertIn("DRAFT_ACTION_NOTICES", static_workbench)
+        self.assertIn("withButtonState(button, label", static_workbench)
         self.assertIn("postDraftAction(backendAction", static_app)
         self.assertIn("draft-delete", static_app)
         self.assertIn("draft-approve", static_renderers)
         self.assertIn("draft-comment-input", static_renderers)
         self.assertIn("draft-smoke-params-input", static_renderers)
+        self.assertIn("renderApprovalResult", static_renderers)
+        self.assertIn("renderDraftActionResult", static_renderers)
         self.assertIn("Утвердить проверку", static_renderers)
         self.assertIn("Опубликовать как кандидат", static_renderers)
         self.assertIn('postSkillLifecycleAction("promote"', static_app)

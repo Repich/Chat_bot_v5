@@ -119,6 +119,14 @@
     "publish-candidate": "Публикация кандидата",
   };
 
+  const DRAFT_ACTION_NOTICES = {
+    approve: "Решение по проверке сохранено. Следующий шаг: опубликовать черновик как кандидата навыка.",
+    preview: "Предпросмотр построен. Проверьте запрос 1С и замечания, затем запустите проверочный запуск.",
+    reject: "Черновик отклонен.",
+    smoke: "Проверочный запуск выполнен. Если результат корректный, заполните комментарий и утвердите проверку.",
+    "publish-candidate": "Черновик опубликован как кандидат навыка. Следующий шаг: открыть кандидата или перевести навык по жизненному циклу.",
+  };
+
   const CANDIDATE_ACTION_LABELS = {
     "create-draft": "создать черновик",
     reject: "отклонить",
@@ -315,42 +323,51 @@
       return null;
     }
     clearDraftCardError(button);
-    return runWorkbenchAction(
-      button,
-      label,
-      () => {
-        const payload = { actor: "web-workbench" };
-        if (action === "smoke") {
-          payload.params = smokeParams;
-        }
-        if (action === "approve" || action === "reject" || action === "publish-candidate") {
-          payload.actor = "web-approver";
-          payload.comment = comment;
-          if (window.WiiconState.workbench.latestSmokeId) {
-            payload.smoke_id = window.WiiconState.workbench.latestSmokeId;
-          }
-          if (action === "publish-candidate") {
-            payload.approve = true;
-          }
-        }
-        return api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}/${action}`, { method: "POST", body: payload });
-      },
-      (data) => {
-        if (data.smoke && data.smoke.smoke_id) {
-          window.WiiconState.workbench.latestSmokeId = data.smoke.smoke_id;
-        }
-        if (action === "preview") {
-          setLifecycleStep("preview");
-        } else if (action === "smoke") {
-          setLifecycleStep("smoke");
-        } else if (action === "approve") {
-          setLifecycleStep("approval");
-        } else if (action === "publish-candidate") {
-          setLifecycleStep("candidate");
-        }
-        return data;
+    const summary = window.WiiconApp.requiredElement("workbenchSummary");
+    const output = window.WiiconApp.requiredElement("workbenchOutput");
+    return window.WiiconApp.withButtonState(button, label, async () => {
+      const payload = { actor: "web-workbench" };
+      if (action === "smoke") {
+        payload.params = smokeParams;
       }
-    );
+      if (action === "approve" || action === "reject" || action === "publish-candidate") {
+        payload.actor = "web-approver";
+        payload.comment = comment;
+        if (window.WiiconState.workbench.latestSmokeId) {
+          payload.smoke_id = window.WiiconState.workbench.latestSmokeId;
+        }
+        if (action === "publish-candidate") {
+          payload.approve = true;
+        }
+      }
+      const data = await api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}/${action}`, { method: "POST", body: payload });
+      if (data.smoke && data.smoke.smoke_id) {
+        window.WiiconState.workbench.latestSmokeId = data.smoke.smoke_id;
+      }
+      const draftData = await api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}`);
+      const rendered = Object.assign({}, data, {
+        draft: draftData.draft,
+        notice: data.notice || DRAFT_ACTION_NOTICES[action] || "Действие выполнено.",
+      });
+      if (action === "preview") {
+        setLifecycleStep("preview");
+      } else if (action === "smoke") {
+        setLifecycleStep("smoke");
+      } else if (action === "approve") {
+        setLifecycleStep("approval");
+      } else if (action === "publish-candidate") {
+        setLifecycleStep("candidate");
+      }
+      summary.innerHTML = renderers.renderSummary(rendered);
+      output.innerHTML = renderers.renderJsonDetails("Технический JSON", rendered);
+      window.WiiconState.workbench.lastError = null;
+      return rendered;
+    }).catch((error) => {
+      window.WiiconState.workbench.lastError = error;
+      showDraftCardError(button, error.message || String(error));
+      output.innerHTML = renderers.renderJsonDetails("Ошибка", error.details || { message: String(error.message || error) });
+      return null;
+    });
   }
 
   async function deleteDraftById(draftId, button) {

@@ -674,7 +674,13 @@
   }
 
   function renderPreviewResult(preview) {
-    return `<p>${preview && preview.ok ? "Предпросмотр построен." : "Предпросмотр содержит замечания."}</p>${renderIssueList(preview && preview.issues)}`;
+    const item = preview || {};
+    const params = queryParamsText(item.params);
+    return `<p>${item.ok ? "Предпросмотр построен." : "Предпросмотр содержит замечания."}</p>
+      ${renderFacts({ Лимит: item.limit || "", "Проверка безопасности": item.safety && item.safety.ok === false ? "есть замечания" : "OK" })}
+      ${item.query ? renderInfoSection("Запрос 1С", renderQueryBlock(item.query)) : ""}
+      ${params ? renderInfoSection("Параметры", renderQueryBlock(params)) : ""}
+      ${renderIssueList(item.issues)}`;
   }
 
   function renderSmokeResult(smoke) {
@@ -685,8 +691,32 @@
     return `<p>Публикация кандидата: ${publication && publication.ok ? "готова" : "есть блокеры"}.</p>${renderIssueList(publication && publication.issues)}`;
   }
 
+  function renderApprovalResult(approval) {
+    const item = approval || {};
+    return `<p>Решение по черновику сохранено: ${escapeHtml(displayLabel(item.decision || "approved"))}.</p>
+      ${renderFacts({ "Approval ID": item.approval_id || "", Smoke: item.smoke_id || "", Уровень: item.approval_level || "" })}
+      ${item.comment ? `<p><strong>Комментарий:</strong> ${escapeHtml(item.comment)}</p>` : ""}`;
+  }
+
   function renderLifecycleResult(lifecycle) {
     return `<p>Жизненный цикл: ${escapeHtml(displayLabel((lifecycle && lifecycle.before_status) || ""))} -> ${escapeHtml(displayLabel((lifecycle && lifecycle.after_status) || ""))}</p>${renderIssueList(lifecycle && lifecycle.issues)}`;
+  }
+
+  function renderDraftActionResult(data) {
+    const parts = [];
+    if (data.preview) {
+      parts.push(renderInfoSection("Результат предпросмотра", renderPreviewResult(data.preview)));
+    }
+    if (data.smoke) {
+      parts.push(renderInfoSection("Результат проверочного запуска", renderSmokeResult(data.smoke)));
+    }
+    if (data.approval) {
+      parts.push(renderInfoSection("Результат утверждения", renderApprovalResult(data.approval)));
+    }
+    if (data.publication) {
+      parts.push(renderInfoSection("Результат публикации", renderPublicationResult(data.publication)));
+    }
+    return parts.length ? `<div class="draft-action-result">${parts.join("")}</div>` : "";
   }
 
   function renderSummary(data) {
@@ -709,7 +739,7 @@
       return renderSkillCard(data.skill);
     }
     if (data.draft) {
-      return `${renderNotice(data.notice)}${renderDraftCard(data.draft)}`;
+      return `${renderNotice(data.notice)}${renderDraftActionResult(data)}${renderDraftCard(data.draft)}`;
     }
     if (data.preview) {
       return renderPreviewResult(data.preview);
