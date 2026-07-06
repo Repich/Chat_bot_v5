@@ -372,6 +372,17 @@
     return window.WiiconApp.runWorkbenchAction(button, title, action, afterSuccess);
   }
 
+  function showTracePath(tracePath) {
+    if (!tracePath) {
+      throw new Error("Trace path пустой.");
+    }
+    const summary = window.WiiconApp.requiredElement("workbenchSummary");
+    const output = window.WiiconApp.requiredElement("workbenchOutput");
+    summary.innerHTML = `<div class="empty-state"><h3>Trace кандидата</h3><p>${renderers.escapeHtml(tracePath)}</p></div>`;
+    output.innerHTML = renderers.renderJsonDetails("Trace path", { trace_path: tracePath });
+    window.WiiconApp.showInfo("Trace path открыт.");
+  }
+
   function setLifecycleStep(step) {
     const order = ["draft", "preview", "smoke", "approval", "candidate", "verified"];
     const index = order.indexOf(step);
@@ -415,6 +426,7 @@
     postSkillLifecycleActionById,
     runRegressionReplay,
     runWorkbenchAction,
+    showTracePath,
     renderWorkbenchSummary,
     setLifecycleStep,
   };

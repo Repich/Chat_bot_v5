@@ -233,6 +233,7 @@
       <div class="entity-actions">
         ${actionButton("Создать draft", createAction, "candidate-id", id, "primary-button")}
         ${actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}
+        ${item.trace_path ? actionButton("Открыть trace", "open-trace", "trace-path", item.trace_path, "secondary-button") : ""}
         ${synthesis ? actionButton("Игнорировать похожие", "synthesis-ignore-similar", "candidate-id", id, "ghost-button") : ""}
       </div>
     </article>`;

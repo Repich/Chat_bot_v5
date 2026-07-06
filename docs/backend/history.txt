@@ -1,3 +1,6 @@
+5.0.0-alpha.53
+- No backend behavior changes. This release completes the Workbench candidate-card trace action in the frontend.
+
 5.0.0-alpha.52
 - No backend behavior changes. This release updates the Workbench frontend and adds frontend regression coverage.
 - Local Workbench candidate evidence under bot_instances/*/workbench/candidates/ is now ignored by Git.

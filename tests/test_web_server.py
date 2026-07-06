@@ -95,6 +95,9 @@ if (html.indexOf('Создать draft') < 0) {
 if (html.indexOf('data-action="synthesis-create-draft"') < 0) {
   throw new Error('candidate action binding is missing: ' + html);
 }
+if (html.indexOf('data-action="open-trace"') < 0) {
+  throw new Error('candidate trace action is missing: ' + html);
+}
 if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') > html.indexOf('total:')) {
   throw new Error('summary rendered before candidates: ' + html);
 }
@@ -733,9 +736,12 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
         self.assertIn("postSkillLifecycleActionById", static_workbench)
         self.assertIn("runRegressionReplay", static_workbench)
         self.assertIn("renderWorkbenchSummary", static_workbench)
+        self.assertIn("showTracePath", static_workbench)
         self.assertIn("buildTopMetricDraftFromForm", static_workbench)
         self.assertIn('requiredElement("workbenchSummary").addEventListener("click"', static_app)
         self.assertIn("synthesis-create-draft", static_renderers)
+        self.assertIn("open-trace", static_renderers)
+        self.assertIn("open-trace", static_app)
         self.assertIn("open-draft", static_renderers)
         self.assertStaticRequiredElementsExist(chat_page, static_app)
         self.assertButtonBindings(

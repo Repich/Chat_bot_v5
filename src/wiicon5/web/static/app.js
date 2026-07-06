@@ -533,6 +533,11 @@
       const candidateId = actionButton.dataset.candidateId || "";
       const draftId = actionButton.dataset.draftId || "";
       const skillId = actionButton.dataset.skillId || "";
+      const tracePath = actionButton.dataset.tracePath || "";
+      if (action === "open-trace") {
+        window.WiiconWorkbench.showTracePath(tracePath);
+        return;
+      }
       if (action === "open-skill") {
         window.WiiconWorkbench.loadSkillDetailsById(skillId, actionButton);
         return;

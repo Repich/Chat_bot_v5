@@ -1,3 +1,8 @@
+5.0.0-alpha.53
+- Added an explicit "Открыть trace" action to Workbench candidate cards when trace_path is available.
+- Workbench now opens the selected candidate trace path in the summary/details area without requiring manual JSON inspection.
+- Extended the JavaScriptCore renderer regression check to cover the trace action.
+
 5.0.0-alpha.52
 - Fixed Workbench renderer priority so responses containing both summary and candidates/skills/drafts/objects render the entity list instead of only total/by_status.
 - Reworked Workbench result cards for skills, drafts, metadata objects, and candidates with human-readable titles, statuses, facts, tags, and primary actions.
