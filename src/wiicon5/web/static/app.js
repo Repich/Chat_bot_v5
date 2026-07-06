@@ -551,6 +551,10 @@
         window.WiiconWorkbench.loadDraftDetailsById(draftId, actionButton);
         return;
       }
+      if (action === "draft-delete") {
+        window.WiiconWorkbench.deleteDraftById(draftId, actionButton);
+        return;
+      }
       if (action.startsWith("draft-")) {
         const draftAction = action.replace("draft-", "");
         const backendAction = draftAction === "publish" ? "publish-candidate" : draftAction;

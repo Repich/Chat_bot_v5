@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wiicon-chatbot-v5"
-version = "5.0.0a60"
+version = "5.0.0a61"
 description = "Skill-first WIICON ChatBot 5 core"
 requires-python = ">=3.9"
 dependencies = []

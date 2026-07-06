@@ -319,8 +319,16 @@ class SynthesisCandidateStore:
         candidate: SynthesisCandidate,
         draft: Optional[HumanSkillDraft],
     ) -> SynthesisCandidate:
-        if draft is None or candidate_payload_draft_id(candidate.payload):
+        linked_draft_id = candidate_payload_draft_id(candidate.payload)
+        if linked_draft_id and self.draft_store.get_draft(linked_draft_id) is not None:
             return candidate
+        candidate_without_stale_link = (
+            replace(candidate, payload=payload_without_draft_link(candidate.payload))
+            if linked_draft_id
+            else candidate
+        )
+        if draft is None:
+            return candidate_without_stale_link
         return replace(candidate, payload=payload_with_draft_link(candidate.payload, draft.draft_id, actor="workbench"))
 
     def _path(self, candidate_id: str) -> Path:
@@ -404,6 +412,13 @@ def payload_with_draft_link(payload: Mapping[str, Any], draft_id: str, *, actor:
     draft_link.update({"draft_id": draft_id, "linked_by": actor})
     draft_link.setdefault("linked_at", now)
     return {**payload, "draft_id": draft_id, "draft": draft_link}
+
+
+def payload_without_draft_link(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    updated = dict(payload)
+    updated.pop("draft_id", None)
+    updated.pop("draft", None)
+    return updated
 
 
 def draft_matches_synthesis_candidate(draft: HumanSkillDraft, candidate_id: str) -> bool:

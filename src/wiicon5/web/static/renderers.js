@@ -224,6 +224,26 @@
     return `<section class="entity-section"><h4>${escapeHtml(title)}</h4>${body}</section>`;
   }
 
+  function renderTextList(values, emptyText) {
+    const items = (Array.isArray(values) ? values : []).filter((item) => String(item || "").trim());
+    if (!items.length) {
+      return emptyText ? `<p class="muted">${escapeHtml(emptyText)}</p>` : "";
+    }
+    return `<ul class="compact-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+  }
+
+  function renderQueryBlock(query) {
+    const text = String(query || "").trim();
+    return text ? `<pre class="query-block">${escapeHtml(text)}</pre>` : "";
+  }
+
+  function queryParamsText(params) {
+    if (!params || typeof params !== "object" || Array.isArray(params) || Object.keys(params).length === 0) {
+      return "";
+    }
+    return JSON.stringify(params, null, 2);
+  }
+
   function compactList(values, limit) {
     const result = [];
     for (const value of Array.isArray(values) ? values : []) {
@@ -377,6 +397,116 @@
     return id.startsWith("syn_") || Boolean(item.answer || item.query || item.trace_path || item.final_artifact_type);
   }
 
+  function renderDraftOrigin(draft) {
+    const candidate = draft && draft.synthesis_candidate && typeof draft.synthesis_candidate === "object" ? draft.synthesis_candidate : null;
+    if (!candidate) {
+      return "";
+    }
+    const metadataObjects = metadataObjectNames(candidate);
+    const facts = renderFacts({
+      "Кандидат": candidate.candidate_id || "",
+      "Строк в результате": candidate.row_count == null ? "" : candidate.row_count,
+      "Тип результата": candidate.final_artifact_type || "",
+      "Трассировка": candidate.trace_path || draft.source_trace || "",
+    });
+    const parts = [
+      candidate.question ? `<p><strong>Вопрос:</strong> ${escapeHtml(candidate.question)}</p>` : "",
+      candidate.answer ? `<p><strong>Ответ агента:</strong> ${escapeHtml(candidate.answer)}</p>` : "",
+      facts,
+      metadataObjects.length ? renderTextList(metadataObjects.slice(0, 12), "") : "",
+    ].filter(Boolean);
+    return parts.join("");
+  }
+
+  function renderDraftSources(draft) {
+    const sources = Array.isArray(draft.data_sources) ? draft.data_sources : [];
+    if (!sources.length) {
+      return "";
+    }
+    const items = sources.slice(0, 12).map((source) => {
+      const alias = source.alias ? `${source.alias}: ` : "";
+      const kind = source.object_kind ? `, ${displayLabel(source.object_kind)}` : "";
+      const trust = source.trust ? `, доверие: ${displayLabel(source.trust)}` : "";
+      return `${alias}${source.object_name || "источник не указан"}${kind}${trust}`;
+    });
+    if (sources.length > items.length) {
+      items.push(`Еще источников: ${sources.length - items.length}`);
+    }
+    return renderTextList(items, "");
+  }
+
+  function renderDraftFields(draft) {
+    const fields = Array.isArray(draft.field_mappings) ? draft.field_mappings : [];
+    if (!fields.length) {
+      return "<p class=\"muted\">Явные роли полей пока не описаны. Для trace-query черновиков проверьте поля в тексте запроса.</p>";
+    }
+    return renderTextList(fields.map((field) => {
+      const source = field.source_alias ? `${field.source_alias}.` : "";
+      const confirmed = field.confirmed ? "подтверждено" : "требует проверки";
+      return `${field.role || "роль"} -> ${source}${field.field_name || field.path || "поле не указано"} (${confirmed})`;
+    }), "");
+  }
+
+  function renderDraftCalculation(draft) {
+    const calculation = draft.calculation && typeof draft.calculation === "object" ? draft.calculation : {};
+    const raw = calculation.raw && typeof calculation.raw === "object" ? calculation.raw : {};
+    const facts = renderFacts({
+      "Тип расчета": displayLabel(calculation.kind || ""),
+      "Источник": calculation.source_alias || "",
+      "Лимит": calculation.limit || raw.limit || "",
+    });
+    const parts = [facts];
+    const groupBy = Array.isArray(calculation.group_by) ? calculation.group_by : [];
+    const measures = Array.isArray(calculation.measures) ? calculation.measures : [];
+    const filters = Array.isArray(calculation.filters) ? calculation.filters : [];
+    const sort = Array.isArray(calculation.sort) ? calculation.sort : [];
+    if (groupBy.length) {
+      parts.push(renderInfoSection("Группировка", renderTextList(groupBy, "")));
+    }
+    if (measures.length) {
+      parts.push(renderInfoSection("Метрики", renderTextList(measures.map((measure) => `${measure.label || measure.role || "метрика"}: ${measure.aggregate || ""} ${measure.expression || ""}`), "")));
+    }
+    if (filters.length) {
+      parts.push(renderInfoSection("Фильтры", renderTextList(filters.map((filter) => `${filter.role || "фильтр"} ${filter.operator || ""} ${filter.parameter || ""}`), "")));
+    }
+    if (sort.length) {
+      parts.push(renderInfoSection("Сортировка", renderTextList(sort.map((item) => `${item.field || item.role || "поле"} ${item.direction || ""}`), "")));
+    }
+    if (raw.query) {
+      parts.push(renderInfoSection("Запрос 1С", renderQueryBlock(raw.query)));
+    }
+    const params = queryParamsText(raw.params);
+    if (params) {
+      parts.push(renderInfoSection("Параметры запроса", renderQueryBlock(params)));
+    }
+    return parts.filter(Boolean).join("");
+  }
+
+  function renderDraftPresentation(draft) {
+    const presentation = draft.presentation && typeof draft.presentation === "object" ? draft.presentation : {};
+    const columns = Array.isArray(presentation.columns) ? presentation.columns : [];
+    const parts = [];
+    if (columns.length) {
+      parts.push(`Колонки ответа: ${columns.join(", ")}`);
+    }
+    if (presentation.answer_template) {
+      parts.push(`Шаблон ответа: ${presentation.answer_template}`);
+    }
+    if (presentation.empty_result_text) {
+      parts.push(`Если данных нет: ${presentation.empty_result_text}`);
+    }
+    return renderTextList(parts, "");
+  }
+
+  function renderDraftWorkflowHelp() {
+    return `<ol class="compact-list">
+      <li><strong>Предпросмотр</strong> строит и проверяет запрос без публикации навыка.</li>
+      <li><strong>Проверить</strong> выполняет smoke-запуск через MCP с тестовыми параметрами.</li>
+      <li><strong>Утвердить проверку</strong> фиксирует решение человека: черновик проверен и может стать кандидатом.</li>
+      <li><strong>Опубликовать как кандидат</strong> создает skill-кандидат на основе черновика; после этого навык проходит дальнейший жизненный цикл.</li>
+    </ol>`;
+  }
+
   function renderSkillCard(skill) {
     const item = skill || {};
     const id = item.skill_id || item.id || "";
@@ -409,6 +539,7 @@
     const item = draft || {};
     const id = item.draft_id || item.id || "";
     const questions = Array.isArray(item.example_questions) ? item.example_questions : [];
+    const description = item.description || "Описание не заполнено.";
     return `<article class="entity-card draft-card" data-draft-id="${escapeHtml(id)}">
       <div class="entity-card-header">
         <div>
@@ -418,13 +549,23 @@
         ${renderStatusPill(item.status || item.source_kind || "draft")}
       </div>
       ${questions.length ? `<p class="entity-summary">${escapeHtml(questions.join("; "))}</p>` : ""}
-      ${renderFacts({ Идентификатор: id, Источник: displayLabel(item.source_kind || ""), Обновлен: item.updated_at || "" })}
+      ${renderFacts({ Идентификатор: id, Статус: displayLabel(item.status || ""), Источник: displayLabel(item.source_kind || ""), Обновлен: item.updated_at || "" })}
+      ${renderInfoSection("Что делает", `<p>${escapeHtml(description)}</p>`)}
+      ${renderInfoSection("Какие вопросы закрывает", renderTextList(questions, "Примеры вопросов не указаны."))}
+      ${renderInfoSection("Откуда взялся черновик", renderDraftOrigin(item))}
+      ${renderInfoSection("Источники 1С", renderDraftSources(item))}
+      ${renderInfoSection("Поля и роли", renderDraftFields(item))}
+      ${renderInfoSection("Расчет и запрос", renderDraftCalculation(item))}
+      ${renderInfoSection("Формирование ответа", renderDraftPresentation(item))}
+      ${item.notes ? renderInfoSection("Заметки агента", `<p>${escapeHtml(item.notes)}</p>`) : ""}
+      ${renderInfoSection("Что означают действия", renderDraftWorkflowHelp())}
       <div class="entity-actions">
         ${actionButton("Открыть", "open-draft", "draft-id", id, "primary-button")}
         ${actionButton("Предпросмотр", "draft-preview", "draft-id", id, "secondary-button")}
         ${actionButton("Проверить", "draft-smoke", "draft-id", id, "secondary-button")}
-        ${actionButton("Утвердить", "draft-approve", "draft-id", id, "secondary-button")}
-        ${actionButton("Опубликовать", "draft-publish", "draft-id", id, "secondary-button")}
+        ${actionButton("Утвердить проверку", "draft-approve", "draft-id", id, "secondary-button")}
+        ${actionButton("Опубликовать как кандидат", "draft-publish", "draft-id", id, "secondary-button")}
+        ${actionButton("Удалить", "draft-delete", "draft-id", id, "danger-button")}
       </div>
     </article>`;
   }
@@ -489,10 +630,12 @@
 
   function renderDraftsResponse(data) {
     const drafts = data.drafts || [];
+    const notice = renderNotice(data.notice);
     if (!drafts.length) {
-      return `<div class="empty-state"><h3>Черновиков пока нет</h3><p>Создайте черновик из кандидата или вручную через мастер.</p></div>`;
+      return `${notice}<div class="empty-state"><h3>Черновиков пока нет</h3><p>Создайте черновик из кандидата или вручную через мастер.</p></div>`;
     }
     return `<div class="summary-kpi">Черновиков: ${escapeHtml(summaryCount(data.summary, drafts.length))}</div>
+      ${notice}
       <div class="card-list entity-list">${drafts.slice(0, 50).map(renderDraftCard).join("")}</div>`;
   }
 

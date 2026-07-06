@@ -117,10 +117,40 @@ if (linkedHtml.indexOf('Открыть черновик') < 0 || linkedHtml.inde
 const draftHtml = window.WiiconRenderers.renderSummary({
   ok: true,
   notice: 'Черновик draft_existing найден. Следующий шаг: открыть черновик.',
-  draft: { draft_id: 'draft_existing', title: 'Черновик', status: 'draft' }
+  draft: {
+    draft_id: 'draft_existing',
+    title: 'Черновик',
+    status: 'draft',
+    description: 'Проверяет клиента с максимальной задолженностью',
+    source_kind: 'query_synthesis_candidate',
+    example_questions: ['Покажи клиента с максимальной задолженностью'],
+    data_sources: [{ alias: 'Расчеты', object_name: 'РегистрНакопления.РасчетыСКлиентами', trust: 'hint' }],
+    calculation: { kind: 'trace_query', raw: { query: 'ВЫБРАТЬ 1 ИЗ Справочник.Контрагенты', limit: 1 } },
+    synthesis_candidate: {
+      candidate_id: 'syn_linked',
+      question: 'Покажи клиента',
+      answer: 'Клиент найден',
+      row_count: 1,
+      metadata_objects: [{ full_name: 'Справочник.Контрагенты' }]
+    }
+  }
 });
 if (draftHtml.indexOf('Следующий шаг') < 0 || draftHtml.indexOf('draft_existing') < 0) {
   throw new Error('draft notice is missing: ' + draftHtml);
+}
+if (draftHtml.indexOf('Запрос 1С') < 0 || draftHtml.indexOf('Утвердить проверку') < 0 || draftHtml.indexOf('Опубликовать как кандидат') < 0) {
+  throw new Error('draft decision details are missing: ' + draftHtml);
+}
+if (draftHtml.indexOf('data-action="draft-delete"') < 0) {
+  throw new Error('draft delete action is missing: ' + draftHtml);
+}
+const draftListHtml = window.WiiconRenderers.renderSummary({
+  ok: true,
+  notice: 'Черновик draft_existing удален.',
+  drafts: []
+});
+if (draftListHtml.indexOf('draft_existing удален') < 0) {
+  throw new Error('draft list notice is missing: ' + draftListHtml);
 }
 """
         subprocess.run(
@@ -922,8 +952,12 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("applyMetadataField", static_workbench)
         self.assertIn("loadSkillDetails", static_workbench)
         self.assertIn("loadDraftDetails", static_workbench)
+        self.assertIn("deleteDraftById", static_workbench)
         self.assertIn("postDraftAction(backendAction", static_app)
+        self.assertIn("draft-delete", static_app)
         self.assertIn("draft-approve", static_renderers)
+        self.assertIn("Утвердить проверку", static_renderers)
+        self.assertIn("Опубликовать как кандидат", static_renderers)
         self.assertIn('postSkillLifecycleAction("promote"', static_app)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")

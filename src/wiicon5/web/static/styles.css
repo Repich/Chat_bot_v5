@@ -338,6 +338,16 @@ label {
   background: #f1f5f6;
 }
 
+.danger-button {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: #fecaca;
+}
+
+.danger-button:hover {
+  background: #fee2e2;
+}
+
 .ghost-button {
   min-height: 32px;
   padding: 0 10px;
@@ -603,6 +613,21 @@ label {
 
 .compact-list li + li {
   margin-top: 4px;
+}
+
+.query-block {
+  max-height: 320px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .status-pill {

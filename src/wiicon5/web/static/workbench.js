@@ -289,6 +289,33 @@
     );
   }
 
+  async function deleteDraftById(draftId, button) {
+    if (!draftId) {
+      throw new Error("Укажите идентификатор черновика.");
+    }
+    const confirmed = window.confirm(`Удалить черновик ${draftId}? Это действие нельзя отменить.`);
+    if (!confirmed) {
+      return null;
+    }
+    setCurrentDraftId(draftId);
+    return runWorkbenchAction(
+      button,
+      "Удаление черновика",
+      () => api.fetchAdmin(`/api/admin/workbench/drafts/${encodeURIComponent(draftId)}?actor=web-workbench`, {
+        method: "DELETE",
+      }),
+      async (data) => {
+        setCurrentDraftId("");
+        setLifecycleStep("draft");
+        const list = await api.fetchAdmin("/api/admin/workbench/drafts");
+        return Object.assign({}, list, {
+          notice: `Черновик ${draftId} удален.`,
+          action_result: data,
+        });
+      }
+    );
+  }
+
   async function loadOnboardingCandidates(button) {
     return runWorkbenchAction(button, "Загрузка кандидатов обучения", () => api.fetchAdmin("/api/admin/workbench/onboarding/candidates"), (data) => data);
   }
@@ -468,6 +495,7 @@
     loadDraftDetailsById,
     createDraft,
     postDraftAction,
+    deleteDraftById,
     loadOnboardingCandidates,
     postCandidateAction,
     postCandidateActionById,
