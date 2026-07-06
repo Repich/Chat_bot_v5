@@ -242,6 +242,31 @@ class QuerySynthesisTests(unittest.TestCase):
         assert review is not None
         self.assertTrue(review.sufficient)
 
+    def test_sufficiency_rejects_settlement_object_as_client_with_debt_metric(self) -> None:
+        review = deterministic_partial_review(
+            question="Покажи клиента с самой большой задолженностью",
+            columns=["Клиент", "Задолженность"],
+            rows=[
+                {
+                    "Клиент": {
+                        "_objectRef": True,
+                        "УникальныйИдентификатор": "30a11d2b-0ecb-11eb-80ed-60a44ccf99dc",
+                        "ТипОбъекта": "СправочникСсылка.ОбъектыРасчетов",
+                        "Представление": "Договор с клиентом № 0-000000078 от 04.01.2014",
+                    },
+                    "Задолженность": 379159.91,
+                }
+            ],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertFalse(review.sufficient)
+        self.assertTrue(review.partial)
+        self.assertIn("клиент", review.next_query_goal.lower())
+        self.assertIn("несовместимый тип", review.reasoning)
+
     def test_sufficiency_rejects_empty_counterparty_requisites_with_debt_metric(self) -> None:
         review = deterministic_partial_review(
             question="Покажи реквизиты клиента задолженность которого самая высокая",

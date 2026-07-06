@@ -505,8 +505,6 @@
     optionalBind("createDraftButton", "click", (event) => window.WiiconWorkbench.createDraft(event.currentTarget));
     optionalBind("previewDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("preview", event.currentTarget));
     optionalBind("smokeDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("smoke", event.currentTarget));
-    optionalBind("approveDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("approve", event.currentTarget));
-    optionalBind("rejectDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("reject", event.currentTarget));
     optionalBind("publishDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("publish-candidate", event.currentTarget));
     optionalBind("onboardingCandidatesButton", "click", (event) => window.WiiconWorkbench.loadOnboardingCandidates(event.currentTarget));
     optionalBind("candidateCreateDraftButton", "click", (event) => window.WiiconWorkbench.postCandidateAction("create-draft", event.currentTarget));

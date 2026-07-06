@@ -139,6 +139,21 @@
               </details>
             </div>
 
+            <div class="card">
+              <div class="card-header">
+                <h2>Проверка и утверждение</h2>
+                <span class="muted">используется кнопками на карточках черновиков</span>
+              </div>
+              <div class="draft-grid compact-grid">
+                <label>Комментарий утверждения
+                  <textarea id="approvalCommentInput" class="text-area compact" placeholder="Что проверено человеком"></textarea>
+                </label>
+                <label>Тестовые параметры
+                  <textarea id="smokeParamsInput" class="text-area compact" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
+                </label>
+              </div>
+            </div>
+
             <div class="card result-card">
               <div class="card-header">
                 <h2>Результат</h2>
@@ -147,61 +162,64 @@
               <div id="workbenchSummary" class="summary-content">Мастерская навыков не загружена.</div>
               <div id="workbenchOutput" class="technical-output"></div>
             </div>
-          </section>
 
-          <aside class="workspace-inspector">
-            <h2>Проверки</h2>
-            <label class="field-label" for="approvalCommentInput">Комментарий утверждения</label>
-            <textarea id="approvalCommentInput" class="text-area compact" placeholder="Что проверено человеком"></textarea>
-            <label class="field-label" for="smokeParamsInput">Тестовые параметры</label>
-            <textarea id="smokeParamsInput" class="text-area compact" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
-            <div class="button-grid">
-              <button id="approveDraftButton" class="secondary-button" type="button">Утвердить</button>
-              <button id="rejectDraftButton" class="secondary-button" type="button">Отклонить</button>
+            <div class="card">
+              <details class="advanced-panel">
+                <summary>Дополнительные действия</summary>
+                <div class="draft-grid compact-grid">
+                  <label>Идентификатор кандидата обучения
+                    <input id="candidateIdInput" class="text-input" type="text" placeholder="onb_...">
+                  </label>
+                  <div class="button-grid">
+                    <button id="candidateCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
+                    <button id="candidateRejectButton" class="secondary-button" type="button">Отклонить</button>
+                  </div>
+                  <label>Идентификатор кандидата агента
+                    <input id="synthesisCandidateIdInput" class="text-input" type="text" placeholder="syn_...">
+                  </label>
+                  <div class="button-grid">
+                    <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
+                    <button id="synthesisRejectButton" class="secondary-button" type="button">Отклонить</button>
+                  </div>
+                  <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Игнорировать похожие</button>
+                </div>
+              </details>
+              <details class="advanced-panel">
+                <summary>Жизненный цикл и регрессия</summary>
+                <div class="draft-grid compact-grid">
+                  <label>Идентификатор навыка
+                    <input id="skillLifecycleIdInput" class="text-input" type="text" placeholder="skill_...">
+                  </label>
+                  <label>Причина изменения
+                    <input id="skillLifecycleReasonInput" class="text-input" type="text" placeholder="Что проверено и почему меняем статус">
+                  </label>
+                  <label>Идентификаторы регрессионных проверок
+                    <input id="skillRegressionCasesInput" class="text-input" type="text" placeholder="reg_case_1, reg_case_2">
+                  </label>
+                  <label>Новый статус
+                    <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">проверен</option><option value="stable">стабилен</option></select>
+                  </label>
+                  <label>Успешных проверок
+                    <input id="skillSuccessfulRunsInput" class="text-input" type="number" min="0" value="0">
+                  </label>
+                  <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Подтверждено администратором</label>
+                  <div class="button-grid wide">
+                    <button id="skillPromoteButton" class="secondary-button" type="button">Повысить статус</button>
+                    <button id="skillRollbackButton" class="secondary-button" type="button">Откатить</button>
+                    <button id="skillDeprecateButton" class="secondary-button" type="button">Пометить устаревшим</button>
+                    <button id="skillBlockButton" class="secondary-button" type="button">Заблокировать</button>
+                  </div>
+                  <label>Путь к регрессионным проверкам
+                    <input id="regressionCasesPathInput" class="text-input" type="text" placeholder="Пусто = bot_instance/regression">
+                  </label>
+                  <label>Префикс сессии
+                    <input id="regressionSessionPrefixInput" class="text-input" type="text" value="web-regression">
+                  </label>
+                  <button id="runRegressionButton" class="secondary-button" type="button">Запустить регрессию</button>
+                </div>
+              </details>
             </div>
-            <details class="advanced-panel">
-              <summary>Действия по идентификатору</summary>
-              <label class="field-label" for="candidateIdInput">Идентификатор кандидата обучения</label>
-              <input id="candidateIdInput" class="text-input" type="text" placeholder="onb_...">
-              <div class="button-grid">
-                <button id="candidateCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
-                <button id="candidateRejectButton" class="secondary-button" type="button">Отклонить</button>
-              </div>
-              <label class="field-label" for="synthesisCandidateIdInput">Идентификатор кандидата агента</label>
-              <input id="synthesisCandidateIdInput" class="text-input" type="text" placeholder="syn_...">
-              <div class="button-grid">
-                <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
-                <button id="synthesisRejectButton" class="secondary-button" type="button">Отклонить</button>
-              </div>
-              <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Игнорировать похожие</button>
-            </details>
-            <details class="advanced-panel">
-              <summary>Жизненный цикл и регрессия</summary>
-              <label class="field-label" for="skillLifecycleIdInput">Идентификатор навыка</label>
-              <input id="skillLifecycleIdInput" class="text-input" type="text" placeholder="skill_...">
-              <label class="field-label" for="skillLifecycleReasonInput">Причина изменения</label>
-              <input id="skillLifecycleReasonInput" class="text-input" type="text" placeholder="Что проверено и почему меняем статус">
-              <label class="field-label" for="skillRegressionCasesInput">Идентификаторы регрессионных проверок</label>
-              <input id="skillRegressionCasesInput" class="text-input" type="text" placeholder="reg_case_1, reg_case_2">
-              <label class="field-label" for="skillTargetStatusInput">Новый статус</label>
-              <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">проверен</option><option value="stable">стабилен</option></select>
-              <label class="field-label" for="skillSuccessfulRunsInput">Успешных проверок</label>
-              <input id="skillSuccessfulRunsInput" class="text-input" type="number" min="0" value="0">
-              <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Подтверждено администратором</label>
-              <div class="button-grid">
-                <button id="skillPromoteButton" class="secondary-button" type="button">Повысить статус</button>
-                <button id="skillRollbackButton" class="secondary-button" type="button">Откатить</button>
-                <button id="skillDeprecateButton" class="secondary-button" type="button">Пометить устаревшим</button>
-                <button id="skillBlockButton" class="secondary-button" type="button">Заблокировать</button>
-              </div>
-              <hr>
-              <label class="field-label" for="regressionCasesPathInput">Путь к регрессионным проверкам</label>
-              <input id="regressionCasesPathInput" class="text-input" type="text" placeholder="Пусто = bot_instance/regression">
-              <label class="field-label" for="regressionSessionPrefixInput">Префикс сессии</label>
-              <input id="regressionSessionPrefixInput" class="text-input" type="text" value="web-regression">
-              <button id="runRegressionButton" class="secondary-button" type="button">Запустить регрессию</button>
-            </details>
-          </aside>
+          </section>
         </div>
       </section>
 

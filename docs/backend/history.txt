@@ -1,3 +1,7 @@
+5.0.0-alpha.56
+- Sufficiency review now rejects rows where a party column such as "Клиент" contains a known intermediate object reference, for example a settlement object or contract, instead of the actual customer/counterparty.
+- Added regression coverage for maximum-debt questions so the agent does not answer with a contract when the user asks for the client.
+
 5.0.0-alpha.55
 - Утверждение и публикация Workbench-черновика теперь могут восстановить актуальный успешный smoke_id на backend по текущим hash черновика и предпросмотра, если UI не передал smoke_id.
 - Backend по-прежнему требует существующий успешный проверочный запуск текущей версии черновика; без него возвращается current_successful_smoke_required.

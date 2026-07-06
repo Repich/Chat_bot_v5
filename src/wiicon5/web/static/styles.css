@@ -197,7 +197,6 @@ h3 {
 .dialog-panel,
 .workspace-sidebar,
 .workspace-main,
-.workspace-inspector,
 .card {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -391,7 +390,7 @@ label {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -404,8 +403,7 @@ label {
 }
 
 .workspace-sidebar,
-.workspace-main,
-.workspace-inspector {
+.workspace-main {
   min-height: 0;
   overflow: auto;
   padding: 14px;
@@ -415,12 +413,6 @@ label {
   display: grid;
   align-content: start;
   gap: 12px;
-}
-
-.workspace-inspector {
-  display: grid;
-  align-content: start;
-  gap: 10px;
 }
 
 .card {
@@ -471,6 +463,10 @@ label {
 
 .draft-grid {
   grid-template-columns: repeat(4, minmax(160px, 1fr));
+}
+
+.draft-grid.compact-grid {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
 }
 
 .admin-grid {

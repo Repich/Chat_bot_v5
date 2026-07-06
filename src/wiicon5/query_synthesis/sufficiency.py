@@ -22,6 +22,8 @@ RESULT_SUFFICIENCY_PROMPT = (
     "и числовую сумму/количество/остаток, либо явно объясняет отсутствие данных. "
     "Если в вопросе спрашивают долг/задолженность/кому должны, сумма документа поставки сама по себе не равна задолженности, "
     "если это не подтверждено запросом или метаданными расчетов. "
+    "Если пользователь спрашивает клиента/контрагента/поставщика, а результат в такой колонке содержит договор, объект расчетов "
+    "или другой промежуточный объект вместо самой стороны расчетов, результат недостаточен. "
     "Если вопрос пользователя допускает два бизнес-смысла, а текущий результат покрывает только один из них, "
     "не выбирай смысл за пользователя: верни needs_clarification=true и короткий уточняющий вопрос с вариантами. "
     "Верни строго JSON: sufficient (bool), partial (bool), missing_facts (array of strings), "
@@ -172,6 +174,13 @@ def deterministic_partial_review(
     lowered_question = question.lower()
     lowered_columns = " ".join(columns).lower()
     if rows and asks_subject_and_amount(lowered_question):
+        subject_ref_mismatch = subject_reference_mismatch_review(
+            question=lowered_question,
+            columns=columns,
+            rows=rows,
+        )
+        if subject_ref_mismatch is not None:
+            return subject_ref_mismatch
         has_subject = has_subject_evidence(question=lowered_question, columns=columns, rows=rows)
         has_debt_metric = any(marker in lowered_columns for marker in ["задолж", "долг", "к оплате", "коплате"])
         has_amount = has_debt_metric or any(
@@ -270,6 +279,92 @@ def has_subject_evidence(*, question: str, columns: List[str], rows: List[Dict[s
     if rows_have_subject_object_ref(question=question, rows=rows):
         return True
     return rows_have_party_requisites(question=question, columns=columns, rows=rows)
+
+
+def subject_reference_mismatch_review(
+    *,
+    question: str,
+    columns: List[str],
+    rows: List[Dict[str, Any]],
+) -> Optional[ResultSufficiencyReview]:
+    if asks_intermediate_subject(question):
+        return None
+    subject_columns = party_subject_columns(question=question, columns=columns)
+    if not subject_columns:
+        return None
+
+    expected_markers = subject_reference_markers(question)
+    mismatches: List[str] = []
+    for row in rows:
+        for column in subject_columns:
+            for ref in object_refs(row.get(column)):
+                object_type = str(ref.get("ТипОбъекта") or "").lower()
+                presentation = str(ref.get("Представление") or "").lower()
+                if compatible_subject_ref(object_type=object_type, expected_markers=expected_markers):
+                    continue
+                if known_intermediate_subject_ref(object_type=object_type, presentation=presentation):
+                    label = str(ref.get("Представление") or ref.get("ТипОбъекта") or "").strip()
+                    mismatches.append(f"{column}: {label}")
+
+    if not mismatches:
+        return None
+
+    return ResultSufficiencyReview(
+        sufficient=False,
+        partial=True,
+        missing_facts=[
+            "Получен промежуточный объект расчетов/договор, а не сам клиент/контрагент."
+        ],
+        next_query_goal=(
+            "Построить запрос, который связывает найденную аналитику расчетов с фактическим клиентом, "
+            "контрагентом или партнером, и вернуть эту сторону расчетов вместе с долговой метрикой."
+        ),
+        reasoning=(
+            "Название колонки не является доказательством бизнес-сущности: значение в субъектной колонке "
+            f"имеет несовместимый тип ссылки ({'; '.join(mismatches[:3])})."
+        ),
+        trace={"subject_reference_mismatches": mismatches[:5]},
+    )
+
+
+def asks_intermediate_subject(question: str) -> bool:
+    return any(marker in question for marker in ["договор", "объект расчет", "объект расчёт", "аналитик"])
+
+
+def party_subject_columns(*, question: str, columns: List[str]) -> List[str]:
+    if not any(
+        marker in question
+        for marker in ["клиент", "контрагент", "поставщик", "покупател", "партнер", "партнёр", "кому", "кто"]
+    ):
+        return []
+    column_markers = ["клиент", "контрагент", "поставщик", "покупател", "партнер", "партнёр"]
+    return [column for column in columns if any(marker in column.lower() for marker in column_markers)]
+
+
+def object_refs(value: Any):
+    for item in walk_values(value):
+        if isinstance(item, dict) and item.get("_objectRef"):
+            yield item
+
+
+def compatible_subject_ref(*, object_type: str, expected_markers: List[str]) -> bool:
+    return any(marker in object_type for marker in expected_markers)
+
+
+def known_intermediate_subject_ref(*, object_type: str, presentation: str) -> bool:
+    combined = f"{object_type} {presentation}"
+    return any(
+        marker in combined
+        for marker in [
+            "договор",
+            "объектырасчетов",
+            "объектырасчётов",
+            "объект расчет",
+            "объект расчёт",
+            "соглашение",
+            "документссылка",
+        ]
+    )
 
 
 def rows_have_subject_object_ref(*, question: str, rows: List[Dict[str, Any]]) -> bool:

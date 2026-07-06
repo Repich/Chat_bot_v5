@@ -656,7 +656,8 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
         self.assertIn("startOnboardingButton", chat_page)
         self.assertIn("adminTokenInput", chat_page)
         self.assertIn("workbench-layout", chat_page)
-        self.assertIn("workspace-inspector", chat_page)
+        self.assertIn("Проверка и утверждение", chat_page)
+        self.assertIn("Дополнительные действия", chat_page)
         self.assertIn("skillCatalogButton", chat_page)
         self.assertIn("draftListButton", chat_page)
         self.assertIn("onboardingCandidatesButton", chat_page)
@@ -666,8 +667,6 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
         self.assertIn("previewDraftButton", chat_page)
         self.assertIn("smokeDraftButton", chat_page)
         self.assertIn("approvalCommentInput", chat_page)
-        self.assertIn("approveDraftButton", chat_page)
-        self.assertIn("rejectDraftButton", chat_page)
         self.assertIn("candidateIdInput", chat_page)
         self.assertIn("candidateCreateDraftButton", chat_page)
         self.assertIn("candidateRejectButton", chat_page)
@@ -752,7 +751,6 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
                 "createDraftButton",
                 "previewDraftButton",
                 "smokeDraftButton",
-                "approveDraftButton",
                 "publishDraftButton",
                 "skillPromoteButton",
                 "runRegressionButton",
@@ -824,7 +822,8 @@ if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') >
         self.assertIn("applyMetadataField", static_workbench)
         self.assertIn("loadSkillDetails", static_workbench)
         self.assertIn("loadDraftDetails", static_workbench)
-        self.assertIn('postDraftAction("approve"', static_app)
+        self.assertIn("postDraftAction(backendAction", static_app)
+        self.assertIn("draft-approve", static_renderers)
         self.assertIn('postSkillLifecycleAction("promote"', static_app)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")
