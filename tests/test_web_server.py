@@ -141,7 +141,7 @@ if (draftHtml.indexOf('Следующий шаг') < 0 || draftHtml.indexOf('dra
 if (draftHtml.indexOf('Запрос 1С') < 0 || draftHtml.indexOf('Утвердить проверку') < 0 || draftHtml.indexOf('Опубликовать как кандидат') < 0) {
   throw new Error('draft decision details are missing: ' + draftHtml);
 }
-if (draftHtml.indexOf('draft-comment-input') < 0 || draftHtml.indexOf('draft-smoke-params-input') < 0) {
+if (draftHtml.indexOf('draft-comment-input') < 0 || draftHtml.indexOf('draft-smoke-params-input') < 0 || draftHtml.indexOf('draft-action-result-local') < 0) {
   throw new Error('draft local action inputs are missing: ' + draftHtml);
 }
 if (draftHtml.indexOf('data-action="draft-delete"') < 0) {
@@ -980,6 +980,8 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("deleteDraftById", static_workbench)
         self.assertIn("readDraftComment", static_workbench)
         self.assertIn("showDraftCardError", static_workbench)
+        self.assertIn("showDraftActionResult", static_workbench)
+        self.assertIn("draft-action-result-local", static_workbench)
         self.assertIn("Заполните комментарий в карточке черновика", static_workbench)
         self.assertIn("DRAFT_ACTION_NOTICES", static_workbench)
         self.assertIn("withButtonState(button, label", static_workbench)

@@ -58,11 +58,43 @@
       error.textContent = message;
       error.classList.remove("hidden");
     }
+    const result = card.querySelector(".draft-action-result-local");
+    if (result) {
+      result.innerHTML = "";
+      result.classList.add("hidden");
+    }
     const commentInput = card.querySelector(".draft-comment-input");
     if (commentInput) {
       commentInput.focus();
     }
     window.WiiconApp.showInfo(message);
+  }
+
+  function localDraftResult(button) {
+    const card = closestDraftCard(button);
+    return card ? card.querySelector(".draft-action-result-local") : null;
+  }
+
+  function showDraftActionProgress(button, message) {
+    const target = localDraftResult(button);
+    if (!target) {
+      return false;
+    }
+    target.innerHTML = `<p>${renderers.escapeHtml(message)}</p>`;
+    target.classList.remove("hidden");
+    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    return true;
+  }
+
+  function showDraftActionResult(button, data) {
+    const target = localDraftResult(button);
+    if (!target) {
+      return false;
+    }
+    target.innerHTML = renderers.renderDraftActionResult(data) || `<p>${renderers.escapeHtml(data.notice || "Действие выполнено.")}</p>`;
+    target.classList.remove("hidden");
+    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    return true;
   }
 
   function clearDraftCardError(button) {
@@ -325,6 +357,7 @@
     clearDraftCardError(button);
     const summary = window.WiiconApp.requiredElement("workbenchSummary");
     const output = window.WiiconApp.requiredElement("workbenchOutput");
+    showDraftActionProgress(button, `${label}: выполняется...`);
     return window.WiiconApp.withButtonState(button, label, async () => {
       const payload = { actor: "web-workbench" };
       if (action === "smoke") {
@@ -358,7 +391,9 @@
       } else if (action === "publish-candidate") {
         setLifecycleStep("candidate");
       }
-      summary.innerHTML = renderers.renderSummary(rendered);
+      if (!showDraftActionResult(button, rendered)) {
+        summary.innerHTML = renderers.renderSummary(rendered);
+      }
       output.innerHTML = renderers.renderJsonDetails("Технический JSON", rendered);
       window.WiiconState.workbench.lastError = null;
       return rendered;

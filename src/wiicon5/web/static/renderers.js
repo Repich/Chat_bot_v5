@@ -516,6 +516,7 @@
         <textarea class="text-area compact draft-smoke-params-input" data-draft-id="${escapeHtml(id)}" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
       </label>
       <p class="draft-inline-error hidden"></p>
+      <div class="draft-action-result-local hidden"></div>
     </div>`;
   }
 
@@ -777,5 +778,6 @@
     renderMetadataObjectCard,
     renderCandidateCard,
     renderSummary,
+    renderDraftActionResult,
   };
 })();
