@@ -50,7 +50,13 @@
   function showDraftCardError(button, message) {
     const card = closestDraftCard(button);
     if (!card) {
-      window.WiiconApp.showFatalUiError(new Error(message));
+      const summary = window.WiiconApp.optionalElement("workbenchSummary");
+      if (summary) {
+        summary.innerHTML = `<p class="message error">${renderers.escapeHtml(message)}</p>`;
+      } else {
+        window.WiiconApp.showFatalUiError(new Error(message));
+      }
+      window.WiiconApp.showInfo(message);
       return;
     }
     const error = card.querySelector(".draft-inline-error");
@@ -357,7 +363,9 @@
     clearDraftCardError(button);
     const summary = window.WiiconApp.requiredElement("workbenchSummary");
     const output = window.WiiconApp.requiredElement("workbenchOutput");
-    showDraftActionProgress(button, `${label}: выполняется...`);
+    if (!showDraftActionProgress(button, `${label}: выполняется...`)) {
+      summary.textContent = `${label}: выполняется...`;
+    }
     return window.WiiconApp.withButtonState(button, label, async () => {
       const payload = { actor: "web-workbench" };
       if (action === "smoke") {

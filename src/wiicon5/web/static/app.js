@@ -466,6 +466,57 @@
     loadOnboardingStatus();
   }
 
+  function handleWorkbenchActionClick(event) {
+    const actionButton = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
+    if (!actionButton || !actionButton.closest("#view-workbench")) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const action = actionButton.dataset.action;
+    const candidateId = actionButton.dataset.candidateId || "";
+    const draftId = actionButton.dataset.draftId || "";
+    const skillId = actionButton.dataset.skillId || "";
+    const tracePath = actionButton.dataset.tracePath || "";
+    if (action === "open-trace") {
+      window.WiiconWorkbench.showTracePath(tracePath);
+      return;
+    }
+    if (action === "open-skill") {
+      window.WiiconWorkbench.loadSkillDetailsById(skillId, actionButton);
+      return;
+    }
+    if (action === "skill-promote" || action === "skill-block") {
+      const lifecycleAction = action === "skill-promote" ? "promote" : "block";
+      window.WiiconWorkbench.postSkillLifecycleActionById(skillId, lifecycleAction, actionButton);
+      return;
+    }
+    if (action === "open-draft") {
+      window.WiiconWorkbench.loadDraftDetailsById(draftId, actionButton);
+      return;
+    }
+    if (action === "draft-delete") {
+      window.WiiconWorkbench.deleteDraftById(draftId, actionButton);
+      return;
+    }
+    if (action.startsWith("draft-")) {
+      const draftAction = action.replace("draft-", "");
+      const backendAction = draftAction === "publish" ? "publish-candidate" : draftAction;
+      window.WiiconWorkbench.setCurrentDraftId(draftId);
+      window.WiiconWorkbench.postDraftAction(backendAction, actionButton);
+      return;
+    }
+    if (action.startsWith("synthesis-")) {
+      const synthesisAction = action.replace("synthesis-", "");
+      window.WiiconWorkbench.postSynthesisCandidateActionById(candidateId, synthesisAction, actionButton);
+      return;
+    }
+    if (action.startsWith("onboarding-")) {
+      const onboardingAction = action.replace("onboarding-", "");
+      window.WiiconWorkbench.postCandidateActionById(candidateId, onboardingAction, actionButton);
+    }
+  }
+
   function bindEvents() {
     requiredElement("topNav").addEventListener("click", (event) => {
       const button = event.target.closest("[data-view]");
@@ -522,56 +573,7 @@
       requiredElement("workbenchSummary").textContent = "Мастерская навыков очищена.";
       requiredElement("workbenchOutput").innerHTML = "";
     });
-    requiredElement("workbenchSummary").addEventListener("click", (event) => {
-      const actionButton = event.target.closest("[data-action]");
-      if (!actionButton) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      const action = actionButton.dataset.action;
-      const candidateId = actionButton.dataset.candidateId || "";
-      const draftId = actionButton.dataset.draftId || "";
-      const skillId = actionButton.dataset.skillId || "";
-      const tracePath = actionButton.dataset.tracePath || "";
-      if (action === "open-trace") {
-        window.WiiconWorkbench.showTracePath(tracePath);
-        return;
-      }
-      if (action === "open-skill") {
-        window.WiiconWorkbench.loadSkillDetailsById(skillId, actionButton);
-        return;
-      }
-      if (action === "skill-promote" || action === "skill-block") {
-        const lifecycleAction = action === "skill-promote" ? "promote" : "block";
-        window.WiiconWorkbench.postSkillLifecycleActionById(skillId, lifecycleAction, actionButton);
-        return;
-      }
-      if (action === "open-draft") {
-        window.WiiconWorkbench.loadDraftDetailsById(draftId, actionButton);
-        return;
-      }
-      if (action === "draft-delete") {
-        window.WiiconWorkbench.deleteDraftById(draftId, actionButton);
-        return;
-      }
-      if (action.startsWith("draft-")) {
-        const draftAction = action.replace("draft-", "");
-        const backendAction = draftAction === "publish" ? "publish-candidate" : draftAction;
-        window.WiiconWorkbench.setCurrentDraftId(draftId);
-        window.WiiconWorkbench.postDraftAction(backendAction, actionButton);
-        return;
-      }
-      if (action.startsWith("synthesis-")) {
-        const synthesisAction = action.replace("synthesis-", "");
-        window.WiiconWorkbench.postSynthesisCandidateActionById(candidateId, synthesisAction, actionButton);
-        return;
-      }
-      if (action.startsWith("onboarding-")) {
-        const onboardingAction = action.replace("onboarding-", "");
-        window.WiiconWorkbench.postCandidateActionById(candidateId, onboardingAction, actionButton);
-      }
-    });
+    document.addEventListener("click", handleWorkbenchActionClick);
 
     optionalBind("metadataSearchButton", "click", (event) => loadMetadataSearch(event.currentTarget));
     optionalBind("metadataObjectButton", "click", (event) => loadMetadataObject(event.currentTarget));
