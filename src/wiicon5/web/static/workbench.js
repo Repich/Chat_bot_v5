@@ -23,6 +23,57 @@
     return Boolean(element && element.checked);
   }
 
+  function buttonElement(button) {
+    return button && button.currentTarget ? button.currentTarget : button;
+  }
+
+  function closestDraftCard(button) {
+    const element = buttonElement(button);
+    return element && element.closest ? element.closest("[data-draft-id]") : null;
+  }
+
+  function readDraftCardValue(button, selector) {
+    const card = closestDraftCard(button);
+    const element = card ? card.querySelector(selector) : null;
+    return element ? String(element.value || "").trim() : "";
+  }
+
+  function readDraftComment(button) {
+    return readDraftCardValue(button, ".draft-comment-input") || readValue("approvalCommentInput");
+  }
+
+  function parseDraftSmokeParams(button) {
+    const raw = readDraftCardValue(button, ".draft-smoke-params-input") || readValue("smokeParamsInput");
+    return raw ? JSON.parse(raw) : {};
+  }
+
+  function showDraftCardError(button, message) {
+    const card = closestDraftCard(button);
+    if (!card) {
+      window.WiiconApp.showFatalUiError(new Error(message));
+      return;
+    }
+    const error = card.querySelector(".draft-inline-error");
+    if (error) {
+      error.textContent = message;
+      error.classList.remove("hidden");
+    }
+    const commentInput = card.querySelector(".draft-comment-input");
+    if (commentInput) {
+      commentInput.focus();
+    }
+    window.WiiconApp.showInfo(message);
+  }
+
+  function clearDraftCardError(button) {
+    const card = closestDraftCard(button);
+    const error = card ? card.querySelector(".draft-inline-error") : null;
+    if (error) {
+      error.textContent = "";
+      error.classList.add("hidden");
+    }
+  }
+
   function setValue(id, value) {
     const element = window.WiiconApp.optionalElement(id);
     if (element) {
@@ -243,23 +294,36 @@
 
   async function postDraftAction(action, button) {
     const label = DRAFT_ACTION_LABELS[action] || "Действие с черновиком";
+    const draftId = currentDraftId();
+    if (!draftId) {
+      showDraftCardError(button, "Укажите идентификатор черновика.");
+      return null;
+    }
+    let smokeParams = {};
+    if (action === "smoke") {
+      try {
+        smokeParams = parseDraftSmokeParams(button);
+      } catch (error) {
+        showDraftCardError(button, `Некорректный JSON тестовых параметров: ${error.message}`);
+        return null;
+      }
+    }
+    const needsComment = action === "approve" || action === "reject" || action === "publish-candidate";
+    const comment = needsComment ? readDraftComment(button) : "";
+    if (needsComment && !comment) {
+      showDraftCardError(button, "Заполните комментарий в карточке черновика: что проверено человеком и почему действие можно выполнить.");
+      return null;
+    }
+    clearDraftCardError(button);
     return runWorkbenchAction(
       button,
       label,
       () => {
-        const draftId = currentDraftId();
-        if (!draftId) {
-          throw new Error("Укажите идентификатор черновика.");
-        }
         const payload = { actor: "web-workbench" };
         if (action === "smoke") {
-          payload.params = parseJsonInput("smokeParamsInput", {});
+          payload.params = smokeParams;
         }
         if (action === "approve" || action === "reject" || action === "publish-candidate") {
-          const comment = readValue("approvalCommentInput");
-          if (!comment) {
-            throw new Error("Заполните комментарий: что проверено человеком и почему действие можно выполнить.");
-          }
           payload.actor = "web-approver";
           payload.comment = comment;
           if (window.WiiconState.workbench.latestSmokeId) {

@@ -507,6 +507,18 @@
     </ol>`;
   }
 
+  function renderDraftActionInputs(id) {
+    return `<div class="draft-action-panel">
+      <label>Комментарий проверки
+        <textarea class="text-area compact draft-comment-input" data-draft-id="${escapeHtml(id)}" placeholder="Что проверено человеком и почему действие можно выполнить"></textarea>
+      </label>
+      <label>Тестовые параметры
+        <textarea class="text-area compact draft-smoke-params-input" data-draft-id="${escapeHtml(id)}" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
+      </label>
+      <p class="draft-inline-error hidden"></p>
+    </div>`;
+  }
+
   function renderSkillCard(skill) {
     const item = skill || {};
     const id = item.skill_id || item.id || "";
@@ -559,6 +571,7 @@
       ${renderInfoSection("Формирование ответа", renderDraftPresentation(item))}
       ${item.notes ? renderInfoSection("Заметки агента", `<p>${escapeHtml(item.notes)}</p>`) : ""}
       ${renderInfoSection("Что означают действия", renderDraftWorkflowHelp())}
+      ${renderInfoSection("Проверка этого черновика", renderDraftActionInputs(id))}
       <div class="entity-actions">
         ${actionButton("Открыть", "open-draft", "draft-id", id, "primary-button")}
         ${actionButton("Предпросмотр", "draft-preview", "draft-id", id, "secondary-button")}

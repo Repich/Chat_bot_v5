@@ -615,6 +615,24 @@ label {
   margin-top: 4px;
 }
 
+.draft-action-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.draft-inline-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+}
+
 .query-block {
   max-height: 320px;
   margin: 0;
@@ -800,6 +818,7 @@ hr {
   }
 
   .draft-grid,
+  .draft-action-panel,
   .button-grid.wide,
   .entity-facts {
     grid-template-columns: 1fr;

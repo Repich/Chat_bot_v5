@@ -141,6 +141,9 @@ if (draftHtml.indexOf('Следующий шаг') < 0 || draftHtml.indexOf('dra
 if (draftHtml.indexOf('Запрос 1С') < 0 || draftHtml.indexOf('Утвердить проверку') < 0 || draftHtml.indexOf('Опубликовать как кандидат') < 0) {
   throw new Error('draft decision details are missing: ' + draftHtml);
 }
+if (draftHtml.indexOf('draft-comment-input') < 0 || draftHtml.indexOf('draft-smoke-params-input') < 0) {
+  throw new Error('draft local action inputs are missing: ' + draftHtml);
+}
 if (draftHtml.indexOf('data-action="draft-delete"') < 0) {
   throw new Error('draft delete action is missing: ' + draftHtml);
 }
@@ -953,9 +956,14 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("loadSkillDetails", static_workbench)
         self.assertIn("loadDraftDetails", static_workbench)
         self.assertIn("deleteDraftById", static_workbench)
+        self.assertIn("readDraftComment", static_workbench)
+        self.assertIn("showDraftCardError", static_workbench)
+        self.assertIn("Заполните комментарий в карточке черновика", static_workbench)
         self.assertIn("postDraftAction(backendAction", static_app)
         self.assertIn("draft-delete", static_app)
         self.assertIn("draft-approve", static_renderers)
+        self.assertIn("draft-comment-input", static_renderers)
+        self.assertIn("draft-smoke-params-input", static_renderers)
         self.assertIn("Утвердить проверку", static_renderers)
         self.assertIn("Опубликовать как кандидат", static_renderers)
         self.assertIn('postSkillLifecycleAction("promote"', static_app)
