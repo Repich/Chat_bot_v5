@@ -1,3 +1,9 @@
+5.0.0-alpha.60
+- Создание черновика из query synthesis candidate стало идемпотентным: повторный вызов возвращает уже связанный черновик вместо создания нового draft_*.
+- Для старых кандидатов без сохраненной ссылки backend ищет уже созданный черновик по source_kind=query_synthesis_candidate и исходному synthesis_candidate.candidate_id.
+- API создания черновика из кандидата агента возвращает draft_reused и человекочитаемое notice для Workbench.
+- Добавлены регрессионные тесты на повторную конвертацию кандидата и legacy-поиск существующего черновика.
+
 5.0.0-alpha.59
 - The synthesis candidate list endpoint now defaults to active candidate status; pass status=all to inspect rejected/ignored candidates.
 - Added web regression coverage for rejecting an agent candidate and hiding it from the default active queue.

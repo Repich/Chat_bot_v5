@@ -348,6 +348,13 @@
           setCurrentDraftId(draftId);
           setLifecycleStep("draft");
         }
+        if (action === "create-draft") {
+          return Object.assign({}, data, {
+            notice:
+              data.notice ||
+              `Черновик ${draftId || ""} готов. Следующий шаг: откройте черновик, проверьте смысл и запустите предпросмотр.`,
+          });
+        }
         if (action === "reject" || action === "ignore-similar") {
           const list = await api.fetchAdmin("/api/admin/workbench/synthesis/candidates?status=candidate");
           return Object.assign({}, list, {

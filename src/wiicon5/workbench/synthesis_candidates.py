@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.intent.models import IntentResult
@@ -166,6 +166,8 @@ class SynthesisCandidateStore:
                 or lowered in " ".join(str(obj.get("full_name") or "") for obj in item.metadata_objects).lower()
             ]
         candidates = sorted(candidates, key=lambda item: (item.updated_at, item.candidate_id), reverse=True)
+        draft_links = self._draft_links_by_candidate()
+        candidates = [self._with_existing_draft_link(item, draft_links.get(item.candidate_id)) for item in candidates]
         return candidates[: max(0, limit)]
 
     def get_candidate(self, candidate_id: str) -> Optional[SynthesisCandidate]:
@@ -215,10 +217,22 @@ class SynthesisCandidateStore:
         )
         return updated
 
-    def create_draft(self, candidate_id: str, *, actor: str = "admin") -> HumanSkillDraft:
+    def create_or_get_draft(self, candidate_id: str, *, actor: str = "admin") -> Tuple[HumanSkillDraft, bool]:
         candidate = self._require_candidate(candidate_id)
+        existing = self._find_existing_draft(candidate)
+        if existing is not None:
+            self._link_candidate_to_draft(candidate, existing.draft_id, actor=actor)
+            self.audit.append(
+                event_type="workbench.synthesis_candidate.draft_reused",
+                actor=actor,
+                object_type="synthesis_candidate",
+                object_id=candidate_id,
+                payload={"draft_id": existing.draft_id},
+            )
+            return existing, True
         draft = draft_from_synthesis_candidate(candidate)
         created = self.draft_store.create_draft(draft, actor=actor)
+        self._link_candidate_to_draft(candidate, created.draft_id, actor=actor)
         self.audit.append(
             event_type="workbench.synthesis_candidate.draft_created",
             actor=actor,
@@ -226,7 +240,11 @@ class SynthesisCandidateStore:
             object_id=candidate_id,
             payload={"draft_id": created.draft_id},
         )
-        return created
+        return created, False
+
+    def create_draft(self, candidate_id: str, *, actor: str = "admin") -> HumanSkillDraft:
+        draft, _ = self.create_or_get_draft(candidate_id, actor=actor)
+        return draft
 
     def _is_ignored(self, question: str) -> bool:
         normalized = normalize_question(question)
@@ -255,6 +273,55 @@ class SynthesisCandidateStore:
             self._path(candidate.candidate_id),
             json.dumps(candidate.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         )
+
+    def _find_existing_draft(self, candidate: SynthesisCandidate) -> Optional[HumanSkillDraft]:
+        linked_draft_id = candidate_payload_draft_id(candidate.payload)
+        if linked_draft_id:
+            linked = self.draft_store.get_draft(linked_draft_id)
+            if linked is not None:
+                return linked
+        matches = [draft for draft in self.draft_store.list_drafts() if draft_matches_synthesis_candidate(draft, candidate.candidate_id)]
+        if not matches:
+            return None
+        return sorted(matches, key=lambda item: (item.updated_at, item.created_at, item.draft_id), reverse=True)[0]
+
+    def _link_candidate_to_draft(self, candidate: SynthesisCandidate, draft_id: str, *, actor: str) -> SynthesisCandidate:
+        current_draft_id = candidate_payload_draft_id(candidate.payload)
+        if current_draft_id == draft_id:
+            return candidate
+        updated = replace(
+            candidate,
+            updated_at=utc_now(),
+            payload=payload_with_draft_link(candidate.payload, draft_id, actor=actor),
+        )
+        self._write_candidate(updated)
+        return updated
+
+    def _draft_links_by_candidate(self) -> Dict[str, HumanSkillDraft]:
+        links: Dict[str, HumanSkillDraft] = {}
+        for draft in self.draft_store.list_drafts():
+            if draft.source_kind != "query_synthesis_candidate":
+                continue
+            candidate_id = draft_synthesis_candidate_id(draft)
+            if not candidate_id:
+                continue
+            current = links.get(candidate_id)
+            if current is None or (draft.updated_at, draft.created_at, draft.draft_id) > (
+                current.updated_at,
+                current.created_at,
+                current.draft_id,
+            ):
+                links[candidate_id] = draft
+        return links
+
+    def _with_existing_draft_link(
+        self,
+        candidate: SynthesisCandidate,
+        draft: Optional[HumanSkillDraft],
+    ) -> SynthesisCandidate:
+        if draft is None or candidate_payload_draft_id(candidate.payload):
+            return candidate
+        return replace(candidate, payload=payload_with_draft_link(candidate.payload, draft.draft_id, actor="workbench"))
 
     def _path(self, candidate_id: str) -> Path:
         return self.candidates_dir / f"{safe_file_stem(candidate_id)}.json"
@@ -318,6 +385,36 @@ def draft_from_synthesis_candidate(candidate: SynthesisCandidate) -> HumanSkillD
             "synthesis_candidate": candidate.to_dict(),
         }
     )
+
+
+def candidate_payload_draft_id(payload: Mapping[str, Any]) -> str:
+    draft_id = str(payload.get("draft_id") or "").strip()
+    if draft_id:
+        return draft_id
+    draft = payload.get("draft")
+    if isinstance(draft, Mapping):
+        return str(draft.get("draft_id") or "").strip()
+    return ""
+
+
+def payload_with_draft_link(payload: Mapping[str, Any], draft_id: str, *, actor: str) -> Dict[str, Any]:
+    now = utc_now()
+    draft_payload = payload.get("draft")
+    draft_link = dict(draft_payload) if isinstance(draft_payload, Mapping) else {}
+    draft_link.update({"draft_id": draft_id, "linked_by": actor})
+    draft_link.setdefault("linked_at", now)
+    return {**payload, "draft_id": draft_id, "draft": draft_link}
+
+
+def draft_matches_synthesis_candidate(draft: HumanSkillDraft, candidate_id: str) -> bool:
+    return draft.source_kind == "query_synthesis_candidate" and draft_synthesis_candidate_id(draft) == candidate_id
+
+
+def draft_synthesis_candidate_id(draft: HumanSkillDraft) -> str:
+    candidate = draft.extras.get("synthesis_candidate")
+    if isinstance(candidate, Mapping):
+        return str(candidate.get("candidate_id") or "").strip()
+    return ""
 
 
 def synthesis_candidate_id(question: str, query: str) -> str:

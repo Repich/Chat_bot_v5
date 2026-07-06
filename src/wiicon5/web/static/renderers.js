@@ -120,6 +120,10 @@
     return text ? `<p>${escapeHtml(text)}</p>` : "<p>Команда выполнена.</p>";
   }
 
+  function renderNotice(text) {
+    return text ? `<p class="workbench-hint">${escapeHtml(text)}</p>` : "";
+  }
+
   function renderMarkdownContent(text) {
     const escaped = escapeHtml(text || "");
     const lines = escaped.split(/\r?\n/);
@@ -354,6 +358,19 @@
     return item.candidate_id || item.id || item.semantic_role || "";
   }
 
+  function linkedDraftId(candidate) {
+    const item = candidate || {};
+    if (item.draft_id) {
+      return item.draft_id;
+    }
+    const payload = item.payload && typeof item.payload === "object" ? item.payload : {};
+    if (payload.draft_id) {
+      return payload.draft_id;
+    }
+    const draft = payload.draft && typeof payload.draft === "object" ? payload.draft : {};
+    return draft.draft_id || "";
+  }
+
   function isSynthesisCandidate(candidate) {
     const item = candidate || {};
     const id = candidateId(item);
@@ -439,6 +456,8 @@
     const source = synthesis ? (item.source || "query_synthesis") : (item.type || item.source || "onboarding");
     const createAction = synthesis ? "synthesis-create-draft" : "onboarding-create-draft";
     const rejectAction = synthesis ? "synthesis-reject" : "onboarding-reject";
+    const draftId = synthesis ? linkedDraftId(item) : "";
+    const createLabel = draftId ? "Открыть черновик" : "Создать черновик";
     return `<article class="entity-card candidate-card" data-candidate-id="${escapeHtml(id)}">
       <div class="entity-card-header">
         <div>
@@ -448,10 +467,10 @@
         ${renderStatusPill(item.status || "candidate")}
       </div>
       ${answer ? `<p class="entity-summary">${escapeHtml(answer)}</p>` : `<p class="muted">Откройте кандидата или создайте черновик, чтобы проверить навык.</p>`}
-      ${renderFacts({ Идентификатор: id, Строк: rowCount, Источник: displayLabel(source), Трассировка: item.trace_path || "" })}
+      ${renderFacts({ Идентификатор: id, Черновик: draftId, Строк: rowCount, Источник: displayLabel(source), Трассировка: item.trace_path || "" })}
       ${renderTags(objects)}
       <div class="entity-actions">
-        ${actionButton("Создать черновик", createAction, "candidate-id", id, "primary-button")}
+        ${actionButton(createLabel, createAction, "candidate-id", id, "primary-button")}
         ${actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}
         ${item.trace_path ? actionButton("Открыть трассировку", "open-trace", "trace-path", item.trace_path, "secondary-button") : ""}
         ${synthesis ? actionButton("Игнорировать похожие", "synthesis-ignore-similar", "candidate-id", id, "ghost-button") : ""}
@@ -479,7 +498,7 @@
 
   function renderCandidatesResponse(data) {
     const candidates = data.candidates || [];
-    const notice = data.notice ? `<p class="workbench-hint">${escapeHtml(data.notice)}</p>` : "";
+    const notice = renderNotice(data.notice);
     if (!candidates.length) {
       return `${notice}<div class="empty-state"><h3>Кандидатов пока нет</h3><p>Они появятся после успешных ответов агента через синтез запроса или после первоначального обучения.</p></div>`;
     }
@@ -534,7 +553,7 @@
       return renderSkillCard(data.skill);
     }
     if (data.draft) {
-      return renderDraftCard(data.draft);
+      return `${renderNotice(data.notice)}${renderDraftCard(data.draft)}`;
     }
     if (data.preview) {
       return renderPreviewResult(data.preview);

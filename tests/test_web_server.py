@@ -101,6 +101,27 @@ if (html.indexOf('data-action="open-trace"') < 0) {
 if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') > html.indexOf('total:')) {
   throw new Error('summary rendered before candidates: ' + html);
 }
+const linkedHtml = window.WiiconRenderers.renderSummary({
+  ok: true,
+  candidates: [{
+    candidate_id: 'syn_linked',
+    question: 'Покажи клиента',
+    status: 'candidate',
+    payload: { draft_id: 'draft_existing' }
+  }],
+  summary: { total: 1 }
+});
+if (linkedHtml.indexOf('Открыть черновик') < 0 || linkedHtml.indexOf('draft_existing') < 0) {
+  throw new Error('linked draft action is missing: ' + linkedHtml);
+}
+const draftHtml = window.WiiconRenderers.renderSummary({
+  ok: true,
+  notice: 'Черновик draft_existing найден. Следующий шаг: открыть черновик.',
+  draft: { draft_id: 'draft_existing', title: 'Черновик', status: 'draft' }
+});
+if (draftHtml.indexOf('Следующий шаг') < 0 || draftHtml.indexOf('draft_existing') < 0) {
+  throw new Error('draft notice is missing: ' + draftHtml);
+}
 """
         subprocess.run(
             ["osascript", "-l", "JavaScript", "-e", script],

@@ -526,8 +526,20 @@ def make_handler(
             try:
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "admin")
-                draft = effective_synthesis_candidate_store.create_draft(candidate_id, actor=actor)
-                self._send_json(201, {"ok": True, "draft": draft.to_dict()})
+                draft, reused = effective_synthesis_candidate_store.create_or_get_draft(candidate_id, actor=actor)
+                action = "найден" if reused else "создан"
+                self._send_json(
+                    200 if reused else 201,
+                    {
+                        "ok": True,
+                        "draft": draft.to_dict(),
+                        "draft_reused": reused,
+                        "notice": (
+                            f"Черновик {draft.draft_id} {action}. "
+                            "Следующий шаг: откройте черновик, проверьте смысл и запустите предпросмотр."
+                        ),
+                    },
+                )
             except KeyError:
                 self._send_json(
                     404,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -98,6 +99,9 @@ class WorkbenchSynthesisCandidateTests(unittest.TestCase):
             )
 
             draft = store.create_draft(candidate.candidate_id, actor="expert")
+            same_draft = store.create_draft(candidate.candidate_id, actor="expert")
+            linked_candidate = store.get_candidate(candidate.candidate_id)
+            draft_count = len(draft_store.list_drafts())
             rejected = store.reject_candidate(candidate.candidate_id, actor="expert", comment="Слишком частный запрос")
             ignored = store.ignore_similar(candidate.candidate_id, actor="expert", comment="Не создавать похожие")
             after_ignore = store.record_from_synthesis(
@@ -109,12 +113,46 @@ class WorkbenchSynthesisCandidateTests(unittest.TestCase):
             )
 
         self.assertEqual(draft.source_kind, "query_synthesis_candidate")
+        self.assertEqual(same_draft.draft_id, draft.draft_id)
+        self.assertEqual(draft_count, 1)
+        self.assertEqual(linked_candidate.payload["draft_id"], draft.draft_id)
         self.assertEqual(draft.example_questions, ["Покажи выручку за 2025 год"])
         self.assertEqual(draft.source_trace, "/runs/agent_1")
         self.assertEqual(draft.extras["synthesis_candidate"]["candidate_id"], candidate.candidate_id)
         self.assertEqual(rejected.status, "rejected")
         self.assertEqual(ignored.status, "ignored_similar")
         self.assertIsNone(after_ignore)
+
+    def test_candidate_draft_conversion_reuses_legacy_draft_without_payload_link(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot = Path(temp_dir) / "bot"
+            draft_store = HumanSkillDraftStore(bot_instance_root=bot, bot_id="client_a")
+            store = SynthesisCandidateStore(bot_instance_root=bot, draft_store=draft_store)
+            candidate = store.record_from_synthesis(
+                question="Покажи выручку за 2025 год",
+                intent=data_intent("Покажи выручку за 2025 год"),
+                goal=None,
+                synthesis_result=successful_synthesis_result(),
+                trace_path="/runs/agent_1",
+            )
+            first = store.create_draft(candidate.candidate_id, actor="expert")
+
+            candidate_path = bot / "workbench" / "candidates" / "synthesis" / f"{candidate.candidate_id}.json"
+            raw = json.loads(candidate_path.read_text(encoding="utf-8"))
+            raw["payload"].pop("draft_id", None)
+            raw["payload"].pop("draft", None)
+            candidate_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            reloaded = SynthesisCandidateStore(bot_instance_root=bot, draft_store=draft_store)
+            listed = reloaded.list_candidates()
+            second = reloaded.create_draft(candidate.candidate_id, actor="expert")
+            linked_candidate = reloaded.get_candidate(candidate.candidate_id)
+            draft_count = len(draft_store.list_drafts())
+
+        self.assertEqual(listed[0].payload["draft_id"], first.draft_id)
+        self.assertEqual(second.draft_id, first.draft_id)
+        self.assertEqual(linked_candidate.payload["draft_id"], first.draft_id)
+        self.assertEqual(draft_count, 1)
 
     def test_orchestrator_records_synthesis_candidate_on_success(self) -> None:
         question = "Покажи выручку за 2025 год"
