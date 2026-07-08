@@ -51,6 +51,7 @@ def validate_read_only_query(query: str, params: Optional[Mapping[str, Any]] = N
             )
         )
     issues.extend(ambiguous_alias_issues(text))
+    issues.extend(unsupported_subquery_issues(text))
     issues.extend(date_literal_issues(text))
     issues.extend(parameter_value_issues(params or {}, query_params))
     return ValidationResult(ok=not issues, issues=issues)
@@ -63,18 +64,25 @@ def ambiguous_alias_issues(query: str) -> List[ValidationIssue]:
     select_part = query[: from_match.start()]
     from_part = query[from_match.start() :]
     select_aliases = set(alias.lower() for alias in select_field_aliases(select_part))
+    aliases = source_aliases(from_part)
+    field_names = set(field.lower() for field in dereferenced_field_names_for_aliases(query, aliases))
     issues: List[ValidationIssue] = []
-    for alias in source_aliases(from_part):
+    for alias in aliases:
         normalized = alias.lower()
-        if normalized not in select_aliases:
+        if normalized not in select_aliases and normalized not in field_names:
             continue
         if re.search(rf"\b{re.escape(alias)}\.", from_part, flags=re.IGNORECASE) is None:
             continue
+        reason = (
+            "selected field alias"
+            if normalized in select_aliases
+            else "field name used in another dereference"
+        )
         issues.append(
             ValidationIssue(
                 "ambiguous_alias",
                 (
-                    f"1C query uses '{alias}' both as a selected field alias and as a source alias. "
+                    f"1C query uses '{alias}' both as a source alias and as a {reason}. "
                     "Use distinct aliases, for example source alias 'Ном' and output alias 'Номенклатура'."
                 ),
                 alias,
@@ -98,6 +106,33 @@ def source_aliases(from_part: str) -> List[str]:
     for match in pattern.finditer(from_part):
         aliases.append(match.group(1))
     return aliases
+
+
+def dereferenced_field_names_for_aliases(query: str, aliases: List[str]) -> List[str]:
+    alias_names = set(alias.lower() for alias in aliases)
+    result: List[str] = []
+    pattern = re.compile(
+        r"\b([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)\.\s*([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)\b",
+        flags=re.IGNORECASE,
+    )
+    for match in pattern.finditer(query):
+        if match.group(1).lower() in alias_names:
+            result.append(match.group(2))
+    return result
+
+
+def unsupported_subquery_issues(query: str) -> List[ValidationIssue]:
+    if re.search(r"=\s*\(\s*ВЫБРАТЬ\b", query, flags=re.IGNORECASE | re.DOTALL) is None:
+        return []
+    return [
+        ValidationIssue(
+            "unsupported_scalar_subquery",
+            (
+                "1C query uses a scalar subquery after '='. "
+                "Rewrite it as a join with an aggregated subquery, or use an explicitly supported IN/В construction."
+            ),
+        )
+    ]
 
 
 def date_literal_issues(query: str) -> List[ValidationIssue]:

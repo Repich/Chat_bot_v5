@@ -81,6 +81,37 @@ class DeterministicPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("ambiguous_alias", [issue.code for issue in result.issues])
 
+    def test_read_only_query_validator_rejects_source_alias_matching_dereferenced_field_name(self) -> None:
+        result = validate_read_only_query(
+            "ВЫБРАТЬ\n"
+            "    Цены.Номенклатура КАК Номенклатура,\n"
+            "    Цены.Цена КАК Цена\n"
+            "ИЗ\n"
+            "    РегистрСведений.ЦеныНоменклатуры КАК Цены\n"
+            "        ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.ВидыЦен КАК ВидЦены\n"
+            "        ПО Цены.ВидЦены = ВидЦены.Ссылка\n"
+            "ГДЕ\n"
+            "    ВидЦены.Наименование ПОДОБНО &Шаблон",
+            {"Шаблон": "%закуп%"},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("ambiguous_alias", [issue.code for issue in result.issues])
+
+    def test_read_only_query_validator_rejects_scalar_subquery_after_equals(self) -> None:
+        result = validate_read_only_query(
+            "ВЫБРАТЬ\n"
+            "    Цены.Номенклатура КАК Номенклатура,\n"
+            "    Цены.Период КАК Период\n"
+            "ИЗ\n"
+            "    РегистрСведений.ЦеныНоменклатуры КАК Цены\n"
+            "ГДЕ\n"
+            "    Цены.Период = (ВЫБРАТЬ МАКСИМУМ(Цены2.Период) ИЗ РегистрСведений.ЦеныНоменклатуры КАК Цены2)"
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("unsupported_scalar_subquery", [issue.code for issue in result.issues])
+
     def test_trace_writer_records_structured_json(self) -> None:
         from tempfile import TemporaryDirectory
         from pathlib import Path

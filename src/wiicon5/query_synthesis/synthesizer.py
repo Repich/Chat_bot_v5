@@ -620,40 +620,75 @@ class QuerySynthesisEngine:
         if self.failure_solver is None:
             trace["failure_solver"] = {"configured": False}
             return QuerySynthesisResult(ok=False, error=error, trace=trace)
-        try:
-            decision = self.failure_solver.solve(diagnostic)
-        except Exception as exc:
-            decision = FailureSolverDecision(action="unavailable", developer_note=str(exc))
-        trace["failure_solver"] = decision.to_dict()
-        if decision.action != "retry_query":
-            return QuerySynthesisResult(
-                ok=False,
-                error=merge_failure_solver_error(error, decision),
+        retry_error = error
+        previous_retry_queries: List[str] = []
+        for solver_attempt in range(2):
+            if solver_attempt:
+                diagnostic = failure_diagnostic_payload(
+                    message=message,
+                    intent=intent.to_dict(),
+                    goal=goal_to_payload(goal),
+                    conversation_context=context.to_packet(),
+                    gaps=gaps,
+                    failure_error=retry_error,
+                    synthesis_trace=trace,
+                )
+            try:
+                decision = self.failure_solver.solve(diagnostic)
+            except Exception as exc:
+                decision = FailureSolverDecision(action="unavailable", developer_note=str(exc))
+            if solver_attempt:
+                trace.setdefault("failure_solver_repair_decisions", []).append(decision.to_dict())
+            else:
+                trace["failure_solver"] = decision.to_dict()
+            if decision.action != "retry_query":
+                return QuerySynthesisResult(
+                    ok=False,
+                    error=merge_failure_solver_error(retry_error, decision),
+                    trace=trace,
+                )
+            if not decision.query.strip():
+                empty_query = FailureSolverDecision(
+                    action="cannot_solve",
+                    developer_note="Failure solver returned retry_query without query text.",
+                    raw=decision.raw,
+                )
+                trace.setdefault("failure_solver_empty_retry_query", []).append(empty_query.to_dict())
+                return QuerySynthesisResult(
+                    ok=False,
+                    error=merge_failure_solver_error(retry_error, empty_query),
+                    trace=trace,
+                )
+            retry_query_key = normalized_query_for_comparison(postprocess_1c_query(decision.query.strip()))
+            if retry_query_key in previous_retry_queries:
+                repeated = FailureSolverDecision(
+                    action="cannot_solve",
+                    developer_note="Failure solver repeated the same failed retry query.",
+                    raw=decision.raw,
+                )
+                trace.setdefault("failure_solver_repeated_retry_query", []).append(repeated.to_dict())
+                return QuerySynthesisResult(
+                    ok=False,
+                    error=merge_failure_solver_error(retry_error, repeated),
+                    trace=trace,
+                )
+            previous_retry_queries.append(retry_query_key)
+            retry_result = self._execute_failure_solver_retry(
+                message=message,
+                intent=intent,
+                goal=goal,
+                context=context,
                 trace=trace,
+                decision=decision,
+                metadata_objects=metadata_objects,
+                onboarding_evidence=onboarding_evidence,
+                successful_steps=successful_steps,
             )
-        if not decision.query.strip():
-            empty_query = FailureSolverDecision(
-                action="cannot_solve",
-                developer_note="Failure solver returned retry_query without query text.",
-                raw=decision.raw,
-            )
-            trace["failure_solver_empty_retry_query"] = empty_query.to_dict()
-            return QuerySynthesisResult(
-                ok=False,
-                error=merge_failure_solver_error(error, empty_query),
-                trace=trace,
-            )
-        return self._execute_failure_solver_retry(
-            message=message,
-            intent=intent,
-            goal=goal,
-            context=context,
-            trace=trace,
-            decision=decision,
-            metadata_objects=metadata_objects,
-            onboarding_evidence=onboarding_evidence,
-            successful_steps=successful_steps,
-        )
+            if retry_result.ok or retry_result.needs_clarification:
+                return retry_result
+            retry_error = retry_result.error or retry_error
+            trace["failure_solver_retry_error"] = retry_error
+        return QuerySynthesisResult(ok=False, error=retry_error, trace=trace)
 
     def _execute_failure_solver_retry(
         self,

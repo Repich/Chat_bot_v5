@@ -724,6 +724,106 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Электротовары", result.message)
         self.assertIn("43800", result.message)
 
+    def test_failure_solver_gets_second_chance_after_invalid_retry_query(self) -> None:
+        document_ref = document_object_ref(
+            guid="bf22af7c-fbc6-11ee-90c8-90004ef3f886",
+            presentation="Приобретение товаров и услуг 0000-000019 от 16.04.2024 11:03:50",
+        )
+        partial_query = """
+            ВЫБРАТЬ ПЕРВЫЕ 1
+                Поступление.Ссылка КАК Документ
+            ИЗ
+                Документ.ПриобретениеТоваровУслуг КАК Поступление
+            ГДЕ
+                Поступление.Проведен
+            УПОРЯДОЧИТЬ ПО
+                Поступление.Дата УБЫВ
+        """
+        invalid_retry = FailureSolverDecision(
+            action="retry_query",
+            query="""
+                ВЫБРАТЬ
+                    Поступление.Ссылка КАК Документ
+                ИЗ
+                    Документ.ПриобретениеТоваровУслуг КАК Поступление
+                ГДЕ
+                    Поступление.Дата = (
+                        ВЫБРАТЬ МАКСИМУМ(Поступление2.Дата)
+                        ИЗ Документ.ПриобретениеТоваровУслуг КАК Поступление2
+                    )
+            """,
+            params={},
+            limit=10,
+            reasoning="Первая аварийная попытка содержит неподдержанный scalar subquery.",
+        )
+        repaired_retry = FailureSolverDecision(
+            action="retry_query",
+            query="""
+                ВЫБРАТЬ
+                    Поступление.Контрагент КАК Контрагент,
+                    Поступление.СуммаДокумента КАК СуммаДокумента
+                ИЗ
+                    Документ.ПриобретениеТоваровУслуг КАК Поступление
+                ГДЕ
+                    Поступление.Ссылка = &Ссылка
+            """,
+            params={"Ссылка": document_ref},
+            limit=10,
+            reasoning="Вторая аварийная попытка получает недостающие поля найденного документа.",
+        )
+        solver = ScriptedFailureSolver([invalid_retry, repaired_retry])
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["ПриобретениеТоваровУслуг", "поставка", "контрагент", "сумма"]),
+                query_response(partial_query)
+                | {"reasoning": "Сначала найдем последний документ. В текущем запросе только находим поставку."},
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [
+                {"success": True, "data": [{"Документ": document_ref}]},
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "Контрагент": {
+                                "_objectRef": True,
+                                "УникальныйИдентификатор": "supplier-1",
+                                "ТипОбъекта": "СправочникСсылка.Контрагенты",
+                                "Представление": "Электротовары",
+                            },
+                            "СуммаДокумента": 43800,
+                        }
+                    ],
+                },
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=PurchaseDocumentMetadataProvider(),
+            mcp_client=mcp,
+            max_successful_steps=1,
+            failure_solver=solver,
+        )
+
+        result = engine.run(
+            message="Покажи поставщика и сумму последней поставки",
+            intent=data_intent("Узнать поставщика и сумму последней поставки"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(solver.calls), 2)
+        self.assertEqual(len(mcp.query_calls), 2)
+        self.assertIn("failure_solver_retry_error", result.trace)
+        first_retry = result.trace["failure_solver_attempts"][0]
+        self.assertIn("unsupported_scalar_subquery", [issue["code"] for issue in first_retry["validation"]["issues"]])
+        self.assertIn("failure_solver_repair_decisions", result.trace)
+        self.assertIn("Электротовары", result.message)
+        self.assertIn("43800", result.message)
+
     def test_synthesis_rejects_empty_list_param_before_mcp_and_repairs(self) -> None:
         retail_type_ref = {
             "_objectRef": True,
@@ -2139,13 +2239,14 @@ class SequentialMcpClient(McpClient):
 
 
 class ScriptedFailureSolver(FailureSolver):
-    def __init__(self, decision: FailureSolverDecision) -> None:
-        self.decision = decision
+    def __init__(self, decision: FailureSolverDecision | List[FailureSolverDecision]) -> None:
+        self.decisions = list(decision) if isinstance(decision, list) else [decision]
         self.calls: List[Dict[str, object]] = []
 
     def solve(self, diagnostic_payload: Dict[str, object]) -> FailureSolverDecision:
         self.calls.append(diagnostic_payload)
-        return self.decision
+        index = min(len(self.calls) - 1, len(self.decisions) - 1)
+        return self.decisions[index]
 
 
 def discovery_response(terms: List[str]) -> Dict[str, object]:
