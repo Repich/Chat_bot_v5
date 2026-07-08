@@ -384,7 +384,49 @@ class AgentOrchestrator:
             "query_synthesis/result.json",
             {"source": source, "synthesis": synthesis_result.to_dict()},
         )
+        if not synthesis_result.ok and not synthesis_result.needs_clarification:
+            self._write_query_synthesis_failure_diagnostic(
+                run_trace=run_trace,
+                source=source,
+                message=message,
+                intent=intent,
+                goal=goal,
+                context=context,
+                gaps=gaps,
+                synthesis_result=synthesis_result,
+            )
         return synthesis_result
+
+    def _write_query_synthesis_failure_diagnostic(
+        self,
+        *,
+        run_trace: RunTrace,
+        source: str,
+        message: str,
+        intent: IntentResult,
+        goal: Optional[GoalDecomposition],
+        context: ConversationContext,
+        gaps: List[Dict[str, object]],
+        synthesis_result: QuerySynthesisResult,
+    ) -> Path:
+        return run_trace.write_json(
+            "diagnostics/query_synthesis_failure.json",
+            {
+                "kind": "query_synthesis_failure",
+                "developer_handoff": (
+                    "Агент не смог построить корректный запрос самостоятельно. "
+                    "Проверьте synthesis.trace, attempts, raw MCP responses, failure_solver and final_error. "
+                    "Код бота автоматически не изменялся."
+                ),
+                "source": source,
+                "message": message,
+                "intent": intent.to_dict(),
+                "goal": result_goal_to_dict(goal) if goal is not None else None,
+                "conversation_context": context.to_packet(),
+                "gaps": list(gaps),
+                "synthesis_result": synthesis_result.to_dict(),
+            },
+        )
 
     def _query_synthesis_failed_result(
         self,
@@ -397,9 +439,16 @@ class AgentOrchestrator:
         gaps: Optional[List[SkillGap]] = None,
         evolution_decisions: Optional[List[SkillEvolutionDecision]] = None,
     ) -> AgentRunResult:
+        message = query_synthesis_failure_message(synthesis_result.error)
+        diagnostic_path = Path(trace_path) / "diagnostics" / "query_synthesis_failure.json"
+        if diagnostic_path.exists():
+            message += (
+                "\n\nК сожалению, агент не смог сам восстановить запрос. "
+                f"Передайте разработчику файл диагностики: {diagnostic_path}"
+            )
         return AgentRunResult(
             source="query_synthesis_failed",
-            message=query_synthesis_failure_message(synthesis_result.error),
+            message=message,
             intent=intent,
             goal=goal,
             plan=plan,

@@ -62,7 +62,7 @@ runtime навыков, пайплайн синтеза запросов, инт
 
 ## Текущий Статус
 
-Текущая версия: `5.0.0-alpha.66`.
+Текущая версия: `5.0.0-alpha.67`.
 
 Реализована основа:
 
@@ -94,6 +94,9 @@ runtime навыков, пайплайн синтеза запросов, инт
   находки остаются hints и не проходят query review как факты;
 - onboarding evidence для query synthesis: реальные query patterns и карта
   движений документов по регистрам из выгрузки конфигурации;
+- опциональный failure solver для финальных отказов query synthesis, который
+  получает полный trace, пробует вернуть новый безопасный запрос 1С или
+  формирует диагностический handoff разработчику;
 - verifier candidate bindings через MCP перед ручным утверждением bindings;
 - regression case tooling из trace;
 - composer explainability trace с выбранными и отклоненными candidate skills.

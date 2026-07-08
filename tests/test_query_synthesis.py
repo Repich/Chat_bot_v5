@@ -23,7 +23,7 @@ from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.query.learned_query_builder import LearnedQueryBuilder
 from wiicon5.query.query_builder import QueryBuildError
 from wiicon5.query.reference_value_resolver import best_reference_match
-from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
+from wiicon5.query_synthesis import FailureSolver, FailureSolverDecision, QuerySynthesisEngine, QuerySynthesisResult
 from wiicon5.query_synthesis.synthesizer import (
     collect_metadata_objects,
     expand_metadata_search_terms,
@@ -641,6 +641,88 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertTrue(result.trace["attempts"][1]["repeated_partial_query"])
         self.assertIn("Repeated previous partial query", llm.calls[3]["user_payload"]["previous_error"])
         self.assertIn("Электротовары", result.message)
+
+    def test_failure_solver_can_recover_from_partial_result_failure(self) -> None:
+        document_ref = document_object_ref(
+            guid="bf22af7c-fbc6-11ee-90c8-90004ef3f886",
+            presentation="Приобретение товаров и услуг 0000-000019 от 16.04.2024 11:03:50",
+        )
+        partial_query = """
+            ВЫБРАТЬ ПЕРВЫЕ 1
+                Поступление.Ссылка КАК Документ
+            ИЗ
+                Документ.ПриобретениеТоваровУслуг КАК Поступление
+            ГДЕ
+                Поступление.Проведен
+            УПОРЯДОЧИТЬ ПО
+                Поступление.Дата УБЫВ
+        """
+        solver = ScriptedFailureSolver(
+            FailureSolverDecision(
+                action="retry_query",
+                query="""
+                    ВЫБРАТЬ
+                        Поступление.Контрагент КАК Контрагент,
+                        Поступление.СуммаДокумента КАК СуммаДокумента
+                    ИЗ
+                        Документ.ПриобретениеТоваровУслуг КАК Поступление
+                    ГДЕ
+                        Поступление.Ссылка = &Ссылка
+                """,
+                params={"Ссылка": document_ref},
+                limit=10,
+                reasoning="Первый запрос нашел документ, второй должен получить недостающие поля этого документа.",
+            )
+        )
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["ПриобретениеТоваровУслуг", "поставка", "контрагент", "сумма"]),
+                query_response(partial_query)
+                | {"reasoning": "Сначала найдем последний документ. В текущем запросе только находим поставку."},
+            ]
+        )
+        mcp = SequentialMcpClient(
+            [
+                {"success": True, "data": [{"Документ": document_ref}]},
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "Контрагент": {
+                                "_objectRef": True,
+                                "УникальныйИдентификатор": "supplier-1",
+                                "ТипОбъекта": "СправочникСсылка.Контрагенты",
+                                "Представление": "Электротовары",
+                            },
+                            "СуммаДокумента": 43800,
+                        }
+                    ],
+                },
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=PurchaseDocumentMetadataProvider(),
+            mcp_client=mcp,
+            max_successful_steps=1,
+            failure_solver=solver,
+        )
+
+        result = engine.run(
+            message="Покажи поставщика и сумму последней поставки",
+            intent=data_intent("Узнать поставщика и сумму последней поставки"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(solver.calls), 1)
+        self.assertEqual(len(mcp.query_calls), 2)
+        self.assertIn("failure_solver_attempts", result.trace)
+        self.assertEqual(result.trace["final_query"]["source"], "failure_solver")
+        self.assertIn("Электротовары", result.message)
+        self.assertIn("43800", result.message)
 
     def test_synthesis_rejects_empty_list_param_before_mcp_and_repairs(self) -> None:
         retail_type_ref = {
@@ -2039,6 +2121,16 @@ class SequentialMcpClient(McpClient):
 
     def get_metadata(self, request: McpMetadataRequest) -> McpMetadataResponse:
         return McpMetadataResponse(success=False, error="Metadata is not scripted for this test.")
+
+
+class ScriptedFailureSolver(FailureSolver):
+    def __init__(self, decision: FailureSolverDecision) -> None:
+        self.decision = decision
+        self.calls: List[Dict[str, object]] = []
+
+    def solve(self, diagnostic_payload: Dict[str, object]) -> FailureSolverDecision:
+        self.calls.append(diagnostic_payload)
+        return self.decision
 
 
 def discovery_response(terms: List[str]) -> Dict[str, object]:

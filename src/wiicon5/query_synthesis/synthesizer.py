@@ -38,6 +38,11 @@ from wiicon5.query.one_c_query_review import (
     split_top_level_commas,
 )
 from wiicon5.query.reference_value_resolver import ReferenceValueResolver
+from wiicon5.query_synthesis.failure_solver import (
+    FailureSolver,
+    FailureSolverDecision,
+    failure_diagnostic_payload,
+)
 from wiicon5.query_synthesis.sufficiency import (
     ResultSufficiencyReview,
     ResultSufficiencyReviewer,
@@ -120,6 +125,7 @@ class QuerySynthesisEngine:
         prompt_catalog: Optional[PromptCatalog] = None,
         term_expansion_policy: Optional[MetadataTermExpansionPolicy] = None,
         onboarding_evidence_provider: Optional[OnboardingEvidenceProvider] = None,
+        failure_solver: Optional[FailureSolver] = None,
     ) -> None:
         self.llm_client = llm_client
         self.metadata_provider = metadata_provider
@@ -136,6 +142,7 @@ class QuerySynthesisEngine:
             self.bot_config
         )
         self.onboarding_evidence_provider = onboarding_evidence_provider
+        self.failure_solver = failure_solver
 
     def run(
         self,
@@ -180,7 +187,18 @@ class QuerySynthesisEngine:
         onboarding_evidence = self._onboarding_evidence(search_terms, metadata_objects)
         trace["onboarding_evidence"] = onboarding_evidence
         if not metadata_objects:
-            return QuerySynthesisResult(ok=False, error="Metadata search returned no objects.", trace=trace)
+            return self._failed_result(
+                message=message,
+                intent=intent,
+                goal=goal,
+                context=context,
+                gaps=gaps,
+                error="Metadata search returned no objects.",
+                trace=trace,
+                metadata_objects=[],
+                onboarding_evidence=onboarding_evidence,
+                successful_steps=[],
+            )
 
         previous_error = ""
         previous_query = ""
@@ -215,7 +233,18 @@ class QuerySynthesisEngine:
                     },
                 )
             except LLMProviderError as exc:
-                return QuerySynthesisResult(ok=False, error=f"LLM query synthesis failed: {exc}", trace=trace)
+                return self._failed_result(
+                    message=message,
+                    intent=intent,
+                    goal=goal,
+                    context=context,
+                    gaps=gaps,
+                    error=f"LLM query synthesis failed: {exc}",
+                    trace=trace,
+                    metadata_objects=metadata_objects,
+                    onboarding_evidence=onboarding_evidence,
+                    successful_steps=successful_steps,
+                )
 
             raw_query = str(query_response.get("query") or "").strip()
             query = postprocess_1c_query(raw_query)
@@ -487,10 +516,17 @@ class QuerySynthesisEngine:
                     onboarding_evidence = self._onboarding_evidence(combined_terms, metadata_objects)
                     trace["onboarding_evidence"] = onboarding_evidence
                 if len(successful_steps) >= self.max_successful_steps:
-                    return QuerySynthesisResult(
-                        ok=False,
+                    return self._failed_result(
+                        message=message,
+                        intent=intent,
+                        goal=goal,
+                        context=context,
+                        gaps=gaps,
                         error=previous_error or "Query synthesis produced only partial results.",
                         trace=trace,
+                        metadata_objects=metadata_objects,
+                        onboarding_evidence=onboarding_evidence,
+                        successful_steps=successful_steps,
                     )
                 continue
 
@@ -544,7 +580,317 @@ class QuerySynthesisEngine:
                 trace=trace,
             )
 
-        return QuerySynthesisResult(ok=False, error=previous_error or "Query synthesis failed.", trace=trace)
+        return self._failed_result(
+            message=message,
+            intent=intent,
+            goal=goal,
+            context=context,
+            gaps=gaps,
+            error=previous_error or "Query synthesis failed.",
+            trace=trace,
+            metadata_objects=metadata_objects,
+            onboarding_evidence=onboarding_evidence,
+            successful_steps=successful_steps,
+        )
+
+    def _failed_result(
+        self,
+        *,
+        message: str,
+        intent: IntentResult,
+        goal: Optional[GoalDecomposition],
+        context: ConversationContext,
+        gaps: List[Dict[str, Any]],
+        error: str,
+        trace: Dict[str, Any],
+        metadata_objects: List[MetadataObject],
+        onboarding_evidence: Dict[str, Any],
+        successful_steps: List[Dict[str, Any]],
+    ) -> QuerySynthesisResult:
+        trace["final_error"] = error
+        diagnostic = failure_diagnostic_payload(
+            message=message,
+            intent=intent.to_dict(),
+            goal=goal_to_payload(goal),
+            conversation_context=context.to_packet(),
+            gaps=gaps,
+            failure_error=error,
+            synthesis_trace=trace,
+        )
+        if self.failure_solver is None:
+            trace["failure_solver"] = {"configured": False}
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+        try:
+            decision = self.failure_solver.solve(diagnostic)
+        except Exception as exc:
+            decision = FailureSolverDecision(action="unavailable", developer_note=str(exc))
+        trace["failure_solver"] = decision.to_dict()
+        if decision.action != "retry_query":
+            return QuerySynthesisResult(
+                ok=False,
+                error=merge_failure_solver_error(error, decision),
+                trace=trace,
+            )
+        if not decision.query.strip():
+            empty_query = FailureSolverDecision(
+                action="cannot_solve",
+                developer_note="Failure solver returned retry_query without query text.",
+                raw=decision.raw,
+            )
+            trace["failure_solver_empty_retry_query"] = empty_query.to_dict()
+            return QuerySynthesisResult(
+                ok=False,
+                error=merge_failure_solver_error(error, empty_query),
+                trace=trace,
+            )
+        return self._execute_failure_solver_retry(
+            message=message,
+            intent=intent,
+            goal=goal,
+            context=context,
+            trace=trace,
+            decision=decision,
+            metadata_objects=metadata_objects,
+            onboarding_evidence=onboarding_evidence,
+            successful_steps=successful_steps,
+        )
+
+    def _execute_failure_solver_retry(
+        self,
+        *,
+        message: str,
+        intent: IntentResult,
+        goal: Optional[GoalDecomposition],
+        context: ConversationContext,
+        trace: Dict[str, Any],
+        decision: FailureSolverDecision,
+        metadata_objects: List[MetadataObject],
+        onboarding_evidence: Dict[str, Any],
+        successful_steps: List[Dict[str, Any]],
+    ) -> QuerySynthesisResult:
+        query_response = {
+            "query": decision.query,
+            "params": dict(decision.params),
+            "limit": decision.limit,
+            "reasoning": decision.reasoning or "Failure solver retry query.",
+            "answer_guidance": decision.answer_guidance,
+        }
+        raw_query = decision.query.strip()
+        query = postprocess_1c_query(raw_query)
+        params = dict(decision.params)
+        limit = limit_from_value(decision.limit)
+        attempt_trace: Dict[str, Any] = {
+            "source": "failure_solver",
+            "query_response": query_response,
+            "raw_query": raw_query,
+            "query": query,
+            "params": dict(params),
+            "limit": limit,
+            "onboarding_evidence": onboarding_evidence,
+        }
+        trace.setdefault("failure_solver_attempts", []).append(attempt_trace)
+
+        if repeats_partial_query(query, successful_steps):
+            error = (
+                "Failure solver repeated previous partial query after result insufficiency. "
+                "It must build a different query that retrieves the missing facts."
+            )
+            attempt_trace["error"] = error
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        validation = validate_read_only_query(query, params)
+        attempt_trace["validation"] = validation.to_dict()
+        if not validation.ok:
+            error = "Failure solver query validation failed: " + "; ".join(issue.message for issue in validation.issues)
+            attempt_trace["error"] = error
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        reference_resolution = ReferenceValueResolver(self.mcp_client).resolve(
+            query=query,
+            params=params,
+            metadata_objects=metadata_objects,
+        )
+        attempt_trace["reference_value_resolution"] = reference_resolution.to_dict()
+        if reference_resolution.changed:
+            query = reference_resolution.query
+            params = reference_resolution.params
+            attempt_trace["query"] = query
+            attempt_trace["params"] = dict(params)
+            validation = validate_read_only_query(query, params)
+            attempt_trace["validation_after_reference_resolution"] = validation.to_dict()
+            if not validation.ok:
+                error = "Failure solver query validation failed after reference resolution: " + "; ".join(
+                    issue.message for issue in validation.issues
+                )
+                attempt_trace["error"] = error
+                return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        empty_list_params = used_empty_list_params(query, params)
+        if empty_list_params:
+            error = (
+                "Failure solver query uses empty list parameter(s): "
+                + ", ".join("&" + name for name in empty_list_params)
+            )
+            attempt_trace["error"] = error
+            attempt_trace["empty_list_params"] = empty_list_params
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        list_param_expansion = expand_in_list_parameters(query, params)
+        attempt_trace["list_param_expansion"] = list_param_expansion.to_dict()
+        if list_param_expansion.changed:
+            query = list_param_expansion.query
+            params = list_param_expansion.params
+            attempt_trace["query"] = query
+            attempt_trace["params"] = dict(params)
+            validation = validate_read_only_query(query, params)
+            attempt_trace["validation_after_list_param_expansion"] = validation.to_dict()
+            if not validation.ok:
+                error = "Failure solver query validation failed after list expansion: " + "; ".join(
+                    issue.message for issue in validation.issues
+                )
+                attempt_trace["error"] = error
+                return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        query_review = self.query_reviewer.review(
+            query=query,
+            params=params,
+            metadata_objects=metadata_objects,
+        )
+        attempt_trace["query_review"] = query_review.to_dict()
+        if not query_review.ok:
+            error = "Failure solver query review failed: " + query_review.error_text()
+            attempt_trace["error"] = error
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        semantic_issues = goal_semantic_review_issues(
+            query=query,
+            params=params,
+            goal=goal,
+            message=message,
+            intent=intent,
+            metadata_objects=metadata_objects,
+        )
+        attempt_trace["goal_semantic_review"] = {
+            "ok": not semantic_issues,
+            "issues": semantic_issues,
+        }
+        if semantic_issues:
+            error = "Failure solver query semantic review failed: " + "; ".join(
+                issue["message"] for issue in semantic_issues
+            )
+            attempt_trace["error"] = error
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        response = self.mcp_client.execute_query(McpQueryRequest(query=query, params=params, limit=limit))
+        rows = normalize_mcp_rows(response)
+        attempt_trace["mcp_response"] = response.raw
+        attempt_trace["row_count"] = len(rows)
+        if not response.success:
+            error = response.error or "Failure solver MCP query failed."
+            attempt_trace["error"] = error
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        columns = columns_from_rows(rows)
+        sufficiency = self._review_sufficiency(
+            message=message,
+            intent=intent,
+            goal=goal,
+            context=context,
+            query=query,
+            params=params,
+            columns=columns,
+            rows=rows,
+            query_response=query_response,
+            successful_steps=successful_steps,
+        )
+        attempt_trace["result_sufficiency"] = sufficiency.to_dict()
+        current_step = successful_step_payload(
+            step=len(successful_steps) + 1,
+            query=query,
+            params=params,
+            columns=columns,
+            rows=rows,
+            query_response=query_response,
+            sufficiency=sufficiency,
+        )
+        if not sufficiency.sufficient:
+            attempt_trace["partial_result"] = True
+            if sufficiency.needs_clarification:
+                artifact = clarification_artifact(
+                    question=message,
+                    query=query,
+                    params=params,
+                    columns=columns,
+                    rows=rows,
+                    sufficiency=sufficiency,
+                )
+                trace["clarification"] = artifact.value
+                return QuerySynthesisResult(
+                    ok=False,
+                    context_artifacts=[artifact],
+                    message=clarification_message(
+                        sufficiency=sufficiency,
+                        question=message,
+                        columns=columns,
+                        rows=rows,
+                    ),
+                    error="Clarification is required after failure solver retry.",
+                    needs_clarification=True,
+                    trace=trace,
+                )
+            error = "Failure solver retry result insufficient. " + result_insufficiency_error(sufficiency)
+            attempt_trace["error"] = error
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
+
+        answer = "Данных не найдено." if rows_effectively_empty(rows) else format_user_answer(
+            question=message,
+            columns=columns,
+            rows=rows,
+        )
+        if self.answer_formatter is not None and not rows_effectively_empty(rows):
+            formatted = self.answer_formatter.format(
+                question=message,
+                query=query,
+                params=params,
+                columns=columns,
+                rows=rows,
+                fallback_answer=answer,
+            )
+            trace["answer_formatting"] = formatted.to_dict()
+            if formatted.ok:
+                answer = formatted.answer
+        artifact = Artifact(
+            name="answer",
+            type="UserAnswer",
+            value=answer,
+            provenance=["query_synthesis", "failure_solver"],
+        )
+        successful_steps.append(current_step)
+        trace["successful_steps"] = compact_successful_steps(successful_steps, include_rows=True)
+        trace["final_query"] = {"query": query, "params": dict(params), "limit": limit, "source": "failure_solver"}
+        trace["row_count"] = len(rows)
+        return QuerySynthesisResult(
+            ok=True,
+            final_artifact=artifact,
+            context_artifacts=[
+                Artifact(
+                    name="query_result",
+                    type="QueryResult",
+                    value={
+                        "question": message,
+                        "answer": answer,
+                        "query": query,
+                        "params": dict(params),
+                        "columns": columns,
+                        "rows": rows[:50],
+                        "steps": compact_successful_steps(successful_steps, include_rows=True),
+                    },
+                    provenance=["query_synthesis", "failure_solver"],
+                )
+            ],
+            message=answer,
+            trace=trace,
+        )
 
     def _review_sufficiency(
         self,
@@ -1134,6 +1480,14 @@ def result_insufficiency_error(sufficiency: ResultSufficiencyReview) -> str:
     if sufficiency.reasoning:
         parts.append("Reasoning: " + sufficiency.reasoning)
     return " ".join(parts)
+
+
+def merge_failure_solver_error(error: str, decision: FailureSolverDecision) -> str:
+    base = error or "Query synthesis failed."
+    detail = decision.developer_note or decision.reasoning
+    if not detail:
+        return base
+    return f"{base} Failure solver {decision.action}: {detail}"
 
 
 def should_expand_metadata_after_insufficiency(sufficiency: ResultSufficiencyReview) -> bool:

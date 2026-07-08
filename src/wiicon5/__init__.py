@@ -1,3 +1,3 @@
 """WIICON ChatBot 5 core package."""
 
-__version__ = "5.0.0-alpha.66"
+__version__ = "5.0.0-alpha.67"

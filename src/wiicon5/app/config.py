@@ -27,6 +27,13 @@ class Settings:
     admin_bind_local_only: bool = True
     admin_allowed_config_roots: Tuple[Path, ...] = ()
     workbench_allow_raw_query_edit: bool = False
+    failure_solver_enabled: bool = False
+    failure_solver_provider: str = "openai_compatible"
+    failure_solver_api_base: str = ""
+    failure_solver_api_key: str = ""
+    failure_solver_model: str = "gpt-5.4"
+    failure_solver_timeout_seconds: float = 120.0
+    failure_solver_codex_command: str = ""
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None, root: Optional[Path] = None) -> "Settings":
@@ -60,6 +67,32 @@ class Settings:
                 values.get("WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT"),
                 default=False,
             ),
+            failure_solver_enabled=bool_from_env(values.get("WIICON5_FAILURE_SOLVER_ENABLED"), default=False),
+            failure_solver_provider=first_value(
+                values,
+                "WIICON5_FAILURE_SOLVER_PROVIDER",
+                default="openai_compatible",
+            ),
+            failure_solver_api_base=first_value(
+                values,
+                "WIICON5_FAILURE_SOLVER_API_BASE",
+                "OPENAI_API_BASE",
+                "OPENAI_BASE_URL",
+            ),
+            failure_solver_api_key=first_value(
+                values,
+                "WIICON5_FAILURE_SOLVER_API_KEY",
+                "OPENAI_API_KEY",
+            ),
+            failure_solver_model=first_value(
+                values,
+                "WIICON5_FAILURE_SOLVER_MODEL",
+                default="gpt-5.4",
+            ),
+            failure_solver_timeout_seconds=float(
+                first_value(values, "WIICON5_FAILURE_SOLVER_TIMEOUT_SECONDS", default="120")
+            ),
+            failure_solver_codex_command=first_value(values, "WIICON5_FAILURE_SOLVER_CODEX_COMMAND"),
         )
 
     def validate_for_llm(self) -> None:

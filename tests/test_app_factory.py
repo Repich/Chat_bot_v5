@@ -39,6 +39,8 @@ class AppFactoryTests(unittest.TestCase):
         self.assertTrue(settings.admin_bind_local_only)
         self.assertIn(root, settings.admin_allowed_config_roots)
         self.assertFalse(settings.workbench_allow_raw_query_edit)
+        self.assertFalse(settings.failure_solver_enabled)
+        self.assertEqual(settings.failure_solver_provider, "openai_compatible")
 
     def test_settings_loads_admin_security_options(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -61,6 +63,28 @@ class AppFactoryTests(unittest.TestCase):
         self.assertFalse(settings.admin_bind_local_only)
         self.assertEqual(settings.admin_allowed_config_roots, (allowed_a, allowed_b))
         self.assertTrue(settings.workbench_allow_raw_query_edit)
+
+    def test_settings_loads_failure_solver_options(self) -> None:
+        settings = Settings.from_env(
+            {
+                "WIICON5_FAILURE_SOLVER_ENABLED": "true",
+                "WIICON5_FAILURE_SOLVER_PROVIDER": "codex_cli",
+                "WIICON5_FAILURE_SOLVER_API_BASE": "https://api.openai.example/v1",
+                "WIICON5_FAILURE_SOLVER_API_KEY": "solver-secret",
+                "WIICON5_FAILURE_SOLVER_MODEL": "gpt-test",
+                "WIICON5_FAILURE_SOLVER_TIMEOUT_SECONDS": "180",
+                "WIICON5_FAILURE_SOLVER_CODEX_COMMAND": "python3 scripts/codex_failure_solver.py",
+            },
+            root=PROJECT_ROOT,
+        )
+
+        self.assertTrue(settings.failure_solver_enabled)
+        self.assertEqual(settings.failure_solver_provider, "codex_cli")
+        self.assertEqual(settings.failure_solver_api_base, "https://api.openai.example/v1")
+        self.assertEqual(settings.failure_solver_api_key, "solver-secret")
+        self.assertEqual(settings.failure_solver_model, "gpt-test")
+        self.assertEqual(settings.failure_solver_timeout_seconds, 180)
+        self.assertEqual(settings.failure_solver_codex_command, "python3 scripts/codex_failure_solver.py")
 
     def test_settings_loads_bot_instance_yaml(self) -> None:
         with TemporaryDirectory() as temp_dir:

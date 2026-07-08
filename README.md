@@ -3,7 +3,7 @@
 WIICON ChatBot 5 - экспериментальный самообучающийся агент для ответов на
 бизнес-вопросы по данным 1С через MCP-сервер.
 
-Текущая версия: `5.0.0-alpha.66`.
+Текущая версия: `5.0.0-alpha.67`.
 
 Проект не является набором жестко зашитых обработчиков под отдельные вопросы.
 Целевая модель: агент получает вопрос пользователя, учитывает контекст диалога,
@@ -70,4 +70,36 @@ http://127.0.0.1:7785/
 
 ```text
 http://127.0.0.1:6003
+```
+
+## Аварийная Диагностика Синтеза Запросов
+
+Если агент не смог построить корректный запрос к данным, он сохраняет полный
+диагностический пакет в trace:
+
+```text
+runs/<run_id>/diagnostics/query_synthesis_failure.json
+```
+
+Опционально можно включить аварийный solver, который получает этот контекст и
+пытается вернуть новый безопасный read-only запрос 1С. Solver не меняет код
+бота. Если задача требует доработки кода или MCP, агент возвращает пользователю
+путь к диагностике для разработчика.
+
+Через OpenAI-compatible API:
+
+```bash
+export WIICON5_FAILURE_SOLVER_ENABLED=true
+export WIICON5_FAILURE_SOLVER_PROVIDER=openai_compatible
+export WIICON5_FAILURE_SOLVER_API_BASE=https://api.openai.com/v1
+export WIICON5_FAILURE_SOLVER_API_KEY=...
+export WIICON5_FAILURE_SOLVER_MODEL=gpt-5.4
+```
+
+Через локальный Codex CLI adapter:
+
+```bash
+export WIICON5_FAILURE_SOLVER_ENABLED=true
+export WIICON5_FAILURE_SOLVER_PROVIDER=codex_cli
+export WIICON5_FAILURE_SOLVER_CODEX_COMMAND="python3 scripts/codex_failure_solver.py"
 ```

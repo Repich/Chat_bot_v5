@@ -1,3 +1,10 @@
+5.0.0-alpha.67
+- Добавлен опциональный аварийный слой query synthesis failure solver: при финальном отказе controlled loop может передать полный диагностический контекст в отдельный OpenAI-compatible API или внешний Codex/CLI adapter.
+- Retry-запрос от failure solver проходит стандартные read-only validation, reference resolution, query review, semantic review, MCP execution и sufficiency review; код бота автоматически не изменяется.
+- При каждом окончательном query_synthesis_failed сохраняется diagnostics/query_synthesis_failure.json с вопросом, контекстом диалога, intent/goal, trace попыток, raw MCP responses и решением failure solver.
+- Добавлен scripts/codex_failure_solver.py как локальный adapter для режима WIICON5_FAILURE_SOLVER_PROVIDER=codex_cli.
+- Добавлены регрессионные тесты на восстановление после partial-result failure и наличие диагностического файла.
+
 5.0.0-alpha.66
 - Backend API не менялся. Релиз улучшает видимость frontend-блокеров publish draft и добавляет cache-busting для static assets.
 

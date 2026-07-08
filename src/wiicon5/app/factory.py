@@ -22,6 +22,12 @@ from wiicon5.query.learned_query_builder import LearnedQueryBuilder
 from wiicon5.query.one_c_query_review import OneCQueryReviewer
 from wiicon5.query.semantic_query_builder import SemanticQueryBuilder
 from wiicon5.query_synthesis import QuerySynthesisEngine
+from wiicon5.query_synthesis.failure_solver import (
+    CodexCliFailureSolver,
+    FailureSolver,
+    LLMFailureSolver,
+    UnavailableFailureSolver,
+)
 from wiicon5.query_synthesis.sufficiency import ResultSufficiencyReviewer
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
 from wiicon5.skills.learned import LearnedSkillStore
@@ -86,6 +92,7 @@ def build_agent(
             result_reviewer=ResultSufficiencyReviewer(effective_llm),
             bot_config=settings.bot_instance,
             onboarding_evidence_provider=OnboardingEvidenceProvider(settings.bot_context.root / "onboarding"),
+            failure_solver=build_failure_solver(settings),
         ),
         learned_skill_store=learned_skill_store,
         synthesis_candidate_store=synthesis_candidate_store,
@@ -101,6 +108,36 @@ def build_llm_client(settings: Settings) -> LLMClient:
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
     )
+
+
+def build_failure_solver(settings: Settings) -> Optional[FailureSolver]:
+    if not settings.failure_solver_enabled:
+        return None
+    provider = settings.failure_solver_provider.strip().lower()
+    if provider in {"openai", "openai_compatible", "api"}:
+        missing = []
+        if not settings.failure_solver_api_base:
+            missing.append("WIICON5_FAILURE_SOLVER_API_BASE")
+        if not settings.failure_solver_api_key:
+            missing.append("WIICON5_FAILURE_SOLVER_API_KEY")
+        if missing:
+            return UnavailableFailureSolver("Missing failure solver settings: " + ", ".join(missing))
+        return LLMFailureSolver(
+            OpenAICompatibleLLMClient(
+                api_base=settings.failure_solver_api_base,
+                api_key=settings.failure_solver_api_key,
+                model=settings.failure_solver_model,
+                timeout_seconds=settings.failure_solver_timeout_seconds,
+            )
+        )
+    if provider in {"codex", "codex_cli", "cli"}:
+        if not settings.failure_solver_codex_command:
+            return UnavailableFailureSolver("Missing failure solver setting: WIICON5_FAILURE_SOLVER_CODEX_COMMAND")
+        return CodexCliFailureSolver(
+            command=settings.failure_solver_codex_command,
+            timeout_seconds=settings.failure_solver_timeout_seconds,
+        )
+    return UnavailableFailureSolver(f"Unsupported failure solver provider: {settings.failure_solver_provider}")
 
 
 def build_metadata_provider(settings: Settings, mcp_client: McpClient) -> MetadataProvider:

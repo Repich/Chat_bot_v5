@@ -41,6 +41,31 @@ bot_instances/local/bot.yaml
 сервис умеет использовать предварительно построенный onboarding index из
 `bot_instances/<id>/onboarding/metadata_index.sqlite`.
 
+Опциональный аварийный solver для неудачного синтеза запросов включается
+отдельно от основной модели:
+
+```env
+WIICON5_FAILURE_SOLVER_ENABLED=true
+WIICON5_FAILURE_SOLVER_PROVIDER=openai_compatible
+WIICON5_FAILURE_SOLVER_API_BASE=https://api.openai.com/v1
+WIICON5_FAILURE_SOLVER_API_KEY=...
+WIICON5_FAILURE_SOLVER_MODEL=gpt-5.4
+WIICON5_FAILURE_SOLVER_TIMEOUT_SECONDS=120
+```
+
+Если ChatGPT API недоступен с текущего компьютера, можно использовать локальный
+Codex CLI adapter:
+
+```env
+WIICON5_FAILURE_SOLVER_ENABLED=true
+WIICON5_FAILURE_SOLVER_PROVIDER=codex_cli
+WIICON5_FAILURE_SOLVER_CODEX_COMMAND=python3 scripts/codex_failure_solver.py
+```
+
+Solver получает diagnostic payload и может вернуть только новый read-only
+запрос 1С или решение `needs_developer`/`cannot_solve`. Автоматически изменять
+код бота этот слой не должен.
+
 ## Локальный Запуск
 
 Запустить HTTP-сервис:
@@ -225,6 +250,8 @@ runs/agent_*
 - `skill_invocations/execution_result.json`: результат runtime, если был;
 - `query_synthesis/`: поиск метаданных, LLM query draft, reviews, MCP calls и
   проверки достаточности;
+- `diagnostics/query_synthesis_failure.json`: полный пакет для разработчика,
+  если query synthesis окончательно не смог ответить;
 - `clarification/resolution.json`: детерминированное разрешение уточнения;
 - `result/result.json`: финальный ответ агента и source.
 

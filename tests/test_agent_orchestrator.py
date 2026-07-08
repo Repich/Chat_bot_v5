@@ -165,6 +165,13 @@ class AgentOrchestratorTests(unittest.TestCase):
             self.assertTrue(result.gaps)
             trace_path = Path(result.trace_path or "")
             self.assertTrue((trace_path / "query_synthesis/result.json").exists())
+            diagnostic_path = trace_path / "diagnostics/query_synthesis_failure.json"
+            self.assertTrue(diagnostic_path.exists())
+            self.assertIn(str(diagnostic_path), result.message)
+            diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["kind"], "query_synthesis_failure")
+            self.assertEqual(diagnostic["message"], question)
+            self.assertEqual(diagnostic["synthesis_result"]["error"], 'MCP query failed: Синтаксическая ошибка "УБЫВЬ"')
 
     def test_agent_rejects_out_of_scope_question_before_skill_search(self) -> None:
         question = "Какая сегодня погода?"

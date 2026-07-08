@@ -156,6 +156,7 @@ Binding связывает semantic skill с конкретным объекто
 Код:
 
 - `src/wiicon5/query_synthesis/synthesizer.py`
+- `src/wiicon5/query_synthesis/failure_solver.py`
 - `src/wiicon5/query_synthesis/sufficiency.py`
 - `src/wiicon5/query_synthesis/term_expansion.py`
 - `src/wiicon5/prompting/templates/...`
@@ -173,9 +174,16 @@ Binding связывает semantic skill с конкретным объекто
 5. Запрос выполняется через MCP.
 6. Result sufficiency layer проверяет, отвечает ли результат исходному вопросу.
 7. При неоднозначности создается `ClarificationRequest`.
-8. Presentation layer формирует ответ пользователю.
-9. Полезные артефакты сохраняются в контекст, а успешные шаблоны могут стать
+8. Если controlled loop окончательно споткнулся, опциональный failure solver
+   получает полный диагностический контекст и может вернуть один новый
+   read-only запрос 1С, который проходит те же проверки.
+9. Presentation layer формирует ответ пользователю.
+10. Полезные артефакты сохраняются в контекст, а успешные шаблоны могут стать
    learned skills.
+
+Failure solver не является механизмом автопатчинга. Если он видит, что нужно
+изменять код, валидатор, reviewer или MCP, он возвращает `needs_developer`, а
+агент сохраняет диагностический пакет для ручного разбора.
 
 Prompts разделены на слои:
 
@@ -344,6 +352,7 @@ http://127.0.0.1:6003
 - `skill_plan/plan_graph.json`;
 - `skill_invocations/execution_result.json`;
 - `query_synthesis/...`;
+- `diagnostics/query_synthesis_failure.json`;
 - `clarification/resolution.json`;
 - `result/result.json`.
 
