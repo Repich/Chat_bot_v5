@@ -5,6 +5,7 @@ from typing import List, Optional
 from wiicon5.models import ArtifactRequirement, GapResolution, SkillGap
 from wiicon5.planner.domain_compatibility import constraint_selects_skill_domain, skill_domain_compatible
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.semantic_roles import roles_match
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.types import TypeSystem
 
@@ -81,8 +82,8 @@ class GapDetector:
 
 def _skill_accepts_constraint(skill, constraint) -> bool:  # type: ignore[no-untyped-def]
     return (
-        constraint.semantic_field in skill.supported_filter_roles
-        or any(input_port.name == constraint.semantic_field for input_port in skill.inputs)
+        any(roles_match(constraint.semantic_field, role) for role in skill.supported_filter_roles)
+        or any(roles_match(input_port.name, constraint.semantic_field) for input_port in skill.inputs)
         or constraint_selects_skill_domain(skill, constraint)
     )
 

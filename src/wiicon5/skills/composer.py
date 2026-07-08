@@ -13,6 +13,7 @@ from wiicon5.planner.gap_detector import GapDetector
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.planner.placeholders import is_unresolved_placeholder_value
 from wiicon5.planner.validator import SkillPlanValidator
+from wiicon5.semantic_roles import roles_match
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.types import TypeSystem
 
@@ -397,18 +398,18 @@ class _CompositionGap(Exception):
 def _skill_accepts_constraint(skill: SkillContract, constraint: SemanticFilter) -> bool:
     return (
         _constraint_targets_input(skill, constraint)
-        or constraint.semantic_field in skill.supported_filter_roles
+        or any(roles_match(constraint.semantic_field, role) for role in skill.supported_filter_roles)
         or constraint_selects_skill_domain(skill, constraint)
     )
 
 
 def _constraint_targets_input(skill: SkillContract, constraint: SemanticFilter) -> bool:
-    return any(input_port.name == constraint.semantic_field for input_port in skill.inputs)
+    return any(roles_match(input_port.name, constraint.semantic_field) for input_port in skill.inputs)
 
 
 def first_constraint_for_input(constraints: List[SemanticFilter], input_name: str) -> Optional[SemanticFilter]:
     for constraint in constraints:
-        if constraint.semantic_field == input_name:
+        if roles_match(constraint.semantic_field, input_name):
             return constraint
     return None
 

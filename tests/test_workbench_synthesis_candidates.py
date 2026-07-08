@@ -9,9 +9,10 @@ from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
-from wiicon5.models import ArtifactRequirement
+from wiicon5.models import ArtifactRequirement, SemanticFilter
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.query_synthesis import QuerySynthesisResult
+from wiicon5.skills.learned import LearnedSkillStore
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 from wiicon5.workbench import HumanSkillDraftStore, SynthesisCandidateStore
@@ -174,10 +175,45 @@ class WorkbenchSynthesisCandidateTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertTrue(candidates[0].trace_path)
 
+    def test_orchestrator_skips_specific_candidate_when_reusable_learned_skill_created(self) -> None:
+        question = "Покажи розничные цены на пальто"
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bot = root / "bot"
+            registry = SkillRegistry()
+            store = SynthesisCandidateStore(bot_instance_root=bot)
+            learned_store = LearnedSkillStore(skills_dir=root / "skills", registry=registry)
+            orchestrator = AgentOrchestrator(
+                registry=registry,
+                decomposer=ScriptedGoalDecomposer({question: DecompositionResult(intent=data_intent(question), goal=price_lookup_goal(question))}),
+                query_synthesizer=PriceLookupQuerySynthesizer(),
+                learned_skill_store=learned_store,
+                synthesis_candidate_store=store,
+                trace_root=root / "runs",
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+            candidates = store.list_candidates()
+            learned_path = root / "skills" / "learned" / "candidates" / "learned_product_price_lookup.json"
+            learned_exists = learned_path.exists()
+            skipped_files = list((root / "runs").glob("agent_*/workbench/synthesis_candidate_skipped.json"))
+            skipped = json.loads(skipped_files[0].read_text(encoding="utf-8")) if skipped_files else {}
+
+        self.assertEqual(result.source, "query_synthesis_ok")
+        self.assertEqual(candidates, [])
+        self.assertTrue(learned_exists)
+        self.assertEqual(len(skipped_files), 1)
+        self.assertEqual(skipped["learned_skill_id"], "learned_product_price_lookup")
+
 
 class SuccessfulQuerySynthesizer:
     def run(self, **kwargs) -> QuerySynthesisResult:
         return successful_synthesis_result()
+
+
+class PriceLookupQuerySynthesizer:
+    def run(self, **kwargs) -> QuerySynthesisResult:
+        return successful_price_lookup_synthesis_result()
 
 
 def data_intent(question: str) -> IntentResult:
@@ -197,6 +233,24 @@ def data_goal(question: str) -> GoalDecomposition:
         final_artifact_type="TypedTable",
         expected_answer_type="table",
         required_artifacts=[ArtifactRequirement(name="answer", type="TypedTable")],
+    )
+
+
+def price_lookup_goal(question: str) -> GoalDecomposition:
+    return GoalDecomposition(
+        business_goal=question,
+        final_artifact_type="PriceTable",
+        expected_answer_type="table",
+        required_artifacts=[
+            ArtifactRequirement(
+                name="prices",
+                type="PriceTable",
+                constraints=[
+                    SemanticFilter(semantic_field="product_name", operator="contains", value="пальто", raw_user_text="пальто"),
+                    SemanticFilter(semantic_field="price_type", operator="equals", value="Розничная", raw_user_text="розничные"),
+                ],
+            )
+        ],
     )
 
 
@@ -226,6 +280,39 @@ def successful_synthesis_result(rows=None) -> QuerySynthesisResult:
                     "_trust": "verified",
                 }
             ],
+        },
+    )
+
+
+def successful_price_lookup_synthesis_result() -> QuerySynthesisResult:
+    query = (
+        "ВЫБРАТЬ\n"
+        "  Цены.Номенклатура.Наименование КАК Номенклатура,\n"
+        "  Цены.Цена КАК Цена\n"
+        "ИЗ\n"
+        "  РегистрСведений.ЦеныНоменклатуры КАК Цены\n"
+        "ГДЕ\n"
+        "  Цены.ВидЦены = &ВидЦены\n"
+        "  И Цены.Номенклатура.Наименование ПОДОБНО &ШаблонПальто"
+    )
+    rows = [{"Номенклатура": "Женское полупальто", "Цена": 62000}]
+    return QuerySynthesisResult(
+        ok=True,
+        final_artifact=Artifact(
+            name="answer",
+            type="PriceTable",
+            value={"columns": ["Номенклатура", "Цена"], "rows": rows},
+            provenance=["query_synthesis"],
+        ),
+        message="Розничная цена на пальто: 62000.",
+        trace={
+            "final_query": {
+                "query": query,
+                "params": {"ВидЦены": "Розничная", "ШаблонПальто": "%пальто%"},
+                "limit": 100,
+            },
+            "row_count": len(rows),
+            "metadata_objects": [{"full_name": "РегистрСведений.ЦеныНоменклатуры"}],
         },
     )
 

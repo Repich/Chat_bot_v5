@@ -18,7 +18,7 @@ from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
 from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
 from wiicon5.skills.composer import SkillComposer
-from wiicon5.skills.learned import LearnedSkillStore
+from wiicon5.skills.learned import LearnedSkillStore, LearnedSkillWriteResult
 from wiicon5.skills.lifecycle import SkillEvolutionDecision, SkillEvolutionPolicy
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
@@ -478,7 +478,29 @@ class AgentOrchestrator:
         run_trace: RunTrace,
         context: ConversationContext,
     ) -> None:
+        learned: Optional[LearnedSkillWriteResult] = None
+        if self.learned_skill_store is not None:
+            learned = self.learned_skill_store.learn_from_synthesis(
+                intent=intent,
+                goal=goal,
+                synthesis_result=synthesis_result,
+                created_from_trace=str(run_trace.path),
+                config_fingerprint=context.config_fingerprint or "",
+            )
+            if learned is not None:
+                run_trace.write_json("learning/learned_skill.json", learned.to_dict())
         if self.synthesis_candidate_store is not None:
+            if learned_synthesis_replaces_workbench_candidate(learned):
+                run_trace.write_json(
+                    "workbench/synthesis_candidate_skipped.json",
+                    {
+                        "reason": "reusable_learned_skill_created",
+                        "learned_skill_id": learned.skill.skill_id if learned else "",
+                        "learned_skill_created": bool(learned.created) if learned else False,
+                        "implementation_kind": str(learned.skill.implementation.get("kind") or "") if learned else "",
+                    },
+                )
+                return
             candidate = self.synthesis_candidate_store.record_from_synthesis(
                 question=intent.business_goal,
                 intent=intent,
@@ -488,17 +510,17 @@ class AgentOrchestrator:
             )
             if candidate is not None:
                 run_trace.write_json("workbench/synthesis_candidate.json", candidate.to_dict())
-        if self.learned_skill_store is None:
-            return
-        learned = self.learned_skill_store.learn_from_synthesis(
-            intent=intent,
-            goal=goal,
-            synthesis_result=synthesis_result,
-            created_from_trace=str(run_trace.path),
-            config_fingerprint=context.config_fingerprint or "",
-        )
-        if learned is not None:
-            run_trace.write_json("learning/learned_skill.json", learned.to_dict())
+
+
+def learned_synthesis_replaces_workbench_candidate(learned: Optional[LearnedSkillWriteResult]) -> bool:
+    if learned is None:
+        return False
+    if learned.skill.implementation_strategy != "learned_query":
+        return False
+    return str(learned.skill.implementation.get("kind") or "") in {
+        "parameterized_lookup_query",
+        "period_metric_aggregate",
+    }
 
 
 def result_goal_to_dict(goal: GoalDecomposition) -> Dict[str, object]:

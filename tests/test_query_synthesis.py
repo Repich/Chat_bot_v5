@@ -1590,6 +1590,52 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(skill_payload["implementation"]["config_fingerprint"], "cfg")
         self.assertIsNotNone(registry.get("learned_product_price_lookup"))
 
+    def test_learned_lookup_canonicalizes_product_name_role(self) -> None:
+        registry = SkillRegistry([])
+        with TemporaryDirectory() as temp_dir:
+            store = LearnedSkillStore(skills_dir=Path(temp_dir), registry=registry)
+
+            result = store.learn_from_synthesis(
+                intent=IntentResult(
+                    intent_type=IntentType.DATA_QUESTION,
+                    business_goal="Показать розничные цены на пальто",
+                    requires_1c_data=True,
+                    expected_output="table",
+                    domain_terms=["розничные цены", "пальто"],
+                    relevant=True,
+                ),
+                goal=price_lookup_goal_with_product_role(
+                    "Показать розничные цены на пальто",
+                    product_role="product_name",
+                    product="пальто",
+                    price_type="Розничная",
+                ),
+                synthesis_result=QuerySynthesisResult(
+                    ok=True,
+                    trace={
+                        "final_query": {
+                            "query": price_lookup_query(),
+                            "params": {"ТоварПоиск": "%пальто%", "ВидЦеныПоиск": "%Розничная%"},
+                            "limit": 100,
+                        },
+                        "row_count": 1,
+                        "metadata_objects": [{"full_name": "РегистрСведений.ЦеныНоменклатуры"}],
+                    },
+                ),
+            )
+
+            skill_path = Path(temp_dir) / "learned" / "candidates" / "learned_product_price_lookup.json"
+            skill_exists = skill_path.exists()
+            skill_payload = json.loads(skill_path.read_text(encoding="utf-8"))
+
+        self.assertIsNotNone(result)
+        self.assertTrue(skill_exists)
+        self.assertEqual(set(skill_payload["supported_filter_roles"]), {"product", "price_type"})
+        self.assertEqual(
+            {item["semantic_field"] for item in skill_payload["implementation"]["parameter_bindings"]},
+            {"product", "price_type"},
+        )
+
     def test_parameterized_lookup_builder_reuses_query_with_new_filter_values(self) -> None:
         skill = SkillContract.from_dict(
             {
@@ -2438,6 +2484,16 @@ def price_lookup_query() -> str:
 
 
 def price_lookup_goal(question: str, *, product: str, price_type: str) -> GoalDecomposition:
+    return price_lookup_goal_with_product_role(question, product_role="product", product=product, price_type=price_type)
+
+
+def price_lookup_goal_with_product_role(
+    question: str,
+    *,
+    product_role: str,
+    product: str,
+    price_type: str,
+) -> GoalDecomposition:
     return GoalDecomposition(
         business_goal=question,
         final_artifact_type="UserAnswer",
@@ -2448,7 +2504,7 @@ def price_lookup_goal(question: str, *, product: str, price_type: str) -> GoalDe
                 type="PriceTable",
                 constraints=[
                     SemanticFilter(
-                        semantic_field="product",
+                        semantic_field=product_role,
                         operator="contains",
                         value=product,
                         raw_user_text=product,

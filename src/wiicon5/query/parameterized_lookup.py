@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from wiicon5.models import SemanticFilter
+from wiicon5.semantic_roles import canonical_role
 
 
 PARAMETER_ROLE_HINTS: Dict[str, Sequence[str]] = {
@@ -205,7 +206,7 @@ def semantic_filters_from_inputs(inputs: Dict[str, Any]) -> List[SemanticFilter]
 
 
 def normalize_role(value: Any) -> str:
-    return str(value or "").strip().lower()
+    return canonical_role(value)
 
 
 def normalize_operator(value: Any) -> str:

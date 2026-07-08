@@ -88,6 +88,47 @@ class SkillComposerTests(unittest.TestCase):
         self.assertNotIn("product", stock_node.inputs)
         self.assertTrue(str(stock_node.inputs["warehouses"]).startswith("${"))
 
+    def test_composer_treats_product_name_as_product_filter_role(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_product_price_lookup",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Lookup prices by product and price type.",
+                "capabilities": ["learned_query", "parameterized_lookup_query"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": True}],
+                "outputs": [{"name": "table", "type": "PriceTable", "required": True}],
+                "supported_filter_roles": ["product", "price_type"],
+                "implementation_strategy": "learned_query",
+                "implementation": {"kind": "parameterized_lookup_query"},
+            }
+        )
+        composer = SkillComposer(SkillRegistry([skill]))
+        goal = GoalDecomposition(
+            business_goal="Покажи розничные цены на пальто",
+            final_artifact_type="PriceTable",
+            expected_answer_type="table",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="prices",
+                    type="PriceTable",
+                    constraints=[
+                        SemanticFilter(semantic_field="product_name", operator="contains", value="пальто"),
+                        SemanticFilter(semantic_field="price_type", operator="equals", value="Розничная"),
+                    ],
+                )
+            ],
+        )
+
+        result = composer.compose(goal)
+
+        self.assertEqual(result.gaps, [])
+        self.assertIsNotNone(result.plan)
+        assert result.plan is not None
+        self.assertEqual(result.plan.nodes[0].skill_id, "learned_product_price_lookup")
+        self.assertEqual(result.plan.nodes[0].inputs["filters"][0]["semantic_field"], "product_name")
+
     def test_composer_reports_gap_when_existing_skill_needs_filter_extension(self) -> None:
         base_registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         warehouse_skill = base_registry.get("get_warehouses")
