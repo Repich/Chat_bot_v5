@@ -1541,6 +1541,141 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertFalse(learned_dir_exists)
 
+    def test_learned_store_persists_parameterized_lookup_candidate(self) -> None:
+        query = price_lookup_query()
+        registry = SkillRegistry([])
+        with TemporaryDirectory() as temp_dir:
+            store = LearnedSkillStore(skills_dir=Path(temp_dir), registry=registry)
+
+            result = store.learn_from_synthesis(
+                intent=IntentResult(
+                    intent_type=IntentType.DATA_QUESTION,
+                    business_goal="Показать цены с типом себестоимость по курткам",
+                    requires_1c_data=True,
+                    expected_output="table",
+                    domain_terms=["цены", "себестоимость", "куртки"],
+                    relevant=True,
+                ),
+                goal=price_lookup_goal("Показать цены с типом себестоимость по курткам", product="куртка", price_type="себестоимость"),
+                synthesis_result=QuerySynthesisResult(
+                    ok=True,
+                    trace={
+                        "final_query": {
+                            "query": query,
+                            "params": {"ТоварПоиск": "%куртк%", "ВидЦеныПоиск": "%себестоимость%"},
+                            "limit": 100,
+                        },
+                        "row_count": 3,
+                        "metadata_objects": [
+                            {"full_name": "РегистрСведений.ЦеныНоменклатуры"},
+                            {"full_name": "Справочник.Номенклатура"},
+                            {"full_name": "Справочник.ВидыЦен"},
+                        ],
+                    },
+                ),
+                created_from_trace="/runs/agent_1",
+                config_fingerprint="cfg",
+            )
+
+            skill_payload = json.loads((Path(temp_dir) / "learned" / "candidates" / "learned_product_price_lookup.json").read_text(encoding="utf-8"))
+
+        self.assertIsNotNone(result)
+        self.assertEqual(skill_payload["implementation"]["kind"], "parameterized_lookup_query")
+        self.assertEqual(skill_payload["outputs"][0]["type"], "PriceTable")
+        self.assertEqual(set(skill_payload["supported_filter_roles"]), {"product", "price_type"})
+        self.assertEqual(
+            skill_payload["implementation"]["metadata_dependencies"],
+            ["РегистрСведений.ЦеныНоменклатуры", "Справочник.Номенклатура", "Справочник.ВидыЦен"],
+        )
+        self.assertEqual(skill_payload["implementation"]["config_fingerprint"], "cfg")
+        self.assertIsNotNone(registry.get("learned_product_price_lookup"))
+
+    def test_parameterized_lookup_builder_reuses_query_with_new_filter_values(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_product_price_lookup",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Lookup prices by product and price type.",
+                "capabilities": ["parameterized_lookup_query"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList"}],
+                "outputs": [{"name": "table", "type": "PriceTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "kind": "parameterized_lookup_query",
+                    "query": price_lookup_query(),
+                    "params": {"ТоварПоиск": "%куртк%", "ВидЦеныПоиск": "%себестоимость%"},
+                    "limit": 100,
+                    "parameter_bindings": [
+                        {
+                            "semantic_field": "product",
+                            "parameter": "ТоварПоиск",
+                            "transform": "contains_like",
+                            "required": True,
+                        },
+                        {
+                            "semantic_field": "price_type",
+                            "parameter": "ВидЦеныПоиск",
+                            "transform": "contains_like",
+                            "required": True,
+                        },
+                    ],
+                    "metadata_dependencies": ["РегистрСведений.ЦеныНоменклатуры"],
+                },
+            }
+        )
+
+        draft = LearnedQueryBuilder().build(
+            skill,
+            inputs={
+                "filters": [
+                    {"semantic_field": "product", "operator": "contains", "value": "пальто"},
+                    {"semantic_field": "price_type", "operator": "contains", "value": "розничная"},
+                ],
+                "limit": 25,
+            },
+            context=ConversationContext(session_id="s1"),
+        )
+
+        self.assertEqual(draft.query, price_lookup_query())
+        self.assertEqual(draft.params["ТоварПоиск"], "%пальто%")
+        self.assertEqual(draft.params["ВидЦеныПоиск"], "%розничная%")
+        self.assertEqual(draft.limit, 25)
+
+    def test_parameterized_lookup_builder_requires_bound_filter_roles(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_product_price_lookup",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Lookup prices by product and price type.",
+                "capabilities": ["parameterized_lookup_query"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList"}],
+                "outputs": [{"name": "table", "type": "PriceTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "kind": "parameterized_lookup_query",
+                    "query": price_lookup_query(),
+                    "params": {"ТоварПоиск": "%куртк%", "ВидЦеныПоиск": "%себестоимость%"},
+                    "parameter_bindings": [
+                        {"semantic_field": "product", "parameter": "ТоварПоиск", "transform": "contains_like", "required": True},
+                        {"semantic_field": "price_type", "parameter": "ВидЦеныПоиск", "transform": "contains_like", "required": True},
+                    ],
+                },
+            }
+        )
+
+        with self.assertRaises(QueryBuildError) as exc:
+            LearnedQueryBuilder().build(
+                skill,
+                inputs={"filters": [{"semantic_field": "product", "operator": "contains", "value": "пальто"}]},
+                context=ConversationContext(session_id="s1"),
+            )
+
+        self.assertIn("price_type", str(exc.exception))
+
     def test_learned_query_rejects_different_config_fingerprint(self) -> None:
         skill = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills").get("learned_financial_metrics")
         assert skill is not None
@@ -2278,6 +2413,55 @@ def data_intent(goal: str) -> IntentResult:
         expected_output="table",
         domain_terms=["остаток", "денежные средства"],
         relevant=True,
+    )
+
+
+def price_lookup_query() -> str:
+    return (
+        "ВЫБРАТЬ\n"
+        "    Ном.Наименование КАК Номенклатура,\n"
+        "    ВЦ.Наименование КАК ВидЦены,\n"
+        "    РЦ.Цена КАК Цена\n"
+        "ИЗ\n"
+        "    РегистрСведений.ЦеныНоменклатуры КАК РЦ\n"
+        "        ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК Ном\n"
+        "        ПО РЦ.Номенклатура = Ном.Ссылка\n"
+        "        ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.ВидыЦен КАК ВЦ\n"
+        "        ПО РЦ.ВидЦены = ВЦ.Ссылка\n"
+        "ГДЕ\n"
+        "    Ном.Наименование ПОДОБНО &ТоварПоиск\n"
+        "    И ВЦ.Наименование ПОДОБНО &ВидЦеныПоиск\n"
+        "УПОРЯДОЧИТЬ ПО\n"
+        "    Ном.Наименование,\n"
+        "    ВЦ.Наименование"
+    )
+
+
+def price_lookup_goal(question: str, *, product: str, price_type: str) -> GoalDecomposition:
+    return GoalDecomposition(
+        business_goal=question,
+        final_artifact_type="UserAnswer",
+        expected_answer_type="table",
+        required_artifacts=[
+            ArtifactRequirement(
+                name="prices",
+                type="PriceTable",
+                constraints=[
+                    SemanticFilter(
+                        semantic_field="product",
+                        operator="contains",
+                        value=product,
+                        raw_user_text=product,
+                    ),
+                    SemanticFilter(
+                        semantic_field="price_type",
+                        operator="equals",
+                        value=price_type,
+                        raw_user_text=price_type,
+                    ),
+                ],
+            )
+        ],
     )
 
 

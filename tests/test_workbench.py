@@ -17,6 +17,7 @@ from wiicon5.workbench import (
     MeasureRecipe,
     MetadataExplorerService,
     McpSmokeTestService,
+    QueryPreviewResult,
     QueryPreviewService,
     SkillCatalogService,
     SkillLifecycleService,
@@ -28,6 +29,7 @@ from wiicon5.mcp.client import DictMcpClient
 from wiicon5.models import Port, SkillContract, SkillKind, SkillStatus
 from wiicon5.regression.replay import RegressionCaseReplayResult, RegressionReplayResult, save_replay_result
 from wiicon5.workbench.audit import utc_now
+from wiicon5.workbench.publish import skill_from_draft
 from wiicon5.workbench.trace import WorkbenchTraceWriter
 
 
@@ -528,6 +530,81 @@ class CandidatePublisherTests(unittest.TestCase):
         self.assertTrue(skill_path_exists)
         self.assertTrue(evidence_path_exists)
 
+    def test_query_synthesis_draft_publishes_as_parameterized_lookup_when_params_match_constraints(self) -> None:
+        draft = HumanSkillDraft.from_dict(
+            {
+                "draft_id": "draft_price",
+                "title": "Получить цены с типом себестоимость по курткам",
+                "description": "Получить цены по номенклатуре и виду цены.",
+                "example_questions": ["Покажи цены с типом себестоимость по курткам"],
+                "calculation": {
+                    "kind": "trace_query",
+                    "raw": {
+                        "query": price_lookup_query(),
+                        "params": {"ТоварПоиск": "%куртк%", "ВидЦеныПоиск": "%себестоимость%"},
+                        "limit": 100,
+                    },
+                },
+                "presentation": {"columns": ["Номенклатура", "ВидЦены", "Цена"]},
+                "source_kind": "query_synthesis_candidate",
+                "source_trace": "/runs/agent_1",
+                "synthesis_candidate": {
+                    "candidate_id": "syn_price",
+                    "payload": {
+                        "goal": {
+                            "business_goal": "Показать цены с типом себестоимость по курткам",
+                            "final_artifact_type": "UserAnswer",
+                            "required_artifacts": [
+                                {
+                                    "name": "prices",
+                                    "type": "PriceTable",
+                                    "constraints": [
+                                        {
+                                            "semantic_field": "product",
+                                            "operator": "contains",
+                                            "value": "куртка",
+                                            "raw_user_text": "курткам",
+                                        },
+                                        {
+                                            "semantic_field": "price_type",
+                                            "operator": "equals",
+                                            "value": "себестоимость",
+                                            "raw_user_text": "себестоимость",
+                                        },
+                                    ],
+                                }
+                            ],
+                        }
+                    },
+                },
+            }
+        )
+        preview = QueryPreviewResult(
+            ok=True,
+            query=price_lookup_query(),
+            params={"ТоварПоиск": "%куртк%", "ВидЦеныПоиск": "%себестоимость%"},
+            limit=100,
+            review={
+                "sources": [
+                    {"object_full_name": "РегистрСведений.ЦеныНоменклатуры"},
+                    {"object_full_name": "Справочник.Номенклатура"},
+                    {"object_full_name": "Справочник.ВидыЦен"},
+                ]
+            },
+        )
+
+        skill = skill_from_draft(draft, preview)
+
+        self.assertEqual(skill.implementation_strategy, "learned_query")
+        self.assertEqual(skill.implementation["kind"], "parameterized_lookup_query")
+        self.assertEqual(skill.outputs[0].type, "PriceTable")
+        self.assertEqual(set(skill.supported_filter_roles), {"product", "price_type"})
+        self.assertEqual(skill.inputs[0].type, "SemanticFilterList")
+        self.assertEqual(
+            {item["semantic_field"]: item["parameter"] for item in skill.implementation["parameter_bindings"]},
+            {"product": "ТоварПоиск", "price_type": "ВидЦеныПоиск"},
+        )
+
     def test_publish_rejects_latest_rejected_approval(self) -> None:
         with TemporaryDirectory() as temp_dir:
             bot = Path(temp_dir) / "bot"
@@ -923,6 +1000,27 @@ def write_trace(trace: Path, *, question: str, query: str) -> None:
     (trace / "result" / "result.json").write_text(
         json.dumps({"source": "query_synthesis_ok", "message": "Найден результат."}, ensure_ascii=False),
         encoding="utf-8",
+    )
+
+
+def price_lookup_query() -> str:
+    return (
+        "ВЫБРАТЬ\n"
+        "    Ном.Наименование КАК Номенклатура,\n"
+        "    ВЦ.Наименование КАК ВидЦены,\n"
+        "    РЦ.Цена КАК Цена\n"
+        "ИЗ\n"
+        "    РегистрСведений.ЦеныНоменклатуры КАК РЦ\n"
+        "        ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК Ном\n"
+        "        ПО РЦ.Номенклатура = Ном.Ссылка\n"
+        "        ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.ВидыЦен КАК ВЦ\n"
+        "        ПО РЦ.ВидЦены = ВЦ.Ссылка\n"
+        "ГДЕ\n"
+        "    Ном.Наименование ПОДОБНО &ТоварПоиск\n"
+        "    И ВЦ.Наименование ПОДОБНО &ВидЦеныПоиск\n"
+        "УПОРЯДОЧИТЬ ПО\n"
+        "    Ном.Наименование,\n"
+        "    ВЦ.Наименование"
     )
 
 

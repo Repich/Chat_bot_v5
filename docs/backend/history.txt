@@ -1,3 +1,10 @@
+5.0.0-alpha.72
+- learned_query получил новый вид parameterized_lookup_query: успешный query synthesis с параметрами, которые можно связать с семантическими фильтрами вопроса, сохраняется как переиспользуемый lookup-кандидат, а не как частный fixed query.
+- Runtime learned_query builder теперь подставляет значения параметров из SemanticFilterList и блокирует выполнение, если обязательная роль фильтра не передана.
+- Публикация черновика из query_synthesis_candidate через Workbench теперь обобщает trace_query в parameterized lookup, когда параметры запроса подтверждены constraints исходной цели.
+- В type system добавлены PriceTable, LearnedLookupTable и WorkbenchLookupTable как табличные типы.
+- Добавлены регрессионные тесты на автообучение lookup-кандидата, публикацию Workbench и переиспользование запроса с другими значениями фильтров.
+
 5.0.0-alpha.71
 - API кандидатов агента теперь обогащает карточки компактной сводкой из query_synthesis trace: попытки синтеза, итоговый запрос, параметры, использованные источники, строки MCP, sufficiency и reasoning форматирования.
 - Большой trace не встраивается целиком в список кандидатов; в UI передается только decision-oriented summary с ограниченным sample результата.

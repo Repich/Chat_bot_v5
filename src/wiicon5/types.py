@@ -19,6 +19,9 @@ DEFAULT_TYPE_PARENTS: Dict[str, List[str]] = {
     "DocumentLineTable": ["TypedTable"],
     "DocumentListTable": ["TypedTable"],
     "TopNMetricTable": ["AggregateTable"],
+    "PriceTable": ["TypedTable"],
+    "LearnedLookupTable": ["TypedTable"],
+    "WorkbenchLookupTable": ["TypedTable"],
     "WorkbenchQueryResultTable": ["TypedTable"],
     "UserAnswer": ["Answer"],
 }

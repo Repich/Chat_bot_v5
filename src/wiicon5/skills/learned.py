@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from wiicon5.intent.models import IntentResult
 from wiicon5.models import SkillContract, SkillKind, SkillStatus
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.query.parameterized_lookup import constraints_from_goal_payload, parameterized_lookup_spec_from_query
 from wiicon5.query_synthesis import QuerySynthesisResult
 from wiicon5.skills.registry import SkillRegistry
 
@@ -56,6 +57,13 @@ class LearnedSkillStore:
             return None
         query = str(final_query.get("query") or "")
         spec = learned_period_metric_spec(query=query, intent=intent, trace=synthesis_result.trace)
+        if spec is None:
+            spec = learned_parameterized_lookup_spec(
+                query=query,
+                final_query=dict(final_query),
+                goal=goal,
+                trace=synthesis_result.trace,
+            )
         if spec is None:
             return None
         spec = enrich_spec_with_lifecycle(
@@ -129,6 +137,27 @@ def learned_period_metric_spec(*, query: str, intent: IntentResult, trace: Dict[
     if is_raw_accumulation_register_source(source) and re.search(rf"\b{re.escape(alias)}\.Активность\b", query):
         spec["activity_filter"] = True
         spec["activity_field"] = "Активность"
+    return spec
+
+
+def learned_parameterized_lookup_spec(
+    *,
+    query: str,
+    final_query: Dict[str, Any],
+    goal: Optional[GoalDecomposition],
+    trace: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    params = dict(final_query.get("params") or {}) if isinstance(final_query.get("params"), dict) else {}
+    spec = parameterized_lookup_spec_from_query(
+        query=query,
+        params=params,
+        constraints=constraints_from_goal_payload(goal),
+        limit=int(final_query.get("limit") or 100),
+        metadata_dependencies=query_sources_from_query(query) or metadata_dependencies_from_trace(trace),
+    )
+    if spec is None:
+        return None
+    spec["output_columns"] = output_columns_from_trace(trace) or output_columns_from_query(query)
     return spec
 
 
@@ -233,12 +262,70 @@ def fixed_query_spec(*, final_query: Dict[str, Any], trace: Dict[str, Any]) -> D
     }
 
 
+def metadata_dependencies_from_trace(trace: Dict[str, Any]) -> List[str]:
+    result: List[str] = []
+    for item in trace.get("metadata_objects", []) or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("full_name") or item.get("ПолноеИмя") or "").strip()
+        if name and name not in result:
+            result.append(name)
+    return result[:10]
+
+
+def output_columns_from_trace(trace: Dict[str, Any]) -> List[str]:
+    final_artifact = trace.get("final_artifact") if isinstance(trace.get("final_artifact"), dict) else {}
+    value = final_artifact.get("value") if isinstance(final_artifact, dict) and isinstance(final_artifact.get("value"), dict) else {}
+    columns = value.get("columns") if isinstance(value.get("columns"), list) else []
+    result = [str(item) for item in columns if str(item or "").strip()]
+    if result:
+        return result
+    attempts = trace.get("successful_steps")
+    if isinstance(attempts, list):
+        for item in reversed(attempts):
+            if not isinstance(item, dict):
+                continue
+            rows = item.get("rows")
+            if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                return [str(key) for key in rows[0].keys()]
+    return []
+
+
+def output_columns_from_query(query: str) -> List[str]:
+    match = re.search(r"\bВЫБРАТЬ\s+(?P<select>.*?)\s+\bИЗ\b", query, flags=re.IGNORECASE | re.DOTALL)
+    if match is None:
+        return []
+    result: List[str] = []
+    for expression in split_select_expressions(match.group("select")):
+        alias_match = re.search(r"\s+КАК\s+(?P<label>[A-Za-zА-Яа-яЁё0-9_]+)\s*$", expression, flags=re.IGNORECASE)
+        if alias_match:
+            label = alias_match.group("label")
+            if label not in result:
+                result.append(label)
+    return result
+
+
+def query_sources_from_query(query: str) -> List[str]:
+    result: List[str] = []
+    for match in re.finditer(
+        r"\b(?:ИЗ|СОЕДИНЕНИЕ)\s+(?P<source>[A-Za-zА-Яа-яЁё0-9_.]+(?:\([^)]*\))?)",
+        query,
+        flags=re.IGNORECASE,
+    ):
+        source = match.group("source").strip()
+        if source and source not in result:
+            result.append(source)
+    return result
+
+
 def skill_from_spec(
     spec: Dict[str, Any],
     *,
     intent: IntentResult,
     goal: Optional[GoalDecomposition],
 ) -> SkillContract:
+    if spec.get("kind") == "parameterized_lookup_query":
+        return lookup_skill_from_spec(spec, intent=intent)
     output_type = output_type_for_intent(intent, spec)
     skill_id = skill_id_for_spec(output_type, spec)
     domain_terms = metric_terms(intent)
@@ -288,14 +375,76 @@ def skill_from_spec(
     )
 
 
+def lookup_skill_from_spec(spec: Dict[str, Any], *, intent: IntentResult) -> SkillContract:
+    output_type = output_type_for_intent(intent, spec)
+    skill_id = skill_id_for_spec(output_type, spec)
+    roles = [str(item) for item in spec.get("supported_filter_roles", []) or []]
+    domain_terms = metric_terms(intent)
+    description_terms = ", ".join(domain_terms[:6]) or intent.business_goal
+    return SkillContract.from_dict(
+        {
+            "skill_id": skill_id,
+            "version": "0.1.0",
+            "kind": SkillKind.DATA.value,
+            "status": SkillStatus.CANDIDATE.value,
+            "description": f"Learned parameterized lookup query for {description_terms}.",
+            "capabilities": [
+                "learned_query",
+                "parameterized_lookup_query",
+                *roles,
+                *domain_terms,
+                f"produce:{output_type}",
+            ],
+            "inputs": [
+                {
+                    "name": "filters",
+                    "type": "SemanticFilterList",
+                    "required": True,
+                    "description": "Semantic filters used to fill learned query parameters.",
+                },
+                {
+                    "name": "limit",
+                    "type": "Integer",
+                    "required": False,
+                    "description": "Maximum rows to return",
+                    "default": 100,
+                },
+            ],
+            "outputs": [
+                {
+                    "name": "table",
+                    "type": output_type,
+                    "required": True,
+                    "description": "Learned lookup table",
+                }
+            ],
+            "tags": ["learned", "lookup", *roles, *domain_terms],
+            "semantic_role": semantic_role_for_output(output_type),
+            "supported_filter_roles": roles,
+            "implementation_strategy": "learned_query",
+            "implementation": spec,
+        }
+    )
+
+
 def output_type_for_intent(intent: IntentResult, spec: Dict[str, Any]) -> str:
     words = " ".join([intent.business_goal, *intent.domain_terms, *spec.get("metric_terms", [])]).lower()
+    if spec.get("kind") == "parameterized_lookup_query":
+        roles = set(spec.get("supported_filter_roles", []) or [])
+        columns = [str(item).lower() for item in spec.get("output_columns", []) or []]
+        if {"product", "price_type"}.issubset(roles) and any("цена" in item or "price" in item for item in columns + [words]):
+            return "PriceTable"
+        return "LearnedLookupTable"
     if any(marker in words for marker in ["выруч", "приб", "profit", "revenue"]):
         return "FinancialMetricsTable"
     return "LearnedMetricsTable"
 
 
 def semantic_role_for_output(output_type: str) -> str:
+    if output_type == "PriceTable":
+        return "product_price_lookup"
+    if output_type == "LearnedLookupTable":
+        return "learned_lookup"
     if output_type == "FinancialMetricsTable":
         return "financial_metrics"
     return "learned_metrics"
@@ -304,6 +453,27 @@ def semantic_role_for_output(output_type: str) -> str:
 def skill_id_for_spec(output_type: str, spec: Dict[str, Any]) -> str:
     if output_type == "FinancialMetricsTable":
         return "learned_financial_metrics"
+    if spec.get("kind") == "parameterized_lookup_query":
+        roles_list = [str(item) for item in spec.get("supported_filter_roles", []) or []]
+        roles = "_".join(roles_list)
+        stable_payload = {
+            "kind": spec.get("kind"),
+            "query": spec.get("query"),
+            "roles": roles,
+            "bindings": [
+                {
+                    "semantic_field": item.get("semantic_field"),
+                    "parameter": item.get("parameter"),
+                    "transform": item.get("transform"),
+                }
+                for item in spec.get("parameter_bindings", [])
+                if isinstance(item, dict)
+            ],
+        }
+        if output_type == "PriceTable" and {"product", "price_type"}.issubset(set(roles_list)):
+            return "learned_product_price_lookup"
+        digest = hashlib.sha1(json.dumps(stable_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:10]
+        return f"learned_lookup_{digest}"
     digest = hashlib.sha1(json.dumps(spec, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:10]
     return f"learned_query_{digest}"
 

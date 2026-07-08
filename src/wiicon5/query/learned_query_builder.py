@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.models import SemanticFilter, SkillContract
+from wiicon5.query.parameterized_lookup import build_parameterized_lookup_params, missing_required_filter_roles
 from wiicon5.query.query_builder import QueryBuildError, QueryBuilder
 from wiicon5.query.query_draft import QueryDraft
 
@@ -21,6 +22,8 @@ class LearnedQueryBuilder(QueryBuilder):
         kind = str(spec.get("kind") or "")
         if kind == "period_metric_aggregate":
             return build_period_metric_aggregate(skill, inputs)
+        if kind == "parameterized_lookup_query":
+            return build_parameterized_lookup_query(skill, inputs)
         if kind == "fixed_query":
             query = str(spec.get("query") or "").strip()
             if not query:
@@ -37,6 +40,26 @@ class LearnedQueryBuilder(QueryBuilder):
                 reasoning=f"Built from learned fixed query skill {skill.skill_id}.",
             )
         raise QueryBuildError(f"Unsupported learned query kind for {skill.skill_id}: {kind}")
+
+
+def build_parameterized_lookup_query(skill: SkillContract, inputs: Dict[str, Any]) -> QueryDraft:
+    spec = skill.implementation
+    query = str(spec.get("query") or "").strip()
+    if not query:
+        raise QueryBuildError(f"Learned skill {skill.skill_id} has no query.")
+    missing_roles = missing_required_filter_roles(spec, inputs)
+    if missing_roles:
+        raise QueryBuildError(
+            f"Learned skill {skill.skill_id} requires semantic filters: {', '.join(missing_roles)}."
+        )
+    params = build_parameterized_lookup_params(spec, inputs)
+    return QueryDraft(
+        query=query,
+        params=params,
+        limit=int(inputs.get("limit") or spec.get("limit") or 100),
+        metadata_dependencies=[str(item) for item in spec.get("metadata_dependencies", []) or []],
+        reasoning=f"Built from learned parameterized lookup query skill {skill.skill_id}.",
+    )
 
 
 def build_period_metric_aggregate(skill: SkillContract, inputs: Dict[str, Any]) -> QueryDraft:
