@@ -125,14 +125,15 @@ class CodexCliFailureSolver(FailureSolver):
         stdin_payload = json.dumps(
             {
                 "system_prompt": FAILURE_SOLVER_PROMPT,
-                "diagnostic": diagnostic_payload,
+                "diagnostic": compact_diagnostic_payload(diagnostic_payload),
             },
             ensure_ascii=False,
             indent=2,
         )
+        command = shlex.split(self.command)
         try:
             completed = subprocess.run(
-                shlex.split(self.command),
+                command,
                 input=stdin_payload,
                 text=True,
                 capture_output=True,
@@ -147,6 +148,13 @@ class CodexCliFailureSolver(FailureSolver):
             return FailureSolverDecision(
                 action="unavailable",
                 developer_note=f"Codex CLI failure solver exited with {completed.returncode}: {stderr[:1000]}",
+                raw={
+                    "command": command,
+                    "returncode": completed.returncode,
+                    "stdout_preview": stdout[:4000],
+                    "stderr_preview": stderr[:4000],
+                    "timeout_seconds": self.timeout_seconds,
+                },
             )
         try:
             parsed = json.loads(stdout)
@@ -157,7 +165,13 @@ class CodexCliFailureSolver(FailureSolver):
                 return FailureSolverDecision(
                     action="unavailable",
                     developer_note=f"Codex CLI failure solver returned non-JSON output: {exc}",
-                    raw={"stdout_preview": stdout[:2000], "stderr_preview": stderr[:1000]},
+                    raw={
+                        "command": command,
+                        "returncode": completed.returncode,
+                        "stdout_preview": stdout[:4000],
+                        "stderr_preview": stderr[:4000],
+                        "timeout_seconds": self.timeout_seconds,
+                    },
                 )
         if not isinstance(parsed, dict):
             return FailureSolverDecision(action="unavailable", developer_note="Codex CLI response JSON root is not an object.")
@@ -191,6 +205,219 @@ def failure_diagnostic_payload(
         "failure_error": failure_error,
         "synthesis_trace": synthesis_trace,
     }
+
+
+def compact_diagnostic_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    trace = payload.get("synthesis_trace") if isinstance(payload.get("synthesis_trace"), dict) else {}
+    return {
+        "message": payload.get("message"),
+        "intent": payload.get("intent"),
+        "goal": payload.get("goal"),
+        "conversation_context": compact_conversation_context(payload.get("conversation_context")),
+        "gaps": payload.get("gaps"),
+        "failure_error": payload.get("failure_error"),
+        "synthesis_trace": {
+            "final_error": trace.get("final_error"),
+            "discovery_response": trace.get("discovery_response"),
+            "metadata_search_terms": list(trace.get("metadata_search_terms") or [])[:40],
+            "metadata_requests": compact_metadata_requests(trace.get("metadata_requests")),
+            "metadata_objects": compact_metadata_objects(trace.get("metadata_objects")),
+            "successful_steps": compact_successful_steps(trace.get("successful_steps")),
+            "attempts": compact_attempts(trace.get("attempts")),
+            "query_review_guidance": trace.get("query_review_guidance"),
+            "onboarding_evidence": compact_onboarding_evidence(trace.get("onboarding_evidence")),
+        },
+    }
+
+
+def compact_conversation_context(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    messages = value.get("messages") if isinstance(value.get("messages"), list) else []
+    artifacts = value.get("artifacts") if isinstance(value.get("artifacts"), list) else []
+    return {
+        "session_id": value.get("session_id"),
+        "config_fingerprint": value.get("config_fingerprint"),
+        "messages": messages[-8:],
+        "artifacts": [compact_artifact(item) for item in artifacts[-10:] if isinstance(item, dict)],
+        "resolved_entities": value.get("resolved_entities") if isinstance(value.get("resolved_entities"), list) else [],
+    }
+
+
+def compact_artifact(value: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "name": value.get("name"),
+        "type": value.get("type"),
+        "value_preview": preview_value(value.get("value"), max_items=5),
+        "provenance": value.get("provenance"),
+    }
+
+
+def compact_metadata_requests(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        if item.get("returned") or item.get("error"):
+            result.append(
+                {
+                    "operation": item.get("operation"),
+                    "term": item.get("term"),
+                    "full_name": item.get("full_name"),
+                    "source": item.get("source"),
+                    "success": item.get("success"),
+                    "returned": item.get("returned"),
+                    "error": item.get("error"),
+                }
+            )
+    return result[-80:]
+
+
+def compact_metadata_objects(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value[:20]:
+        if not isinstance(item, dict):
+            continue
+        field_details = item.get("field_details") if isinstance(item.get("field_details"), dict) else {}
+        result.append(
+            {
+                "full_name": item.get("full_name"),
+                "synonym": item.get("synonym"),
+                "source": item.get("source"),
+                "trust": item.get("trust"),
+                "fields": list(item.get("fields") or [])[:120],
+                "table_parts": item.get("table_parts") if isinstance(item.get("table_parts"), dict) else {},
+                "field_details": compact_field_details(field_details),
+            }
+        )
+    return result
+
+
+def compact_field_details(value: Dict[str, Any]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    for name, details in list(value.items())[:140]:
+        if not isinstance(details, dict):
+            continue
+        result[name] = {
+            "synonym": details.get("Синоним") or details.get("synonym"),
+            "type": details.get("Тип") or details.get("type"),
+            "category": details.get("_category"),
+            "source": details.get("_source"),
+            "trust": details.get("_trust"),
+        }
+    return result
+
+
+def compact_successful_steps(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for step in value[-5:]:
+        if not isinstance(step, dict):
+            continue
+        result.append(
+            {
+                "step": step.get("step"),
+                "query": step.get("query"),
+                "params": step.get("params"),
+                "columns": step.get("columns"),
+                "rows": preview_value(step.get("rows"), max_items=10),
+                "sufficiency": step.get("sufficiency"),
+            }
+        )
+    return result
+
+
+def compact_attempts(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for attempt in value[-10:]:
+        if not isinstance(attempt, dict):
+            continue
+        result.append(
+            {
+                "attempt": attempt.get("attempt"),
+                "query_response": compact_query_response(attempt.get("query_response")),
+                "query": attempt.get("query"),
+                "params": attempt.get("params"),
+                "limit": attempt.get("limit"),
+                "validation": attempt.get("validation"),
+                "validation_after_reference_resolution": attempt.get("validation_after_reference_resolution"),
+                "validation_after_list_param_expansion": attempt.get("validation_after_list_param_expansion"),
+                "reference_value_resolution": attempt.get("reference_value_resolution"),
+                "list_param_expansion": attempt.get("list_param_expansion"),
+                "query_review": compact_review(attempt.get("query_review")),
+                "goal_semantic_review": attempt.get("goal_semantic_review"),
+                "mcp_response": compact_mcp_response(attempt.get("mcp_response")),
+                "row_count": attempt.get("row_count"),
+                "result_sufficiency": attempt.get("result_sufficiency"),
+                "error": attempt.get("error"),
+                "repeated_partial_query": attempt.get("repeated_partial_query"),
+                "empty_list_params": attempt.get("empty_list_params"),
+                "metadata_repair_terms": attempt.get("metadata_repair_terms"),
+            }
+        )
+    return result
+
+
+def compact_query_response(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "query": value.get("query"),
+        "params": value.get("params"),
+        "limit": value.get("limit"),
+        "reasoning": value.get("reasoning"),
+    }
+
+
+def compact_review(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "ok": value.get("ok"),
+        "issues": value.get("issues"),
+        "warnings": value.get("warnings"),
+        "sources": value.get("sources"),
+    }
+
+
+def compact_mcp_response(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "success": value.get("success"),
+        "error": value.get("error"),
+        "status_code": value.get("status_code"),
+        "data_preview": preview_value(value.get("data"), max_items=10),
+        "schema": value.get("schema") if isinstance(value.get("schema"), dict) else {},
+    }
+
+
+def compact_onboarding_evidence(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "available": value.get("available"),
+        "terms": list(value.get("terms") or [])[:20],
+        "query_patterns": preview_value(value.get("query_patterns"), max_items=5),
+        "register_usage": preview_value(value.get("register_usage"), max_items=10),
+    }
+
+
+def preview_value(value: Any, *, max_items: int) -> Any:
+    if isinstance(value, list):
+        return [preview_value(item, max_items=max_items) for item in value[:max_items]]
+    if isinstance(value, dict):
+        return {key: preview_value(item, max_items=max_items) for key, item in list(value.items())[:40]}
+    if isinstance(value, str) and len(value) > 2000:
+        return value[:2000] + "...[truncated]"
+    return value
 
 
 def limit_from_value(value: Any) -> int:

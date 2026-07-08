@@ -1488,6 +1488,21 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertNotIn("ЛЕВОЕ СОЕДИНЕНИЕ", result)
         self.assertNotIn("Касса.Ссылка", result)
 
+    def test_postprocess_keeps_reference_join_when_alias_is_used_in_where(self) -> None:
+        query = (
+            "ВЫБРАТЬ Цены.Номенклатура КАК Номенклатура, Цены.Цена КАК Цена "
+            "ИЗ РегистрСведений.ЦеныНоменклатурыПоставщиков.СрезПоследних(&Дата) КАК Цены "
+            "ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК Номенклатура "
+            "ПО Цены.Номенклатура = Номенклатура.Ссылка "
+            "ГДЕ Номенклатура.Наименование ПОДОБНО &Шаблон"
+        )
+
+        result = postprocess_1c_query(query)
+
+        self.assertIn("ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК Номенклатура", result)
+        self.assertIn("Номенклатура.Наименование ПОДОБНО &Шаблон", result)
+        self.assertNotIn("Цены.Номенклатура ПОДОБНО &Шаблон", result)
+
     def test_postprocess_adds_empty_parentheses_to_accumulation_virtual_table(self) -> None:
         query = (
             "ВЫБРАТЬ Продажи.Номенклатура КАК Номенклатура "

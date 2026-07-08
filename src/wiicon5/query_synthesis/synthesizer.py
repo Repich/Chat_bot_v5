@@ -1907,6 +1907,8 @@ def remove_redundant_reference_joins(query: str) -> str:
     def replace_join(match: re.Match[str]) -> str:
         alias = match.group("alias")
         left = match.group("left")
+        if not reference_join_can_be_removed(query, match, alias):
+            return match.group(0)
         replacements.append((alias, left))
         return ""
 
@@ -1916,3 +1918,17 @@ def remove_redundant_reference_joins(query: str) -> str:
         result = re.sub(rf"\b{re.escape(alias)}\.Наименование\b", left, result)
         result = re.sub(rf"\b{re.escape(alias)}\.Представление\b", left, result)
     return result
+
+
+def reference_join_can_be_removed(query: str, match: re.Match[str], alias: str) -> bool:
+    query_without_join = query[: match.start()] + query[match.end() :]
+    from_match = re.search(r"\bИЗ\b", query_without_join, flags=re.IGNORECASE)
+    from_position = from_match.start() if from_match is not None else 0
+    alias_pattern = re.compile(rf"\b{re.escape(alias)}\.(?P<field>[A-Za-zА-Яа-яЁё0-9_]+)\b", flags=re.IGNORECASE)
+    for alias_match in alias_pattern.finditer(query_without_join):
+        field = alias_match.group("field")
+        if alias_match.start() > from_position:
+            return False
+        if field.lower() not in {"наименование", "представление"}:
+            return False
+    return True

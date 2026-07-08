@@ -39,6 +39,32 @@ class DeterministicPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("undeclared_parameter", [issue.code for issue in result.issues])
 
+    def test_read_only_query_validator_rejects_date_parameter_outside_1c_range(self) -> None:
+        result = validate_read_only_query(
+            "ВЫБРАТЬ Ссылка ИЗ Справочник.Номенклатура ГДЕ ДатаИзменения <= &Дата",
+            {"Дата": "9999-12-31T23:59:59"},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("date_year_out_of_range", [issue.code for issue in result.issues])
+
+    def test_read_only_query_validator_rejects_date_literal_outside_1c_range(self) -> None:
+        result = validate_read_only_query(
+            "ВЫБРАТЬ Ссылка ИЗ Справочник.Номенклатура ГДЕ ДатаИзменения <= ДАТАВРЕМЯ(9999, 12, 31)"
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("date_year_out_of_range", [issue.code for issue in result.issues])
+
+    def test_read_only_query_validator_rejects_empty_guid_reference_parameter(self) -> None:
+        result = validate_read_only_query(
+            "ВЫБРАТЬ Ссылка ИЗ Справочник.Номенклатура ГДЕ ВидЦены = &ВидЦены",
+            {"ВидЦены": "00000000-0000-0000-0000-000000000000"},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("empty_reference_parameter", [issue.code for issue in result.issues])
+
     def test_trace_writer_records_structured_json(self) -> None:
         from tempfile import TemporaryDirectory
         from pathlib import Path
