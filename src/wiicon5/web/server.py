@@ -185,12 +185,21 @@ def make_handler(
                     status=status,
                     term=term,
                 )
+                response_candidates = [synthesis_candidate_to_response(item) for item in candidates]
+                response_candidates.extend(
+                    learned_agent_candidates_from_catalog(
+                        effective_skill_catalog.snapshot(),
+                        status=status,
+                        term=term,
+                        limit=max(0, limit - len(response_candidates)),
+                    )
+                )
                 self._send_json(
                     200,
                     {
                         "ok": True,
-                        "candidates": [synthesis_candidate_to_response(item) for item in candidates],
-                        "summary": synthesis_candidate_summary(candidates),
+                        "candidates": response_candidates,
+                        "summary": candidate_response_summary(response_candidates),
                     },
                 )
                 return
@@ -1189,6 +1198,17 @@ def synthesis_candidate_summary(candidates) -> Dict[str, Any]:
     return {"total": len(candidates), "by_status": by_status}
 
 
+def candidate_response_summary(candidates: List[Mapping[str, Any]]) -> Dict[str, Any]:
+    by_status: Dict[str, int] = {}
+    by_kind: Dict[str, int] = {}
+    for candidate in candidates:
+        status = str(candidate.get("status") or "candidate")
+        kind = str(candidate.get("candidate_kind") or "synthesis")
+        by_status[status] = by_status.get(status, 0) + 1
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    return {"total": len(candidates), "by_status": by_status, "by_kind": by_kind}
+
+
 def synthesis_candidate_to_response(candidate) -> Dict[str, Any]:
     payload = candidate.to_dict()
     trace_summary = synthesis_candidate_trace_summary(candidate.trace_path)
@@ -1197,6 +1217,85 @@ def synthesis_candidate_to_response(candidate) -> Dict[str, Any]:
         candidate_payload["trace_summary"] = trace_summary
         payload["payload"] = candidate_payload
     return payload
+
+
+def learned_agent_candidates_from_catalog(snapshot, *, status: str, term: str, limit: int) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+    result: List[Dict[str, Any]] = []
+    seen_skill_ids: set[str] = set()
+    catalog_items = sorted(snapshot.items, key=lambda item: (0 if item.bot_specific else 1, str(item.source_path)))
+    for item in catalog_items:
+        skill = item.skill
+        if skill.skill_id in seen_skill_ids:
+            continue
+        if skill.implementation_strategy != "learned_query":
+            continue
+        if "learned" not in item.source_path.parts or "candidates" not in item.source_path.parts:
+            continue
+        if status and skill.status.value != status:
+            continue
+        response = learned_skill_candidate_to_response(item)
+        if term and term.lower() not in learned_candidate_search_text(response).lower():
+            continue
+        seen_skill_ids.add(skill.skill_id)
+        result.append(response)
+    return sorted(result, key=lambda item: (str(item.get("updated_at") or ""), str(item.get("candidate_id") or "")), reverse=True)[:limit]
+
+
+def learned_skill_candidate_to_response(item) -> Dict[str, Any]:
+    skill = item.skill
+    implementation = skill.implementation if isinstance(skill.implementation, Mapping) else {}
+    evidence = implementation.get("evidence") if isinstance(implementation.get("evidence"), Mapping) else {}
+    trace_path = str(evidence.get("created_from_trace") or "")
+    trace_summary = synthesis_candidate_trace_summary(trace_path)
+    output_type = skill.outputs[0].type if skill.outputs else ""
+    metadata_dependencies = [
+        {"full_name": str(value)}
+        for value in implementation.get("metadata_dependencies", [])
+        if str(value or "").strip()
+    ]
+    row_count = int(trace_summary.get("row_count") or 0) if trace_summary else 0
+    return {
+        "candidate_id": skill.skill_id,
+        "candidate_kind": "learned_skill",
+        "skill_id": skill.skill_id,
+        "question": str(evidence.get("question") or skill.description or skill.skill_id),
+        "answer": (
+            "Обобщенный кандидат навыка, созданный агентом. "
+            "Откройте навык, проверьте запрос, параметры и переведите его по жизненному циклу."
+        ),
+        "status": skill.status.value,
+        "trace_path": trace_path,
+        "query": str(implementation.get("query") or ""),
+        "params": implementation.get("params") if isinstance(implementation.get("params"), Mapping) else {},
+        "limit": implementation.get("limit"),
+        "row_count": row_count,
+        "final_artifact_type": output_type,
+        "metadata_objects": metadata_dependencies,
+        "source": "learned_query",
+        "updated_at": str(evidence.get("created_from_trace") or item.source_path.stat().st_mtime),
+        "payload": {
+            "goal": {"business_goal": str(evidence.get("question") or skill.description or skill.skill_id)},
+            "learned_skill": item.to_dict(),
+            "trace_summary": trace_summary,
+        },
+    }
+
+
+def learned_candidate_search_text(candidate: Mapping[str, Any]) -> str:
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), Mapping) else {}
+    learned_skill = payload.get("learned_skill") if isinstance(payload.get("learned_skill"), Mapping) else {}
+    return " ".join(
+        [
+            str(candidate.get("candidate_id") or ""),
+            str(candidate.get("question") or ""),
+            str(candidate.get("answer") or ""),
+            str(candidate.get("query") or ""),
+            " ".join(str(item) for item in learned_skill.get("capabilities", []) if item),
+            " ".join(str(item) for item in learned_skill.get("tags", []) if item),
+        ]
+    )
 
 
 def synthesis_candidate_trace_summary(trace_path: str) -> Dict[str, Any]:

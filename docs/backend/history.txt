@@ -1,3 +1,8 @@
+5.0.0-alpha.76
+- Endpoint /api/admin/workbench/synthesis/candidates теперь показывает не только raw query_synthesis candidates syn_*, но и обобщенные learned_query candidates из skills/learned/candidates.
+- Learned skill candidate отдается как candidate_kind=learned_skill с query, params, trace_path, metadata dependencies и ссылкой на исходный skill contract, чтобы консультант видел объект проверки после подавления частного syn_*.
+- Добавлены регрессионные web-server тесты на совместное отображение raw synthesis candidate и learned_product_price_lookup candidate.
+
 5.0.0-alpha.75
 - Успешный query synthesis больше не создает отдельный специфичный Workbench-кандидат syn_*, если тот же результат уже сохранен как переиспользуемый learned_query candidate.
 - Добавлена канонизация semantic roles: product_name, item/nomenclature aliases и русские аналоги считаются ролью product; price aliases считаются price_type.

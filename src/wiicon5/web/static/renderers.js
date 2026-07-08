@@ -752,15 +752,16 @@
   function renderCandidateCard(candidate) {
     const item = candidate || {};
     const id = candidateId(item);
-    const synthesis = isSynthesisCandidate(item);
+    const learnedSkill = item.candidate_kind === "learned_skill";
+    const synthesis = !learnedSkill && isSynthesisCandidate(item);
     const question = item.question || item.source_question || item.business_goal || item.semantic_role || id || "Кандидат";
     const answer = item.answer || item.preview || item.reason || item.description || "";
     const rowCount = item.row_count == null ? "" : item.row_count;
-    const source = synthesis ? (item.source || "query_synthesis") : (item.type || item.source || "onboarding");
-    const createAction = synthesis ? "synthesis-create-draft" : "onboarding-create-draft";
+    const source = learnedSkill ? "learned_query" : synthesis ? (item.source || "query_synthesis") : (item.type || item.source || "onboarding");
+    const createAction = synthesis ? "synthesis-create-draft" : learnedSkill ? "open-skill" : "onboarding-create-draft";
     const rejectAction = synthesis ? "synthesis-reject" : "onboarding-reject";
     const draftId = synthesis ? linkedDraftId(item) : "";
-    const createLabel = draftId ? "Открыть черновик" : "Создать черновик";
+    const createLabel = learnedSkill ? "Открыть навык" : draftId ? "Открыть черновик" : "Создать черновик";
     const trace = synthesisTraceSummary(item);
     const intent = candidateIntent(item);
     const goal = candidateGoal(item);
@@ -774,7 +775,7 @@
     return `<article class="entity-card candidate-card" data-candidate-id="${escapeHtml(id)}">
       <div class="entity-card-header">
         <div>
-          <div class="entity-kind">${synthesis ? "Кандидат от агента" : "Кандидат обучения"}</div>
+          <div class="entity-kind">${learnedSkill ? "Обобщенный кандидат от агента" : synthesis ? "Кандидат от агента" : "Кандидат обучения"}</div>
           <h3>${escapeHtml(question)}</h3>
         </div>
         ${renderStatusPill(item.status || "candidate")}
@@ -802,8 +803,8 @@
       ${renderInfoSection("Что проверить перед решением", renderCandidateDecisionNotes(item))}
       ${renderCandidateTechnicalDetails(item)}
       <div class="entity-actions">
-        ${actionButton(createLabel, createAction, "candidate-id", id, "primary-button")}
-        ${actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}
+        ${actionButton(createLabel, createAction, learnedSkill ? "skill-id" : "candidate-id", learnedSkill ? (item.skill_id || id) : id, "primary-button")}
+        ${learnedSkill ? "" : actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}
         ${item.trace_path ? actionButton("Открыть трассировку", "open-trace", "trace-path", item.trace_path, "secondary-button") : ""}
         ${synthesis ? actionButton("Игнорировать похожие", "synthesis-ignore-similar", "candidate-id", id, "ghost-button") : ""}
       </div>
@@ -838,7 +839,7 @@
     }
     return `<div class="summary-kpi">Кандидатов: ${escapeHtml(summaryCount(data.summary, candidates.length))}</div>
       ${notice}
-      <p class="workbench-hint">Выберите кандидата, проверьте смысл и создайте черновик без ручного копирования идентификатора.</p>
+      <p class="workbench-hint">Выберите кандидата: для raw synthesis создайте черновик, для обобщенного learned skill откройте навык и проверьте его жизненный цикл.</p>
       <div class="card-list entity-list">${candidates.slice(0, 50).map(renderCandidateCard).join("")}</div>`;
   }
 

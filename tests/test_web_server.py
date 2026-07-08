@@ -176,6 +176,38 @@ if (html.indexOf('data-action="open-trace"') < 0) {
 if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') > html.indexOf('total:')) {
   throw new Error('summary rendered before candidates: ' + html);
 }
+const learnedHtml = window.WiiconRenderers.renderSummary({
+  ok: true,
+  candidates: [{
+    candidate_id: 'learned_product_price_lookup',
+    candidate_kind: 'learned_skill',
+    skill_id: 'learned_product_price_lookup',
+    question: 'Получить розничные цены на куртки',
+    answer: 'Обобщенный кандидат навыка, созданный агентом.',
+    status: 'candidate',
+    trace_path: '/tmp/trace',
+    query: 'ВЫБРАТЬ 1 КАК Цена',
+    params: { МаскаТовара: '%куртк%' },
+    metadata_objects: [{ full_name: 'РегистрСведений.ЦеныНоменклатуры' }],
+    payload: {
+      goal: { business_goal: 'Получить розничные цены на куртки', required_artifacts: [] },
+      trace_summary: {
+        final_query: { query: 'ВЫБРАТЬ 1 КАК Цена', params: { МаскаТовара: '%куртк%' }, limit: 100 },
+        rows_sample: [{ Цена: 34000 }],
+        row_count: 1
+      }
+    }
+  }],
+  summary: { total: 1, by_status: { candidate: 1 }, by_kind: { learned_skill: 1 } }
+});
+for (const expected of ['Обобщенный кандидат от агента', 'Открыть навык', 'data-action="open-skill"', 'data-skill-id="learned_product_price_lookup"']) {
+  if (learnedHtml.indexOf(expected) < 0) {
+    throw new Error('learned candidate rendering is missing ' + expected + ': ' + learnedHtml);
+  }
+}
+if (learnedHtml.indexOf('data-action="synthesis-create-draft"') >= 0) {
+  throw new Error('learned skill candidate must not use synthesis draft action: ' + learnedHtml);
+}
 const linkedHtml = window.WiiconRenderers.renderSummary({
   ok: true,
   candidates: [{
@@ -435,6 +467,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
             write_trace(runs_root / "agent_001")
             write_onboarding_candidate(onboarding_manager.bot_instance_root)
             write_synthesis_candidates(onboarding_manager.bot_instance_root)
+            write_learned_skill_candidate(onboarding_manager.bot_instance_root / "skills", trace_path=str(runs_root / "agent_001"))
             write_regression_case(onboarding_manager.bot_instance_root)
             metadata_explorer = MetadataExplorerService(
                 provider=StaticMetadataProvider(
@@ -865,10 +898,10 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("/static/app.js", chat_page)
         self.assertIn("/static/api.js", chat_page)
         self.assertIn("/static/workbench.js", chat_page)
-        self.assertIn("app.js?v=5.0.0-alpha.75", chat_page)
-        self.assertIn("workbench.js?v=5.0.0-alpha.75", chat_page)
-        self.assertIn("renderers.js?v=5.0.0-alpha.75", chat_page)
-        self.assertIn("styles.css?v=5.0.0-alpha.75", chat_page)
+        self.assertIn("app.js?v=5.0.0-alpha.76", chat_page)
+        self.assertIn("workbench.js?v=5.0.0-alpha.76", chat_page)
+        self.assertIn("renderers.js?v=5.0.0-alpha.76", chat_page)
+        self.assertIn("styles.css?v=5.0.0-alpha.76", chat_page)
         self.assertIn("/static/renderers.js", chat_page)
         self.assertIn("topNav", chat_page)
         self.assertIn("view-chat", chat_page)
@@ -1005,11 +1038,20 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertTrue(onboarding_candidates["ok"])
         self.assertEqual(onboarding_candidates["summary"]["total"], 1)
         self.assertTrue(synthesis_candidates["ok"])
-        self.assertEqual(synthesis_candidates["summary"]["total"], 1)
-        self.assertEqual(synthesis_candidates["candidates"][0]["candidate_id"], "syn_active")
-        self.assertEqual(synthesis_candidates_all["summary"]["total"], 2)
+        synthesis_candidate_ids = [item["candidate_id"] for item in synthesis_candidates["candidates"]]
+        learned_candidate = next(
+            item
+            for item in synthesis_candidates["candidates"]
+            if item["candidate_id"] == "learned_product_price_lookup" and item.get("query") == "ВЫБРАТЬ 1 КАК Цена"
+        )
+        self.assertIn("syn_active", synthesis_candidate_ids)
+        self.assertEqual(learned_candidate["candidate_kind"], "learned_skill")
+        self.assertGreaterEqual(synthesis_candidates["summary"]["total"], 2)
+        self.assertGreaterEqual(synthesis_candidates_all["summary"]["total"], 3)
         self.assertEqual(rejected_synthesis_candidate["candidate"]["status"], "rejected")
-        self.assertEqual(synthesis_candidates_after_reject["summary"]["total"], 0)
+        after_reject_ids = [item["candidate_id"] for item in synthesis_candidates_after_reject["candidates"]]
+        self.assertNotIn("syn_active", after_reject_ids)
+        self.assertIn("learned_product_price_lookup", after_reject_ids)
         self.assertEqual(candidate_draft["draft"]["source_kind"], "onboarding_candidate")
         self.assertEqual(rejected_candidate["rejection"]["candidate_id"], onboarding_candidate_id)
         self.assertTrue(skill_catalog["ok"])
@@ -1223,6 +1265,43 @@ def write_synthesis_candidates(bot_root: Path) -> None:
     }
     (candidates / "syn_active.json").write_text(json.dumps(active, ensure_ascii=False), encoding="utf-8")
     (candidates / "syn_rejected.json").write_text(json.dumps(rejected, ensure_ascii=False), encoding="utf-8")
+
+
+def write_learned_skill_candidate(skills_root: Path, *, trace_path: str) -> None:
+    candidates = skills_root / "learned" / "candidates"
+    candidates.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "skill_id": "learned_product_price_lookup",
+        "version": "0.1.0",
+        "kind": "data_acquisition",
+        "status": "candidate",
+        "description": "Learned product price lookup.",
+        "capabilities": ["learned_query", "parameterized_lookup_query", "product", "price_type", "produce:PriceTable"],
+        "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": True}],
+        "outputs": [{"name": "table", "type": "PriceTable", "required": True}],
+        "tags": ["learned", "lookup", "product", "price_type"],
+        "supported_filter_roles": ["product", "price_type"],
+        "implementation_strategy": "learned_query",
+        "implementation": {
+            "kind": "parameterized_lookup_query",
+            "query": "ВЫБРАТЬ 1 КАК Цена",
+            "params": {"ВидЦены": "Розничная", "МаскаТовара": "%куртк%"},
+            "limit": 100,
+            "parameter_bindings": [
+                {"semantic_field": "price_type", "parameter": "ВидЦены", "transform": "raw", "required": True},
+                {"semantic_field": "product", "parameter": "МаскаТовара", "transform": "contains_like", "required": True},
+            ],
+            "metadata_dependencies": ["РегистрСведений.ЦеныНоменклатуры"],
+            "evidence": {
+                "created_from_trace": trace_path,
+                "question": "Получить розничные цены на куртки",
+            },
+        },
+    }
+    (candidates / "learned_product_price_lookup.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def write_regression_case(bot_root: Path) -> None:
