@@ -86,6 +86,7 @@ def main() -> int:
                 "codex_invocation": invocation,
             }
         else:
+            parsed = normalize_response(parsed)
             parsed["codex_invocation"] = invocation
         print(json.dumps(parsed, ensure_ascii=False))
     return 0
@@ -94,20 +95,32 @@ def main() -> int:
 def response_schema() -> dict:
     return {
         "type": "object",
-        "additionalProperties": True,
+        "additionalProperties": False,
         "properties": {
             "action": {
                 "type": "string",
                 "enum": ["retry_query", "needs_developer", "cannot_solve", "unavailable"],
             },
             "query": {"type": "string"},
-            "params": {"type": "object"},
+            "params": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "name": {"type": "string"},
+                        "value": {"type": ["string", "number", "boolean", "null"]},
+                        "value_json": {"type": "string"},
+                    },
+                    "required": ["name", "value", "value_json"],
+                },
+            },
             "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
             "reasoning": {"type": "string"},
             "answer_guidance": {"type": "string"},
             "developer_note": {"type": "string"},
         },
-        "required": ["action", "reasoning"],
+        "required": ["action", "query", "params", "limit", "reasoning", "answer_guidance", "developer_note"],
     }
 
 
@@ -118,12 +131,48 @@ def command_without_temp_paths(command: list[str], temp_dir: str) -> list[str]:
     return result
 
 
+def normalize_response(parsed: dict) -> dict:
+    result = dict(parsed)
+    params = result.get("params")
+    if isinstance(params, list):
+        result["params"] = params_array_to_dict(params)
+    elif not isinstance(params, dict):
+        result["params"] = {}
+    result.setdefault("query", "")
+    result.setdefault("limit", 100)
+    result.setdefault("reasoning", "")
+    result.setdefault("answer_guidance", "")
+    result.setdefault("developer_note", "")
+    return result
+
+
+def params_array_to_dict(params: list) -> dict:
+    result = {}
+    for item in params:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        value_json = item.get("value_json")
+        if isinstance(value_json, str) and value_json.strip():
+            try:
+                result[name] = json.loads(value_json)
+                continue
+            except ValueError:
+                pass
+        result[name] = item.get("value")
+    return result
+
+
 def build_prompt(payload: dict) -> str:
     return (
         "You are an emergency solver for WIICON ChatBot 5 query synthesis failures.\n"
         "Return only one JSON object matching this schema:\n"
-        '{"action":"retry_query|needs_developer|cannot_solve","query":"","params":{},'
+        '{"action":"retry_query|needs_developer|cannot_solve","query":"","params":[{"name":"Param","value":"text","value_json":""}],'
         '"limit":100,"reasoning":"","answer_guidance":"","developer_note":""}\n\n'
+        "Use params as an array. Put simple scalar values into value. "
+        "For complex parameter values, put JSON text into value_json and null into value.\n"
         "Do not edit code. If code changes are required, return needs_developer.\n"
         "If a safe 1C query can solve the data task, return retry_query.\n\n"
         "<diagnostic_json>\n"

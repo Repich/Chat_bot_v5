@@ -50,9 +50,54 @@ def validate_read_only_query(query: str, params: Optional[Mapping[str, Any]] = N
                 "1C query contains parameters missing from declarative params: " + ", ".join(undeclared),
             )
         )
+    issues.extend(ambiguous_alias_issues(text))
     issues.extend(date_literal_issues(text))
     issues.extend(parameter_value_issues(params or {}, query_params))
     return ValidationResult(ok=not issues, issues=issues)
+
+
+def ambiguous_alias_issues(query: str) -> List[ValidationIssue]:
+    from_match = re.search(r"\bИЗ\b", query, flags=re.IGNORECASE)
+    if from_match is None:
+        return []
+    select_part = query[: from_match.start()]
+    from_part = query[from_match.start() :]
+    select_aliases = set(alias.lower() for alias in select_field_aliases(select_part))
+    issues: List[ValidationIssue] = []
+    for alias in source_aliases(from_part):
+        normalized = alias.lower()
+        if normalized not in select_aliases:
+            continue
+        if re.search(rf"\b{re.escape(alias)}\.", from_part, flags=re.IGNORECASE) is None:
+            continue
+        issues.append(
+            ValidationIssue(
+                "ambiguous_alias",
+                (
+                    f"1C query uses '{alias}' both as a selected field alias and as a source alias. "
+                    "Use distinct aliases, for example source alias 'Ном' and output alias 'Номенклатура'."
+                ),
+                alias,
+            )
+        )
+    return issues
+
+
+def select_field_aliases(select_part: str) -> List[str]:
+    return re.findall(r"\bКАК\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)\b", select_part, flags=re.IGNORECASE)
+
+
+def source_aliases(from_part: str) -> List[str]:
+    aliases: List[str] = []
+    pattern = re.compile(
+        r"\b(?:ИЗ|СОЕДИНЕНИЕ)\s+"
+        r"(?:[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_.]*)(?:\s*\([^)]*\))?"
+        r"\s+КАК\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)\b",
+        flags=re.IGNORECASE,
+    )
+    for match in pattern.finditer(from_part):
+        aliases.append(match.group(1))
+    return aliases
 
 
 def date_literal_issues(query: str) -> List[ValidationIssue]:

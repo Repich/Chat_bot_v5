@@ -1,3 +1,6 @@
+5.0.0-alpha.69
+- Поведение web-клиента не менялось. Static assets подключаются с новой версией в URL для cache-busting после backend-обновления.
+
 5.0.0-alpha.68
 - Поведение web-клиента не менялось. Static assets подключаются с новой версией в URL для cache-busting после backend-обновления.
 

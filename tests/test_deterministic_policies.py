@@ -65,6 +65,22 @@ class DeterministicPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("empty_reference_parameter", [issue.code for issue in result.issues])
 
+    def test_read_only_query_validator_rejects_ambiguous_source_and_field_alias(self) -> None:
+        result = validate_read_only_query(
+            "ВЫБРАТЬ\n"
+            "    Цены.Номенклатура КАК Номенклатура,\n"
+            "    Цены.Цена КАК Цена\n"
+            "ИЗ\n"
+            "    РегистрСведений.ЦеныНоменклатуры КАК Цены\n"
+            "        ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК Номенклатура\n"
+            "        ПО Цены.Номенклатура = Номенклатура.Ссылка\n"
+            "ГДЕ\n"
+            "    Номенклатура.Наименование ПОДОБНО \"%пиво%\""
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("ambiguous_alias", [issue.code for issue in result.issues])
+
     def test_trace_writer_records_structured_json(self) -> None:
         from tempfile import TemporaryDirectory
         from pathlib import Path

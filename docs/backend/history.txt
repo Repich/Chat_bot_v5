@@ -1,3 +1,8 @@
+5.0.0-alpha.69
+- Исправлена JSON schema для Codex failure solver: structured output теперь использует strict-compatible additionalProperties=false, а параметры возвращаются массивом и нормализуются обратно в dict перед передачей агенту.
+- Query safety validator теперь до MCP отклоняет неоднозначные alias, когда имя source alias совпадает с alias выводимого поля и затем используется как ссылка вида Alias.Поле.
+- Добавлены регрессионные тесты на strict schema Codex adapter, нормализацию параметров solver и пред-MCP проверку ambiguous_alias.
+
 5.0.0-alpha.68
 - Исправлен Codex CLI adapter для failure solver: удален несовместимый аргумент --ask-for-approval, добавлены --ephemeral и JSON output schema для текущего codex-cli.
 - Codex failure solver теперь получает компактный diagnostic payload с ключевыми попытками, metadata objects, MCP errors и sufficiency, без больших embedded wiki blocks.

@@ -56,6 +56,7 @@ class FailureSolverTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             args_path = temp_path / "args.json"
+            schema_capture_path = temp_path / "schema.json"
             fake_codex = temp_path / "codex"
             fake_codex.write_text(
                 "\n".join(
@@ -65,8 +66,18 @@ class FailureSolverTests(unittest.TestCase):
                         "args = sys.argv[1:]",
                         "sys.stdin.read()",
                         "pathlib.Path(os.environ['WIICON5_FAKE_CODEX_ARGS']).write_text(json.dumps(args), encoding='utf-8')",
+                        "schema_path = pathlib.Path(args[args.index('--output-schema') + 1])",
+                        "pathlib.Path(os.environ['WIICON5_FAKE_CODEX_SCHEMA']).write_text(schema_path.read_text(), encoding='utf-8')",
                         "output_path = pathlib.Path(args[args.index('--output-last-message') + 1])",
-                        "output_path.write_text(json.dumps({'action':'cannot_solve','reasoning':'fake checked'}), encoding='utf-8')",
+                        "output_path.write_text(json.dumps({"
+                        "'action':'retry_query',"
+                        "'query':'ВЫБРАТЬ Ссылка ИЗ Справочник.Номенклатура ГДЕ Наименование = &Наименование',"
+                        "'params':[{'name':'Наименование','value':'Пиво','value_json':''}],"
+                        "'limit':100,"
+                        "'reasoning':'fake checked',"
+                        "'answer_guidance':'show rows',"
+                        "'developer_note':''"
+                        "}), encoding='utf-8')",
                     ]
                 ),
                 encoding="utf-8",
@@ -75,6 +86,7 @@ class FailureSolverTests(unittest.TestCase):
             env = dict(os.environ)
             env["WIICON5_CODEX_BIN"] = str(fake_codex)
             env["WIICON5_FAKE_CODEX_ARGS"] = str(args_path)
+            env["WIICON5_FAKE_CODEX_SCHEMA"] = str(schema_capture_path)
             completed = subprocess.run(
                 [sys.executable, str(PROJECT_ROOT / "scripts" / "codex_failure_solver.py")],
                 input=json.dumps({"diagnostic": sample_diagnostic_payload()}, ensure_ascii=False),
@@ -86,9 +98,13 @@ class FailureSolverTests(unittest.TestCase):
             )
             output = json.loads(completed.stdout)
             args = json.loads(args_path.read_text(encoding="utf-8"))
+            schema = json.loads(schema_capture_path.read_text(encoding="utf-8"))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(output["action"], "cannot_solve")
+        self.assertEqual(output["action"], "retry_query")
+        self.assertEqual(output["params"], {"Наименование": "Пиво"})
+        self.assertFalse(schema["additionalProperties"])
+        self.assertFalse(schema["properties"]["params"]["items"]["additionalProperties"])
         self.assertIn("--ephemeral", args)
         self.assertIn("--output-schema", args)
         self.assertIn("--output-last-message", args)
