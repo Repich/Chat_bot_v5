@@ -97,10 +97,13 @@ class ReferenceValueResolver:
                 for param_name in param_names:
                     if param_name not in existing:
                         existing.append(param_name)
+        like_params = params_used_with_like_operator(query)
         for field_name, param_names in field_params.items():
             if not is_reference_field(metadata, field_name):
                 continue
             for param_name in param_names:
+                if param_name in like_params:
+                    continue
                 raw_value = result_params.get(param_name)
                 raw_is_empty_list = is_empty_list(raw_value)
                 if not is_plain_string(raw_value) and not raw_is_empty_list:
@@ -349,6 +352,15 @@ def looks_like_reference_placeholder(value: str) -> bool:
     ):
         return True
     return False
+
+
+def params_used_with_like_operator(query: str) -> set[str]:
+    params: set[str] = set()
+    for match in re.finditer(r"\bПОДОБНО\b(?P<tail>.{0,160})", query, flags=re.IGNORECASE | re.DOTALL):
+        tail = match.group("tail")
+        for param_match in re.finditer(r"&(?P<param>[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)", tail):
+            params.add(param_match.group("param"))
+    return params
 
 
 def unique_param_name(params: Mapping[str, Any], base: str) -> str:

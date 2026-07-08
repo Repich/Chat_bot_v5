@@ -449,6 +449,60 @@ class OneCQueryReviewerTests(unittest.TestCase):
         self.assertEqual(len(mcp.query_calls), 1)
         self.assertIn("ПРЕДСТАВЛЕНИЕ(Склады.ТипСклада)", mcp.query_calls[0].query)
 
+    def test_reference_value_resolver_does_not_replace_like_pattern_param_with_object_ref(self) -> None:
+        mcp = DictMcpClient(
+            {
+                "success": True,
+                "data": [
+                    {
+                        "Значение": {
+                            "_objectRef": True,
+                            "УникальныйИдентификатор": "retail-price",
+                            "ТипОбъекта": "СправочникСсылка.ВидыЦен",
+                            "Представление": "Розничная",
+                        },
+                        "Представление": "Розничная",
+                    },
+                    {
+                        "Значение": {
+                            "_objectRef": True,
+                            "УникальныйИдентификатор": "coat",
+                            "ТипОбъекта": "СправочникСсылка.Номенклатура",
+                            "Представление": "Женское полупальто из меха норки с металлической молнией",
+                        },
+                        "Представление": "Женское полупальто из меха норки с металлической молнией",
+                    },
+                ],
+            }
+        )
+
+        result = ReferenceValueResolver(mcp).resolve(
+            query="""
+            ВЫБРАТЬ
+                Цены.Номенклатура КАК Номенклатура,
+                Цены.Цена КАК Цена
+            ИЗ
+                РегистрСведений.ЦеныНоменклатуры КАК Цены
+            ГДЕ
+                Цены.ВидЦены = &ВидЦены
+                И Цены.Номенклатура В (
+                    ВЫБРАТЬ
+                        Ном.Ссылка
+                    ИЗ
+                        Справочник.Номенклатура КАК Ном
+                    ГДЕ
+                        Ном.Наименование ПОДОБНО &Пальто
+                )
+            """,
+            params={"ВидЦены": "Розничная", "Пальто": "%пальто%"},
+            metadata_objects=[price_register_metadata()],
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(result.params["ВидЦены"]["УникальныйИдентификатор"], "retail-price")
+        self.assertEqual(result.params["Пальто"], "%пальто%")
+        self.assertEqual([item["param"] for item in result.resolutions], ["ВидЦены"])
+
     def test_reference_value_resolver_replaces_unconfirmed_enum_literal_with_object_param(self) -> None:
         mcp = DictMcpClient(
             {
@@ -619,6 +673,20 @@ def stock_register_metadata():
                 {"Имя": "Склад", "Тип": "СправочникСсылка.Склады"},
             ],
             "Ресурсы": [{"Имя": "Количество", "Тип": "Число"}],
+        }
+    )
+
+
+def price_register_metadata():
+    return metadata_object_from_payload(
+        {
+            "ПолноеИмя": "РегистрСведений.ЦеныНоменклатуры",
+            "Синоним": "Цены номенклатуры",
+            "Измерения": [
+                {"Имя": "Номенклатура", "Тип": "СправочникСсылка.Номенклатура"},
+                {"Имя": "ВидЦены", "Тип": "СправочникСсылка.ВидыЦен"},
+            ],
+            "Ресурсы": [{"Имя": "Цена", "Тип": "Число"}],
         }
     )
 
