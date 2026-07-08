@@ -143,6 +143,17 @@ class AgentOrchestrator:
         decomposition = self.decomposer.decompose(message, context)
         run_trace.write_json("intent/intent_response.json", {"intent": decomposition.intent.to_dict()})
 
+        if is_llm_unavailable_intent(decomposition.intent):
+            result = AgentRunResult(
+                source="llm_unavailable",
+                message=llm_unavailable_message(decomposition.intent),
+                intent=decomposition.intent,
+                trace_path=str(run_trace.path),
+            )
+            run_trace.write_json("result/result.json", result.to_dict())
+            self._record_assistant_and_save(context, result)
+            return result
+
         if not self.relevance_gate.is_relevant(decomposition.intent):
             result = AgentRunResult(
                 source="out_of_scope",
@@ -497,6 +508,17 @@ def result_goal_to_dict(goal: GoalDecomposition) -> Dict[str, object]:
         "expected_answer_type": goal.expected_answer_type,
         "required_artifacts": [item.to_dict() for item in goal.required_artifacts],
     }
+
+
+def is_llm_unavailable_intent(intent: IntentResult) -> bool:
+    return intent.intent_type == IntentType.UNKNOWN and "llm unavailable" in intent.reasoning.lower()
+
+
+def llm_unavailable_message(intent: IntentResult) -> str:
+    details = intent.reasoning.removeprefix("LLM unavailable:").strip()
+    if details:
+        return f"Сервис модели сейчас недоступен, поэтому я не могу обработать запрос. Детали: {details}"
+    return "Сервис модели сейчас недоступен, поэтому я не могу обработать запрос."
 
 
 def execution_result_to_dict(execution_result) -> Dict[str, object]:

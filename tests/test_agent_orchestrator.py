@@ -200,6 +200,36 @@ class AgentOrchestratorTests(unittest.TestCase):
             self.assertIsNone(result.plan)
             self.assertEqual(result.gaps, [])
 
+    def test_agent_reports_llm_unavailable_instead_of_out_of_scope_for_provider_error(self) -> None:
+        question = "Покажи розничные цены на пальто"
+        with TemporaryDirectory() as temp_dir:
+            orchestrator = AgentOrchestrator(
+                registry=SkillRegistry.load_from_dir(PROJECT_ROOT / "skills"),
+                decomposer=ScriptedGoalDecomposer(
+                    {
+                        question: DecompositionResult(
+                            intent=IntentResult(
+                                intent_type=IntentType.UNKNOWN,
+                                business_goal=question,
+                                requires_1c_data=False,
+                                relevant=False,
+                                reasoning="LLM unavailable: LLM HTTP 401: invalid api key",
+                            )
+                        )
+                    }
+                ),
+                trace_root=Path(temp_dir),
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+
+            self.assertEqual(result.source, "llm_unavailable")
+            self.assertIn("Сервис модели", result.message)
+            self.assertIn("401", result.message)
+            self.assertNotIn("вне моей зоны", result.message.lower())
+            trace_path = Path(result.trace_path or "")
+            self.assertEqual(json.loads((trace_path / "result/result.json").read_text(encoding="utf-8"))["source"], "llm_unavailable")
+
     def test_agent_answers_general_question_without_skill_plan(self) -> None:
         question = "Привет, кто ты?"
         decomposer = ScriptedGoalDecomposer({})
