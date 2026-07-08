@@ -373,6 +373,150 @@
     return candidate.metadata_objects.map((item) => item && (item.full_name || item.name)).filter(Boolean);
   }
 
+  function synthesisTraceSummary(candidate) {
+    const payload = candidate && candidate.payload && typeof candidate.payload === "object" ? candidate.payload : {};
+    return payload.trace_summary && typeof payload.trace_summary === "object" ? payload.trace_summary : {};
+  }
+
+  function candidateGoal(candidate) {
+    const payload = candidate && candidate.payload && typeof candidate.payload === "object" ? candidate.payload : {};
+    return payload.goal && typeof payload.goal === "object" ? payload.goal : {};
+  }
+
+  function candidateIntent(candidate) {
+    const payload = candidate && candidate.payload && typeof candidate.payload === "object" ? candidate.payload : {};
+    return payload.intent && typeof payload.intent === "object" ? payload.intent : {};
+  }
+
+  function candidateFinalQuery(candidate) {
+    const trace = synthesisTraceSummary(candidate);
+    const finalQuery = trace.final_query && typeof trace.final_query === "object" ? trace.final_query : {};
+    return finalQuery.query || candidate.query || "";
+  }
+
+  function candidateFinalParams(candidate) {
+    const trace = synthesisTraceSummary(candidate);
+    const finalQuery = trace.final_query && typeof trace.final_query === "object" ? trace.final_query : {};
+    if (finalQuery.params && typeof finalQuery.params === "object") {
+      return finalQuery.params;
+    }
+    return candidate.params && typeof candidate.params === "object" ? candidate.params : {};
+  }
+
+  function candidateResultRows(candidate) {
+    const trace = synthesisTraceSummary(candidate);
+    return Array.isArray(trace.rows_sample) ? trace.rows_sample : [];
+  }
+
+  function candidateUsedSources(candidate) {
+    const trace = synthesisTraceSummary(candidate);
+    const review = trace.query_review && typeof trace.query_review === "object" ? trace.query_review : {};
+    const sources = Array.isArray(review.sources) ? review.sources : [];
+    const labels = sources
+      .map((source) => {
+        const alias = source.alias ? `${source.alias}: ` : "";
+        const type = source.object_type ? ` (${displayLabel(source.object_type)})` : "";
+        return `${alias}${source.source || ""}${type}`.trim();
+      })
+      .filter(Boolean);
+    return compactList(labels, 12);
+  }
+
+  function candidateConstraints(candidate) {
+    const goal = candidateGoal(candidate);
+    const artifacts = Array.isArray(goal.required_artifacts) ? goal.required_artifacts : [];
+    const constraints = [];
+    for (const artifact of artifacts) {
+      const items = artifact && Array.isArray(artifact.constraints) ? artifact.constraints : [];
+      for (const item of items) {
+        const role = displayLabel(item.semantic_field || item.field || "параметр");
+        const operator = displayLabel(item.operator || "");
+        const value = item.value == null ? "" : String(item.value);
+        const raw = item.raw_user_text ? `; из текста: ${item.raw_user_text}` : "";
+        constraints.push(`${role}: ${operator} ${value}${raw}`);
+      }
+    }
+    return constraints;
+  }
+
+  function renderCandidateAttempts(candidate) {
+    const trace = synthesisTraceSummary(candidate);
+    const attempts = Array.isArray(trace.attempts) ? trace.attempts : [];
+    if (!attempts.length) {
+      return "<p class=\"muted\">Сводка попыток недоступна. Откройте трассировку для полного разбора.</p>";
+    }
+    const items = attempts.map((attempt) => {
+      const number = attempt.number || "?";
+      const status = attempt.blocked_before_mcp
+        ? "остановлена до MCP"
+        : attempt.executed
+          ? `выполнена через MCP${attempt.row_count == null ? "" : `, строк: ${attempt.row_count}`}`
+          : "не выполнялась";
+      const sufficiency = attempt.sufficient === true ? "результат признан достаточным" : "";
+      const issues = attempt.query_review && Array.isArray(attempt.query_review.issues)
+        ? attempt.query_review.issues.map((issue) => issue.message || issue.code).filter(Boolean)
+        : [];
+      const issueText = issues.length ? ` Ошибки: ${issues.join("; ")}` : "";
+      return `Попытка ${number}: ${status}${sufficiency ? `, ${sufficiency}` : ""}.${issueText}`;
+    });
+    return renderTextList(items, "");
+  }
+
+  function rowDuplicateWarning(rows) {
+    if (!Array.isArray(rows) || rows.length < 2) {
+      return "";
+    }
+    const first = JSON.stringify(rows[0]);
+    const allSame = rows.every((row) => JSON.stringify(row) === first);
+    return allSame ? "Все показанные строки одинаковые. Перед публикацией проверьте, не потеряны ли период, характеристика, упаковка или другой разрез данных." : "";
+  }
+
+  function semanticCandidateWarnings(candidate) {
+    const warnings = [];
+    const query = candidateFinalQuery(candidate).toLowerCase();
+    const question = String(candidate.question || "").toLowerCase();
+    if (question.includes("себестоим") && query.includes("ценыноменклатуры")) {
+      warnings.push("Вопрос содержит «себестоимость», но запрос читает регистр цен. Это подходит для «цены с видом/типом Себестоимость», но не для фактической учетной себестоимости товара.");
+    }
+    const duplicate = rowDuplicateWarning(candidateResultRows(candidate));
+    if (duplicate) {
+      warnings.push(duplicate);
+    }
+    if (!candidateUsedSources(candidate).length) {
+      warnings.push("Использованные источники не удалось выделить из проверки запроса; перед публикацией откройте трассировку.");
+    }
+    return warnings;
+  }
+
+  function renderCandidateDecisionNotes(candidate) {
+    const warnings = semanticCandidateWarnings(candidate);
+    const base = [
+      "Проверьте, что бизнес-смысл запроса совпадает с вопросом пользователя.",
+      "Проверьте, что значения параметров можно обобщить для будущих вопросов, а не оставить частным примером.",
+      "Проверьте, что результат MCP содержит нужные поля для ответа пользователю.",
+    ];
+    const warningHtml = warnings.length
+      ? `<div class="decision-warning"><strong>Риски:</strong>${renderTextList(warnings, "")}</div>`
+      : "";
+    return `${renderTextList(base, "")}${warningHtml}`;
+  }
+
+  function renderCandidateTechnicalDetails(candidate) {
+    const objects = metadataObjectNames(candidate);
+    const trace = synthesisTraceSummary(candidate);
+    const payload = candidate.payload && typeof candidate.payload === "object" ? candidate.payload : {};
+    const technical = {
+      candidate_id: candidateId(candidate),
+      final_artifact_type: candidate.final_artifact_type || "",
+      seen_count: candidate.seen_count || "",
+      all_metadata_objects: objects,
+      trace_summary: trace,
+      goal: payload.goal || null,
+      intent: payload.intent || null,
+    };
+    return renderJsonDetails("Технические детали кандидата", technical);
+  }
+
   function candidateId(candidate) {
     const item = candidate || {};
     return item.candidate_id || item.id || item.semantic_role || "";
@@ -611,13 +755,22 @@
     const synthesis = isSynthesisCandidate(item);
     const question = item.question || item.source_question || item.business_goal || item.semantic_role || id || "Кандидат";
     const answer = item.answer || item.preview || item.reason || item.description || "";
-    const objects = metadataObjectNames(item);
     const rowCount = item.row_count == null ? "" : item.row_count;
     const source = synthesis ? (item.source || "query_synthesis") : (item.type || item.source || "onboarding");
     const createAction = synthesis ? "synthesis-create-draft" : "onboarding-create-draft";
     const rejectAction = synthesis ? "synthesis-reject" : "onboarding-reject";
     const draftId = synthesis ? linkedDraftId(item) : "";
     const createLabel = draftId ? "Открыть черновик" : "Создать черновик";
+    const trace = synthesisTraceSummary(item);
+    const intent = candidateIntent(item);
+    const goal = candidateGoal(item);
+    const query = candidateFinalQuery(item);
+    const params = queryParamsText(candidateFinalParams(item));
+    const rows = candidateResultRows(item);
+    const sources = candidateUsedSources(item);
+    const constraints = candidateConstraints(item);
+    const sufficiency = trace.sufficiency && typeof trace.sufficiency === "object" ? trace.sufficiency : {};
+    const answerReasoning = trace.answer_reasoning || "";
     return `<article class="entity-card candidate-card" data-candidate-id="${escapeHtml(id)}">
       <div class="entity-card-header">
         <div>
@@ -627,8 +780,27 @@
         ${renderStatusPill(item.status || "candidate")}
       </div>
       ${answer ? `<p class="entity-summary">${escapeHtml(answer)}</p>` : `<p class="muted">Откройте кандидата или создайте черновик, чтобы проверить навык.</p>`}
-      ${renderFacts({ Идентификатор: id, Черновик: draftId, Строк: rowCount, Источник: displayLabel(source), Трассировка: item.trace_path || "" })}
-      ${renderTags(objects)}
+      ${renderFacts({
+        Идентификатор: id,
+        Черновик: draftId,
+        Строк: rowCount,
+        Источник: displayLabel(source),
+        Трассировка: item.trace_path || "",
+        "Попыток синтеза": trace.attempt_count || "",
+        "Успешных попыток": trace.successful_attempt_count || "",
+      })}
+      ${renderInfoSection("Что хотел получить пользователь", `<p>${escapeHtml((goal && goal.business_goal) || (intent && intent.business_goal) || question)}</p>`)}
+      ${renderInfoSection("Как агент понял запрос", intent.reasoning ? `<p>${escapeHtml(intent.reasoning)}</p>` : "")}
+      ${renderInfoSection("Критерии отбора", renderTextList(constraints, "Явные критерии не выделены."))}
+      ${params ? renderInfoSection("Параметры запроса", renderQueryBlock(params)) : ""}
+      ${renderInfoSection("Использованные источники 1С", renderTextList(sources, "Источники не выделены из проверки запроса."))}
+      ${query ? renderInfoSection("Запрос 1С", renderQueryBlock(query)) : ""}
+      ${renderInfoSection("Что вернул MCP", `${renderFacts({ "Строк всего": rowCount, "Показано строк": rows.length || "" })}${renderSimpleTable(rows)}`)}
+      ${renderInfoSection("Проверки агента", renderCandidateAttempts(item))}
+      ${sufficiency.reasoning ? renderInfoSection("Почему результат признан достаточным", `<p>${escapeHtml(sufficiency.reasoning)}</p>`) : ""}
+      ${answerReasoning ? renderInfoSection("Почему сформулирован такой ответ", `<p>${escapeHtml(answerReasoning)}</p>`) : ""}
+      ${renderInfoSection("Что проверить перед решением", renderCandidateDecisionNotes(item))}
+      ${renderCandidateTechnicalDetails(item)}
       <div class="entity-actions">
         ${actionButton(createLabel, createAction, "candidate-id", id, "primary-button")}
         ${actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}

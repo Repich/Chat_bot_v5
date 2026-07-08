@@ -1,3 +1,8 @@
+5.0.0-alpha.71
+- API кандидатов агента теперь обогащает карточки компактной сводкой из query_synthesis trace: попытки синтеза, итоговый запрос, параметры, использованные источники, строки MCP, sufficiency и reasoning форматирования.
+- Большой trace не встраивается целиком в список кандидатов; в UI передается только decision-oriented summary с ограниченным sample результата.
+- Добавлены тесты чтения trace summary для кандидатов query synthesis.
+
 5.0.0-alpha.70
 - Failure solver получил второй repair-вызов: если первый retry_query не прошел локальную validation, query review, semantic review, MCP execution или sufficiency, агент повторно передает solver обновленную диагностику с ошибкой первой аварийной попытки.
 - Query safety validator теперь до MCP отклоняет source alias, совпадающий с полем другого dereference, например alias ВидЦены при наличии Цены.ВидЦены, чтобы избегать неоднозначных полей 1С.

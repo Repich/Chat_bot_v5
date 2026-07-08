@@ -22,7 +22,7 @@ from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 from wiicon5.web.admin_security import AdminSecurityConfig
-from wiicon5.web.server import make_handler, run_http_server
+from wiicon5.web.server import make_handler, run_http_server, synthesis_candidate_trace_summary
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.preview import QueryPreviewService
 from wiicon5.workbench.smoke import McpSmokeTestService
@@ -45,6 +45,51 @@ class WebServerTests(unittest.TestCase):
         for button_id in button_ids:
             self.assertIn(button_id, ids)
             self.assertIn(f'optionalBind("{button_id}"', script)
+
+    def test_synthesis_candidate_trace_summary_reads_successful_attempt(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            trace_dir = Path(temp_dir) / "runs" / "agent_1"
+            result_dir = trace_dir / "query_synthesis"
+            result_dir.mkdir(parents=True)
+            (result_dir / "result.json").write_text(
+                json.dumps(
+                    {
+                        "synthesis": {
+                            "trace": {
+                                "row_count": 1,
+                                "final_query": {"query": "ВЫБРАТЬ Клиент ИЗ Справочник.Контрагенты", "params": {"П": 1}, "limit": 10},
+                                "attempts": [
+                                    {
+                                        "query_response": {"reasoning": "first"},
+                                        "query_review": {"ok": False, "issues": [{"message": "bad field"}]},
+                                    },
+                                    {
+                                        "query_response": {"reasoning": "fixed"},
+                                        "query_review": {
+                                            "ok": True,
+                                            "sources": [{"source": "Справочник.Контрагенты", "alias": "К", "object_type": "Справочник"}],
+                                        },
+                                        "mcp_response": {"success": True, "data": [{"Клиент": "Альтаир"}]},
+                                        "row_count": 1,
+                                        "result_sufficiency": {"sufficient": True, "reasoning": "enough"},
+                                    },
+                                ],
+                                "answer_formatting": {"trace": {"response": {"reasoning": "formatted"}}},
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            summary = synthesis_candidate_trace_summary(str(trace_dir))
+
+        self.assertEqual(summary["attempt_count"], 2)
+        self.assertEqual(summary["successful_attempt_count"], 1)
+        self.assertEqual(summary["rows_sample"], [{"Клиент": "Альтаир"}])
+        self.assertEqual(summary["query_review"]["sources"][0]["source"], "Справочник.Контрагенты")
+        self.assertEqual(summary["attempts"][0]["query_review"]["issues"][0]["message"], "bad field")
 
     @unittest.skipUnless(shutil.which("osascript"), "JavaScriptCore syntax check requires osascript")
     def test_static_javascript_syntax(self) -> None:
@@ -82,12 +127,42 @@ const html = window.WiiconRenderers.renderSummary({
     row_count: 1,
     status: 'candidate',
     trace_path: '/tmp/trace',
-    metadata_objects: [{ full_name: 'РегистрНакопления.РасчетыСКлиентамиПоДокументам' }]
+    query: 'ВЫБРАТЬ Контрагенты.Наименование КАК Клиент ИЗ Справочник.Контрагенты КАК Контрагенты',
+    params: { Период: '2026-01-01' },
+    metadata_objects: [{ full_name: 'РегистрНакопления.РасчетыСКлиентамиПоДокументам' }],
+    payload: {
+      intent: { business_goal: 'Найти клиента с максимальной задолженностью', reasoning: 'Нужно получить данные 1С.' },
+      goal: {
+        business_goal: 'Найти клиента с максимальной задолженностью',
+        required_artifacts: [{
+          constraints: [{ semantic_field: 'measure', operator: 'max', value: 'задолженность', raw_user_text: 'самая высокая' }]
+        }]
+      },
+      trace_summary: {
+        attempt_count: 2,
+        successful_attempt_count: 1,
+        final_query: {
+          query: 'ВЫБРАТЬ Контрагенты.Наименование КАК Клиент ИЗ Справочник.Контрагенты КАК Контрагенты',
+          params: { Период: '2026-01-01' },
+          limit: 100
+        },
+        rows_sample: [{ Клиент: 'Альтаир', Задолженность: 194889 }],
+        row_count: 1,
+        query_review: {
+          ok: true,
+          sources: [{ alias: 'Контрагенты', source: 'Справочник.Контрагенты', object_type: 'Справочник' }]
+        },
+        sufficiency: { sufficient: true, reasoning: 'Результат содержит клиента и задолженность.' },
+        answer_reasoning: 'Ответ основан на единственной строке результата.'
+      }
+    }
   }],
   summary: { total: 1, by_status: { candidate: 1 } }
 });
-if (html.indexOf('Покажи клиента') < 0) {
-  throw new Error('candidate question is missing: ' + html);
+for (const expected of ['Покажи клиента', 'Что хотел получить пользователь', 'Критерии отбора', 'Параметры запроса', 'Использованные источники 1С', 'Запрос 1С', 'Что вернул MCP', 'Проверки агента', 'Что проверить перед решением', 'Справочник.Контрагенты', 'Альтаир']) {
+  if (html.indexOf(expected) < 0) {
+    throw new Error('candidate detail is missing ' + expected + ': ' + html);
+  }
 }
 if (html.indexOf('Создать черновик') < 0) {
   throw new Error('candidate action is missing: ' + html);

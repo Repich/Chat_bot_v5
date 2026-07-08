@@ -4,7 +4,7 @@ import json
 import mimetypes
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Dict, Type
+from typing import Any, Dict, List, Mapping, Type
 from urllib.parse import parse_qs, unquote, urlparse
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
@@ -189,7 +189,7 @@ def make_handler(
                     200,
                     {
                         "ok": True,
-                        "candidates": [item.to_dict() for item in candidates],
+                        "candidates": [synthesis_candidate_to_response(item) for item in candidates],
                         "summary": synthesis_candidate_summary(candidates),
                     },
                 )
@@ -1187,6 +1187,162 @@ def synthesis_candidate_summary(candidates) -> Dict[str, Any]:
     for candidate in candidates:
         by_status[candidate.status] = by_status.get(candidate.status, 0) + 1
     return {"total": len(candidates), "by_status": by_status}
+
+
+def synthesis_candidate_to_response(candidate) -> Dict[str, Any]:
+    payload = candidate.to_dict()
+    trace_summary = synthesis_candidate_trace_summary(candidate.trace_path)
+    if trace_summary:
+        candidate_payload = dict(payload.get("payload") or {})
+        candidate_payload["trace_summary"] = trace_summary
+        payload["payload"] = candidate_payload
+    return payload
+
+
+def synthesis_candidate_trace_summary(trace_path: str) -> Dict[str, Any]:
+    if not trace_path:
+        return {}
+    trace_file = Path(trace_path)
+    if trace_file.is_dir():
+        trace_file = trace_file / "query_synthesis" / "result.json"
+    data = read_json_file_silent(trace_file)
+    synthesis = data.get("synthesis") if isinstance(data.get("synthesis"), Mapping) else {}
+    trace = synthesis.get("trace") if isinstance(synthesis.get("trace"), Mapping) else {}
+    if not trace:
+        return {}
+    attempts = [item for item in trace.get("attempts", []) if isinstance(item, Mapping)]
+    compact_attempts = [compact_synthesis_attempt(item, index + 1) for index, item in enumerate(attempts)]
+    successful_attempts = [item for item in attempts if item.get("result_sufficiency", {}).get("sufficient") is True]
+    final_attempt = successful_attempts[-1] if successful_attempts else (attempts[-1] if attempts else {})
+    rows = rows_from_attempt(final_attempt)
+    query_review = compact_review(final_attempt.get("query_review"))
+    semantic_review = compact_review(final_attempt.get("goal_semantic_review"))
+    sufficiency = final_attempt.get("result_sufficiency") if isinstance(final_attempt.get("result_sufficiency"), Mapping) else {}
+    answer_formatting = trace.get("answer_formatting") if isinstance(trace.get("answer_formatting"), Mapping) else {}
+    formatting_trace = answer_formatting.get("trace") if isinstance(answer_formatting.get("trace"), Mapping) else {}
+    formatting_response = formatting_trace.get("response") if isinstance(formatting_trace.get("response"), Mapping) else {}
+    final_query = trace.get("final_query") if isinstance(trace.get("final_query"), Mapping) else {}
+    return {
+        "attempts": compact_attempts,
+        "attempt_count": len(attempts),
+        "successful_attempt_count": len(successful_attempts),
+        "final_query": {
+            "query": str(final_query.get("query") or ""),
+            "params": final_query.get("params") if isinstance(final_query.get("params"), Mapping) else {},
+            "limit": final_query.get("limit"),
+        },
+        "columns": columns_from_rows(rows),
+        "rows_sample": rows[:5],
+        "row_count": int(trace.get("row_count") or len(rows) or 0),
+        "query_review": query_review,
+        "semantic_review": semantic_review,
+        "sufficiency": {
+            "sufficient": bool(sufficiency.get("sufficient")) if "sufficient" in sufficiency else None,
+            "partial": bool(sufficiency.get("partial")) if "partial" in sufficiency else None,
+            "needs_clarification": bool(sufficiency.get("needs_clarification"))
+            if "needs_clarification" in sufficiency
+            else None,
+            "reasoning": str(sufficiency.get("reasoning") or ""),
+            "missing_facts": sufficiency.get("missing_facts") if isinstance(sufficiency.get("missing_facts"), list) else [],
+        },
+        "answer_reasoning": str(formatting_response.get("reasoning") or ""),
+    }
+
+
+def compact_synthesis_attempt(attempt: Mapping[str, Any], number: int) -> Dict[str, Any]:
+    query_response = attempt.get("query_response") if isinstance(attempt.get("query_response"), Mapping) else {}
+    mcp_response = attempt.get("mcp_response") if isinstance(attempt.get("mcp_response"), Mapping) else {}
+    sufficiency = attempt.get("result_sufficiency") if isinstance(attempt.get("result_sufficiency"), Mapping) else {}
+    review = compact_review(attempt.get("query_review"))
+    executed = bool(mcp_response)
+    blocked = bool(review.get("issues")) and not executed
+    return {
+        "number": number,
+        "executed": executed,
+        "blocked_before_mcp": blocked,
+        "row_count": attempt.get("row_count"),
+        "mcp_success": mcp_response.get("success") if isinstance(mcp_response, Mapping) else None,
+        "reasoning": str(query_response.get("reasoning") or ""),
+        "query_review": review,
+        "sufficient": sufficiency.get("sufficient") if isinstance(sufficiency, Mapping) else None,
+    }
+
+
+def compact_review(review: Any) -> Dict[str, Any]:
+    if not isinstance(review, Mapping):
+        return {}
+    return {
+        "ok": review.get("ok"),
+        "issues": compact_issue_list(review.get("issues")),
+        "warnings": compact_issue_list(review.get("warnings")),
+        "sources": compact_review_sources(review.get("sources")),
+    }
+
+
+def compact_issue_list(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    issues: List[Dict[str, Any]] = []
+    for item in value[:10]:
+        if isinstance(item, Mapping):
+            issues.append(
+                {
+                    "code": str(item.get("code") or ""),
+                    "message": str(item.get("message") or item.get("reason") or ""),
+                    "severity": str(item.get("severity") or ""),
+                }
+            )
+        else:
+            issues.append({"code": "", "message": str(item), "severity": ""})
+    return issues
+
+
+def compact_review_sources(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    sources: List[Dict[str, Any]] = []
+    for item in value[:12]:
+        if not isinstance(item, Mapping):
+            continue
+        source = str(item.get("source") or item.get("object_full_name") or "").strip()
+        if not source:
+            continue
+        sources.append(
+            {
+                "source": source,
+                "alias": str(item.get("alias") or ""),
+                "object_type": str(item.get("object_type") or ""),
+                "virtual_table": str(item.get("virtual_table") or ""),
+                "table_part": str(item.get("table_part") or ""),
+            }
+        )
+    return sources
+
+
+def rows_from_attempt(attempt: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    mcp_response = attempt.get("mcp_response") if isinstance(attempt.get("mcp_response"), Mapping) else {}
+    data = mcp_response.get("data") if isinstance(mcp_response, Mapping) else None
+    if not isinstance(data, list):
+        return []
+    return [dict(row) for row in data if isinstance(row, Mapping)]
+
+
+def columns_from_rows(rows: List[Dict[str, Any]]) -> List[str]:
+    columns: List[str] = []
+    for row in rows:
+        for column in row.keys():
+            text = str(column)
+            if text not in columns:
+                columns.append(text)
+    return columns
+
+
+def read_json_file_silent(path: Path) -> Dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def seed_context_from_payload(agent: AgentOrchestrator, session_id: str, payload: Dict[str, Any]) -> None:
