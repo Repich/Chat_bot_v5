@@ -105,6 +105,54 @@ class AgentOrchestratorTests(unittest.TestCase):
             trace_path = Path(result.trace_path or "")
             self.assertTrue((trace_path / "skill_invocations/execution_result.json").exists())
 
+    def test_agent_uses_query_synthesis_when_skill_result_misses_required_columns(self) -> None:
+        question = "Покажи остатки ботинок на розничном складе. Сделай детализацию по номенклатуре"
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        data_runner = StaticSkillRunner(
+            {
+                "get_warehouses": [
+                    Artifact(
+                        name="warehouses",
+                        type="WarehouseRefList",
+                        value=[{"ref": "warehouse-1", "name": "Розничный склад"}],
+                        provenance=["test"],
+                    )
+                ],
+                "get_stock_balances": [
+                    Artifact(
+                        name="stock_table",
+                        type="StockBalanceTable",
+                        value={"columns": ["Склад", "Остаток"], "rows": [{"Склад": "Розничный склад", "Остаток": 11}]},
+                        provenance=["get_stock_balances"],
+                    )
+                ],
+            }
+        )
+        runners = default_runners()
+        runners["semantic_binding_query"] = data_runner
+        runners["semantic_measure_query"] = data_runner
+        synthesizer = SuccessfulQuerySynthesizer(
+            "Номенклатура | Склад | Остаток\n--- | --- | ---\nБ-900 Ботинки женские | Розничный склад | 11"
+        )
+        with TemporaryDirectory() as temp_dir:
+            orchestrator = AgentOrchestrator(
+                registry=registry,
+                decomposer=ScriptedGoalDecomposer({question: stock_detail_question_decomposition(question)}),
+                plan_executor=SkillPlanExecutor(registry, runners),
+                query_synthesizer=synthesizer,
+                trace_root=Path(temp_dir),
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+
+            trace_path = Path(result.trace_path or "")
+            sufficiency_review = json.loads((trace_path / "skill_invocations/sufficiency_review.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.source, "query_synthesis_ok")
+        self.assertIn("Б-900", result.message)
+        self.assertEqual(len(synthesizer.calls), 1)
+        self.assertIn("column:Номенклатура", sufficiency_review["gap"]["missing"])
+
     def test_agent_returns_gap_and_evolution_decision_for_missing_filter_support(self) -> None:
         question = "Покажи остатки товара на оптовых складах"
         base_registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
@@ -282,6 +330,21 @@ class FailingQuerySynthesizer:
         )
 
 
+class SuccessfulQuerySynthesizer:
+    def __init__(self, message: str) -> None:
+        self.message = message
+        self.calls = []
+
+    def run(self, **kwargs) -> QuerySynthesisResult:
+        self.calls.append(kwargs)
+        return QuerySynthesisResult(
+            ok=True,
+            message=self.message,
+            final_artifact=Artifact(name="answer", type="UserAnswer", value=self.message, provenance=["query_synthesis"]),
+            trace={"attempts": [{"result_sufficiency": {"sufficient": True}}]},
+        )
+
+
 def stock_question_decomposition() -> DecompositionResult:
     return DecompositionResult(
         intent=IntentResult(
@@ -317,6 +380,40 @@ def stock_question_decomposition() -> DecompositionResult:
                     ],
                 ),
                 ArtifactRequirement(name="stock_table", type="StockBalanceTable"),
+            ],
+        ),
+    )
+
+
+def stock_detail_question_decomposition(question: str) -> DecompositionResult:
+    return DecompositionResult(
+        intent=IntentResult(
+            intent_type=IntentType.DATA_QUESTION,
+            business_goal=question,
+            requires_1c_data=True,
+            expected_output="table",
+            domain_terms=["остатки", "ботинки", "розничный склад", "детализация по номенклатуре"],
+            relevant=True,
+        ),
+        goal=GoalDecomposition(
+            business_goal=question,
+            final_artifact_type="UserAnswer",
+            expected_answer_type="table",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="stock_table",
+                    type="StockBalanceTable",
+                    constraints=[
+                        SemanticFilter(semantic_field="product", operator="contains", value="ботинок", raw_user_text="ботинок"),
+                        SemanticFilter(
+                            semantic_field="warehouse",
+                            operator="contains",
+                            value="розничный",
+                            raw_user_text="розничном складе",
+                        ),
+                    ],
+                    required_columns=["Номенклатура"],
+                )
             ],
         ),
     )

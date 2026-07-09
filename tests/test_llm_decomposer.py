@@ -92,6 +92,23 @@ class LLMDecomposerTests(unittest.TestCase):
         assert result.goal is not None
         self.assertIn("StockBalanceTable", [item.type for item in result.goal.required_artifacts])
 
+    def test_llm_decomposer_preserves_requested_detail_columns(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        decomposer = LLMGoalDecomposer(
+            llm_client=ScriptedLLMClient([stock_detail_decomposition_without_required_columns()]),
+            registry=registry,
+        )
+
+        result = decomposer.decompose(
+            "Покажи остатки ботинок на розничном складе. Сделай детализацию по номенклатуре",
+            ConversationContext(session_id="s1"),
+        )
+
+        self.assertIsNotNone(result.goal)
+        assert result.goal is not None
+        stock = next(item for item in result.goal.required_artifacts if item.type == "StockBalanceTable")
+        self.assertEqual(stock.required_columns, ["Номенклатура"])
+
     def test_llm_decomposer_completes_transfer_count_artifact_from_skill_catalog(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         decomposer = LLMGoalDecomposer(
@@ -255,6 +272,46 @@ def stock_decomposition_without_stock_table_response():
             "expected_answer_type": "table",
             "required_artifacts": [
                 {"name": "product", "type": "ProductRef", "source": "dialog_context", "required": True},
+            ],
+        },
+    }
+
+
+def stock_detail_decomposition_without_required_columns():
+    return {
+        "intent": {
+            "intent_type": "data_question",
+            "business_goal": "Показать остатки ботинок на розничном складе с детализацией по номенклатуре",
+            "requires_1c_data": True,
+            "expected_output": "table",
+            "domain_terms": ["остатки", "ботинки", "розничный склад", "детализация по номенклатуре"],
+            "relevant": True,
+        },
+        "goal": {
+            "business_goal": "Показать остатки ботинок на розничном складе с детализацией по номенклатуре",
+            "final_artifact_type": "UserAnswer",
+            "expected_answer_type": "table",
+            "required_artifacts": [
+                {
+                    "name": "stock_table",
+                    "type": "StockBalanceTable",
+                    "source": "skill",
+                    "required": True,
+                    "constraints": [
+                        {
+                            "semantic_field": "product",
+                            "operator": "contains",
+                            "value": "ботинок",
+                            "raw_user_text": "ботинок",
+                        },
+                        {
+                            "semantic_field": "warehouse",
+                            "operator": "contains",
+                            "value": "розничный",
+                            "raw_user_text": "розничном складе",
+                        },
+                    ],
+                }
             ],
         },
     }

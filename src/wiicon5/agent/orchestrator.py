@@ -9,11 +9,11 @@ from wiicon5.clarification import ClarificationResolver
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.conversation.memory import ConversationMemory
 from wiicon5.execution.artifacts import Artifact
-from wiicon5.execution.runtime import SkillPlanExecutor
+from wiicon5.execution.runtime import SkillPlanExecutionResult, SkillPlanExecutor
 from wiicon5.intent.decomposer import GoalDecomposer
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.intent.relevance_gate import RelevanceGate
-from wiicon5.models import SkillGap, SkillPlan
+from wiicon5.models import GapResolution, SkillGap, SkillPlan
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
 from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
@@ -21,6 +21,7 @@ from wiicon5.skills.composer import SkillComposer
 from wiicon5.skills.learned import LearnedSkillStore, LearnedSkillWriteResult
 from wiicon5.skills.lifecycle import SkillEvolutionDecision, SkillEvolutionPolicy
 from wiicon5.skills.registry import SkillRegistry
+from wiicon5.types import TypeSystem
 from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 
 
@@ -197,6 +198,81 @@ class AgentOrchestrator:
                 execution_result = self.plan_executor.execute(compose_result.plan, context)
                 run_trace.write_json("skill_invocations/execution_result.json", execution_result_to_dict(execution_result))
                 if execution_result.ok and execution_result.final_artifact is not None:
+                    sufficiency_gap = skill_execution_requirement_gap(decomposition.goal, execution_result)
+                    if sufficiency_gap is not None:
+                        run_trace.write_json(
+                            "skill_invocations/sufficiency_review.json",
+                            {"ok": False, "gap": sufficiency_gap.to_dict()},
+                        )
+                        synthesis_result = self._try_query_synthesis(
+                            message=message,
+                            intent=decomposition.intent,
+                            goal=decomposition.goal,
+                            context=context,
+                            run_trace=run_trace,
+                            gaps=[sufficiency_gap.to_dict()],
+                            source="skill_execution_insufficient",
+                        )
+                        if synthesis_result is not None and synthesis_result.needs_clarification:
+                            result = AgentRunResult(
+                                source="needs_clarification",
+                                message=synthesis_result.message,
+                                intent=decomposition.intent,
+                                goal=decomposition.goal,
+                                plan=compose_result.plan,
+                                context_artifacts=synthesis_result.context_artifacts,
+                                gaps=[sufficiency_gap],
+                                trace_path=str(run_trace.path),
+                            )
+                            run_trace.write_json("result/result.json", result.to_dict())
+                            self._record_assistant_and_save(context, result)
+                            return result
+                        if synthesis_result is not None and synthesis_result.ok and synthesis_result.final_artifact is not None:
+                            self._learn_from_synthesis(
+                                intent=decomposition.intent,
+                                goal=decomposition.goal,
+                                synthesis_result=synthesis_result,
+                                run_trace=run_trace,
+                                context=context,
+                            )
+                            result = AgentRunResult(
+                                source="query_synthesis_ok",
+                                message=synthesis_result.message,
+                                intent=decomposition.intent,
+                                goal=decomposition.goal,
+                                plan=compose_result.plan,
+                                final_artifact=synthesis_result.final_artifact,
+                                context_artifacts=synthesis_result.context_artifacts,
+                                gaps=[sufficiency_gap],
+                                trace_path=str(run_trace.path),
+                            )
+                            run_trace.write_json("result/result.json", result.to_dict())
+                            self._record_assistant_and_save(context, result)
+                            return result
+                        if synthesis_result is not None and not synthesis_result.ok:
+                            result = self._query_synthesis_failed_result(
+                                synthesis_result=synthesis_result,
+                                intent=decomposition.intent,
+                                goal=decomposition.goal,
+                                plan=compose_result.plan,
+                                gaps=[sufficiency_gap],
+                                trace_path=str(run_trace.path),
+                            )
+                            run_trace.write_json("result/result.json", result.to_dict())
+                            self._record_assistant_and_save(context, result)
+                            return result
+                        result = AgentRunResult(
+                            source="skill_execution_insufficient",
+                            message="Существующий навык выполнился, но результат не содержит всех данных, запрошенных пользователем.",
+                            intent=decomposition.intent,
+                            goal=decomposition.goal,
+                            plan=compose_result.plan,
+                            gaps=[sufficiency_gap],
+                            trace_path=str(run_trace.path),
+                        )
+                        run_trace.write_json("result/result.json", result.to_dict())
+                        self._record_assistant_and_save(context, result)
+                        return result
                     result = AgentRunResult(
                         source="skill_execution_ok",
                         message=str(execution_result.final_artifact.value),
@@ -530,6 +606,84 @@ def result_goal_to_dict(goal: GoalDecomposition) -> Dict[str, object]:
         "expected_answer_type": goal.expected_answer_type,
         "required_artifacts": [item.to_dict() for item in goal.required_artifacts],
     }
+
+
+def skill_execution_requirement_gap(
+    goal: GoalDecomposition,
+    execution_result: SkillPlanExecutionResult,
+) -> Optional[SkillGap]:
+    type_system = TypeSystem()
+    for requirement in goal.required_artifacts:
+        if not requirement.required_columns:
+            continue
+        artifact = first_artifact_for_requirement(execution_result, requirement.type, type_system)
+        if artifact is None:
+            continue
+        columns = artifact_columns(artifact.value)
+        missing = [column for column in requirement.required_columns if not column_present(column, columns)]
+        if missing:
+            return SkillGap(
+                required_capability=f"result_columns:{requirement.type}",
+                required_output=requirement.type,
+                reason=(
+                    "Skill execution returned a table, but it does not contain columns or dimensions "
+                    "explicitly requested by the user."
+                ),
+                nearest_skill_ids=list(artifact.provenance),
+                recommended_resolution=GapResolution.CREATE_NEW,
+                missing=[f"column:{column}" for column in missing],
+            )
+    return None
+
+
+def first_artifact_for_requirement(
+    execution_result: SkillPlanExecutionResult,
+    artifact_type: str,
+    type_system: TypeSystem,
+) -> Optional[Artifact]:
+    for artifact in execution_result.artifacts.values():
+        if type_system.is_assignable(artifact.type, artifact_type):
+            return artifact
+    return None
+
+
+def artifact_columns(value: object) -> List[str]:
+    if isinstance(value, dict):
+        columns = value.get("columns")
+        if isinstance(columns, list) and columns:
+            return [str(item) for item in columns]
+        rows = value.get("rows")
+        if isinstance(rows, list):
+            return columns_from_rows(rows)
+    return []
+
+
+def columns_from_rows(rows: List[object]) -> List[str]:
+    result: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in row:
+            key_text = str(key)
+            if key_text not in result:
+                result.append(key_text)
+    return result
+
+
+def column_present(required: str, columns: List[str]) -> bool:
+    required_key = normalize_column_name(required)
+    column_keys = {normalize_column_name(column) for column in columns}
+    if required_key in column_keys:
+        return True
+    aliases = {
+        "номенклатура": {"товар", "продукт", "наименованиеноменклатуры", "номенклатура"},
+        "склад": {"склад", "местохранения", "складнаименование", "наименованиесклада"},
+    }
+    return bool(aliases.get(required_key, set()) & column_keys)
+
+
+def normalize_column_name(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
 def is_llm_unavailable_intent(intent: IntentResult) -> bool:

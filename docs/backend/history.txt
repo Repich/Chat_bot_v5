@@ -1,3 +1,9 @@
+5.0.0-alpha.80
+- Goal decomposition теперь поддерживает required_columns для table artifacts; фразы про детализацию по номенклатуре сохраняются как обязательная колонка результата.
+- Skill composer больше не теряет semantic filters: фильтры по ссылочным сущностям маршрутизируются через upstream lookup, например warehouse -> WarehouseRefList -> get_stock_balances.warehouses.
+- После выполнения плана добавлена проверка достаточности результата: если существующий навык вернул таблицу без обязательных колонок, агент уходит в query synthesis вместо неправильного ответа.
+- Semantic query builder умеет generic entity lookup по роли сущности и добавляет Номенклатуру в SELECT, когда она нужна для детализации.
+
 5.0.0-alpha.79
 - Learned skills теперь сохраняются сразу в skills/learned/active со статусом verified и добавляются в runtime registry без пользовательского candidate/promotion lifecycle.
 - Добавлены PATCH/DELETE endpoint-ы /api/admin/skills/catalog/<skill_id> для правки и удаления learned/user-created навыков; seed skills защищены от изменения через UI.

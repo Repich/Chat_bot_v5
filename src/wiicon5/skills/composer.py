@@ -105,26 +105,24 @@ class SkillComposer:
         inputs: Dict[str, Any] = {}
         dependencies: List[str] = []
         dependency_edges: List[Tuple[str, str, str]] = []
+        consumed_constraints: List[SemanticFilter] = []
         for input_port in producer.inputs:
             matching_constraint = first_constraint_for_input(requirement.constraints, input_port.name)
             if matching_constraint is not None and input_port.type != "SemanticFilterList":
                 if is_unresolved_placeholder_value(matching_constraint.value):
+                    consumed_constraints.append(matching_constraint)
                     matching_constraint = None
                 else:
                     inputs[input_port.name] = matching_constraint.value
+                    consumed_constraints.append(matching_constraint)
                     continue
             if input_port.type == "SemanticFilterList":
                 filter_constraints = semantic_filter_constraints_for_skill(requirement.constraints, producer)
                 if filter_constraints:
                     inputs[input_port.name] = [item.to_dict() for item in filter_constraints]
+                    consumed_constraints.extend(filter_constraints)
                 elif input_port.required and input_port.default is None:
                     inputs[input_port.name] = []
-                continue
-            if goal_has_assignable_requirement(state.goal, input_port.type, self.type_system):
-                dependency_type = concrete_dependency_type_for_input(input_port.type, state, self.type_system)
-                dependency_node, dependency_output = self._ensure_artifact(dependency_type, state)
-                dependencies.append(dependency_node)
-                dependency_edges.append((dependency_node, dependency_output, input_port.name))
                 continue
             implicit_requirement = self._implicit_dependency_requirement(input_port.type, requirement, state)
             if implicit_requirement is not None:
@@ -133,6 +131,13 @@ class SkillComposer:
                     state,
                     requirement_override=implicit_requirement,
                 )
+                dependencies.append(dependency_node)
+                dependency_edges.append((dependency_node, dependency_output, input_port.name))
+                consumed_constraints.extend(implicit_requirement.constraints)
+                continue
+            if goal_has_assignable_requirement(state.goal, input_port.type, self.type_system):
+                dependency_type = concrete_dependency_type_for_input(input_port.type, state, self.type_system)
+                dependency_node, dependency_output = self._ensure_artifact(dependency_type, state)
                 dependencies.append(dependency_node)
                 dependency_edges.append((dependency_node, dependency_output, input_port.name))
                 continue
@@ -163,6 +168,31 @@ class SkillComposer:
                 )
             elif input_port.default is not None:
                 inputs[input_port.name] = input_port.default
+
+        unconsumed_constraints = [
+            constraint
+            for constraint in requirement.constraints
+            if constraint not in consumed_constraints
+            and not is_unresolved_placeholder_value(constraint.value)
+            and not constraint_selects_skill_domain(producer, constraint)
+        ]
+        if producer.kind.value == "data_acquisition" and unconsumed_constraints:
+            raise _CompositionGap(
+                SkillGap(
+                    required_capability=f"route_filters:{producer.skill_id}",
+                    required_output=requirement.type,
+                    reason=(
+                        "Selected skill can produce the artifact type, but at least one semantic filter "
+                        "cannot be routed into skill inputs or an upstream lookup."
+                    ),
+                    nearest_skill_ids=[producer.skill_id],
+                    recommended_resolution=GapResolution.EXTEND_EXISTING,
+                    missing=[f"filter:{constraint.semantic_field}" for constraint in unconsumed_constraints],
+                )
+            )
+
+        if requirement.required_columns:
+            inputs["required_columns"] = list(requirement.required_columns)
 
         invocation_id = state.next_invocation_id()
         edges: List[List[str]] = []
@@ -261,11 +291,14 @@ class SkillComposer:
         parent_requirement: ArtifactRequirement,
         state: "_ComposeState",
     ) -> Optional[ArtifactRequirement]:
-        if input_type != "EntityRefList":
+        if input_type != "EntityRefList" and not input_type.endswith("RefList"):
             return None
         if not parent_requirement.constraints:
             return None
-        producer = self._choose_entity_list_producer(parent_requirement, state)
+        constraints = entity_dependency_constraints(input_type, parent_requirement.constraints, self.registry, self.type_system)
+        if not constraints:
+            return None
+        producer = self._choose_entity_list_producer(parent_requirement, state, input_type=input_type, constraints=constraints)
         if producer is None:
             return None
         output_type = next(
@@ -276,6 +309,8 @@ class SkillComposer:
             ),
             "",
         )
+        if not output_type and input_type != "EntityRefList":
+            output_type = input_type
         if not output_type:
             return None
         return ArtifactRequirement(
@@ -283,26 +318,31 @@ class SkillComposer:
             type=output_type,
             source="skill",
             required=True,
-            constraints=list(parent_requirement.constraints),
+            constraints=list(constraints),
         )
 
     def _choose_entity_list_producer(
         self,
         parent_requirement: ArtifactRequirement,
         state: "_ComposeState",
+        *,
+        input_type: str = "EntityRefList",
+        constraints: Optional[List[SemanticFilter]] = None,
     ) -> Optional[SkillContract]:
+        target_type = input_type if input_type != "EntityRefList" else "EntityRefList"
+        requirement_constraints = list(constraints if constraints is not None else parent_requirement.constraints)
         entity_requirement = ArtifactRequirement(
             name=f"{parent_requirement.name}_items",
-            type="EntityRefList",
+            type=target_type,
             source="skill",
             required=True,
-            constraints=list(parent_requirement.constraints),
+            constraints=requirement_constraints,
         )
         candidates = [
             skill
             for skill in self.registry.active()
             if any(
-                output.type != "EntityRefList" and self.type_system.is_assignable(output.type, "EntityRefList")
+                output.type != "EntityRefList" and self.type_system.is_assignable(output.type, target_type)
                 for output in skill.outputs
             )
             if all(_skill_accepts_constraint(skill, constraint) for constraint in entity_requirement.constraints)
@@ -398,13 +438,36 @@ class _CompositionGap(Exception):
 def _skill_accepts_constraint(skill: SkillContract, constraint: SemanticFilter) -> bool:
     return (
         _constraint_targets_input(skill, constraint)
+        or _constraint_targets_entity_ref_input(skill, constraint)
         or any(roles_match(constraint.semantic_field, role) for role in skill.supported_filter_roles)
+        or roles_match(skill.semantic_role, constraint.semantic_field)
         or constraint_selects_skill_domain(skill, constraint)
     )
 
 
 def _constraint_targets_input(skill: SkillContract, constraint: SemanticFilter) -> bool:
     return any(roles_match(input_port.name, constraint.semantic_field) for input_port in skill.inputs)
+
+
+def _constraint_targets_entity_ref_input(skill: SkillContract, constraint: SemanticFilter) -> bool:
+    for input_port in skill.inputs:
+        role = artifact_role_for_ref_list(input_port.type)
+        if role and roles_match(role, constraint.semantic_field):
+            return True
+    return False
+
+
+def artifact_role_for_ref_list(artifact_type: str) -> str:
+    if not artifact_type.endswith("RefList"):
+        return ""
+    base = artifact_type[: -len("RefList")]
+    mapping = {
+        "Product": "product",
+        "Warehouse": "warehouse",
+        "Counterparty": "counterparty",
+        "Document": "document",
+    }
+    return mapping.get(base, base[:1].lower() + base[1:] if base else "")
 
 
 def first_constraint_for_input(constraints: List[SemanticFilter], input_name: str) -> Optional[SemanticFilter]:
@@ -423,6 +486,38 @@ def semantic_filter_constraints_for_skill(
         for constraint in constraints
         if not _constraint_targets_input(skill, constraint) and not constraint_selects_skill_domain(skill, constraint)
     ]
+
+
+def entity_dependency_constraints(
+    input_type: str,
+    constraints: List[SemanticFilter],
+    registry: SkillRegistry,
+    type_system: TypeSystem,
+) -> List[SemanticFilter]:
+    if input_type == "EntityRefList":
+        return list(constraints)
+    role = artifact_role_for_ref_list(input_type)
+    if not role:
+        return []
+    candidate_producers = [
+        skill
+        for skill in registry.active()
+        if any(
+            output.type != "EntityRefList" and type_system.is_assignable(output.type, input_type)
+            for output in skill.outputs
+        )
+        if roles_match(skill.semantic_role, role)
+    ]
+    result = []
+    for constraint in constraints:
+        if is_unresolved_placeholder_value(constraint.value):
+            continue
+        if roles_match(constraint.semantic_field, role):
+            result.append(constraint)
+            continue
+        if any(_skill_accepts_constraint(skill, constraint) for skill in candidate_producers):
+            result.append(constraint)
+    return result
 
 
 def concrete_dependency_type_for_input(input_type: str, state: _ComposeState, type_system: TypeSystem) -> str:

@@ -88,6 +88,9 @@ def decomposition_schema() -> Dict[str, Any]:
                             "raw_user_text": "original phrase",
                         }
                     ],
+                    "required_columns": [
+                        "Business columns or dimensions that must be present in the result, e.g. Номенклатура, Склад, Контрагент"
+                    ],
                 }
             ],
         },
@@ -146,14 +149,16 @@ def parse_goal(payload: Dict[str, Any]) -> GoalDecomposition:
                 source=str(item.get("source") or "skill"),
                 required=bool(item.get("required", True)),
                 constraints=parse_constraints(item.get("constraints")),
+                required_columns=[str(column) for column in item.get("required_columns", []) or []],
             )
         )
-    return GoalDecomposition(
+    goal = GoalDecomposition(
         business_goal=str(payload.get("business_goal") or ""),
         final_artifact_type=str(payload.get("final_artifact_type") or "UserAnswer"),
         expected_answer_type=str(payload.get("expected_answer_type") or "answer"),
         required_artifacts=requirements,
     )
+    return ensure_requested_detail_columns(goal)
 
 
 def parse_constraints(payload: Any) -> List[SemanticFilter]:
@@ -169,6 +174,59 @@ def parse_constraints(payload: Any) -> List[SemanticFilter]:
                 )
             )
     return constraints
+
+
+def ensure_requested_detail_columns(goal: GoalDecomposition) -> GoalDecomposition:
+    requested = detail_columns_from_text(goal.business_goal)
+    if not requested:
+        return goal
+    updated = []
+    changed = False
+    for requirement in goal.required_artifacts:
+        if not requirement.type.endswith("Table"):
+            updated.append(requirement)
+            continue
+        columns = merge_required_columns(requirement.required_columns, requested)
+        changed = changed or columns != requirement.required_columns
+        updated.append(
+            ArtifactRequirement(
+                name=requirement.name,
+                type=requirement.type,
+                source=requirement.source,
+                required=requirement.required,
+                constraints=list(requirement.constraints),
+                required_columns=columns,
+            )
+        )
+    if not changed:
+        return goal
+    return GoalDecomposition(
+        business_goal=goal.business_goal,
+        final_artifact_type=goal.final_artifact_type,
+        expected_answer_type=goal.expected_answer_type,
+        required_artifacts=updated,
+    )
+
+
+def detail_columns_from_text(text: str) -> List[str]:
+    normalized = text.lower()
+    columns = []
+    if "детализа" in normalized and ("номенклат" in normalized or "товар" in normalized):
+        columns.append("Номенклатура")
+    if "детализа" in normalized and ("по склад" in normalized or "по мест" in normalized or "в разрезе склад" in normalized):
+        columns.append("Склад")
+    return columns
+
+
+def merge_required_columns(existing: List[str], requested: List[str]) -> List[str]:
+    result = list(existing)
+    normalized = {item.strip().lower() for item in result}
+    for column in requested:
+        key = column.strip().lower()
+        if key and key not in normalized:
+            result.append(column)
+            normalized.add(key)
+    return result
 
 
 def unknown_intent(message: str, reasoning: str) -> IntentResult:
@@ -210,6 +268,9 @@ def skill_catalog(registry: SkillRegistry) -> List[Dict[str, Any]]:
                 "outputs": [item.to_dict() for item in skill.outputs],
                 "semantic_role": skill.semantic_role,
                 "supported_filter_roles": list(skill.supported_filter_roles),
+                "output_columns": list(skill.implementation.get("output_columns", []))
+                if isinstance(skill.implementation.get("output_columns"), list)
+                else [],
             }
         )
     return result

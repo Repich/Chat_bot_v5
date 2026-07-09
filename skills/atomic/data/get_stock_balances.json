@@ -37,5 +37,9 @@
   "tags": ["data", "stock"],
   "semantic_role": "stock_balance",
   "supported_filter_roles": ["product", "warehouse"],
-  "implementation_strategy": "semantic_measure_query"
+  "implementation_strategy": "semantic_measure_query",
+  "implementation": {
+    "output_columns": ["Склад", "Остаток"],
+    "optional_output_columns": ["Номенклатура"]
+  }
 }

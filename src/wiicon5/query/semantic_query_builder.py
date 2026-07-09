@@ -8,6 +8,7 @@ from wiicon5.knowledge.bindings import BindingResolver
 from wiicon5.models import SemanticFilter, SkillBinding, SkillContract
 from wiicon5.query.query_builder import QueryBuildError, QueryBuilder
 from wiicon5.query.query_draft import QueryDraft
+from wiicon5.semantic_roles import roles_match
 
 
 class SemanticQueryBuilder(QueryBuilder):
@@ -62,7 +63,7 @@ def build_measure_table_query(*, skill: SkillContract, binding: SkillBinding, in
     quantity_field = required_field(binding, "quantity")
     warehouse_name_expr = binding.fields.get("warehouse_name", f"{warehouse_field}.Наименование")
     select_lines = []
-    if not input_has_value(inputs, "product"):
+    if not input_has_value(inputs, "product") or column_required(inputs, "product", "номенклатура", "товар"):
         select_lines.append(f"    {alias}.{product_field} КАК Номенклатура")
     select_lines.extend(
         [
@@ -220,7 +221,11 @@ def semantic_filters_from_inputs(inputs: Dict[str, Any]) -> List[SemanticFilter]
 
 
 def compile_semantic_filter(alias: str, binding: SkillBinding, item: SemanticFilter, params: Dict[str, Any]) -> str:
-    field = required_field(binding, item.semantic_field)
+    field = binding.fields.get(item.semantic_field)
+    if not field and roles_match(binding.semantic_role, item.semantic_field):
+        return compile_generic_entity_filter(alias, binding, item, params)
+    if not field:
+        field = required_field(binding, item.semantic_field)
     left = f"{alias}.{field}"
     operator = item.operator.lower()
     if operator in {"equals", "eq", "=", "равно"}:
@@ -232,6 +237,59 @@ def compile_semantic_filter(alias: str, binding: SkillBinding, item: SemanticFil
     if operator in {"in", "in_list"}:
         return f"{left} В {render_1c_value(item.value, params, item.semantic_field)}"
     raise QueryBuildError(f"Unsupported semantic filter operator: {item.operator}")
+
+
+def compile_generic_entity_filter(alias: str, binding: SkillBinding, item: SemanticFilter, params: Dict[str, Any]) -> str:
+    candidate_fields = generic_entity_filter_fields(binding)
+    if not candidate_fields:
+        raise QueryBuildError(
+            f"Binding for {binding.skill_id} does not define searchable fields for semantic role: {item.semantic_field}"
+        )
+    operator = item.operator.lower()
+    parameter_expr = render_1c_value(item.value, params, item.semantic_field)
+    conditions = []
+    for field in candidate_fields:
+        left = generic_search_expression(alias, field)
+        if operator in {"equals", "eq", "=", "равно"}:
+            conditions.append(f"{left} = {parameter_expr}")
+        elif operator in {"contains", "substring"}:
+            conditions.append(f"{left} ПОДОБНО \"%\" + {parameter_expr} + \"%\"")
+        elif operator in {"starts_with", "prefix"}:
+            conditions.append(f"{left} ПОДОБНО {parameter_expr} + \"%\"")
+        else:
+            raise QueryBuildError(f"Unsupported semantic filter operator for generic entity lookup: {item.operator}")
+    if len(conditions) == 1:
+        return conditions[0]
+    return "(" + " ИЛИ ".join(conditions) + ")"
+
+
+def generic_entity_filter_fields(binding: SkillBinding) -> List[str]:
+    result = []
+    for role in ["name", "warehouse_type", "city"]:
+        field = binding.fields.get(role)
+        if field and field not in result:
+            result.append(field)
+    for role, field in binding.fields.items():
+        if role == "ref" or field in result:
+            continue
+        result.append(field)
+    return result[:4]
+
+
+def generic_search_expression(alias: str, field: str) -> str:
+    if field.endswith(".Наименование") or field in {"Наименование", "Название"}:
+        return f"{alias}.{field}"
+    return f"ПРЕДСТАВЛЕНИЕ({alias}.{field})"
+
+
+def column_required(inputs: Dict[str, Any], *names: str) -> bool:
+    requested = [str(item).strip().lower() for item in inputs.get("required_columns", []) or []]
+    if not requested:
+        return False
+    for requested_column in requested:
+        if any(name.lower() in requested_column for name in names):
+            return True
+    return False
 
 
 def input_has_value(inputs: Dict[str, Any], name: str) -> bool:

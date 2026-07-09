@@ -97,6 +97,7 @@ class ArtifactRequirement:
     source: str = "skill"
     required: bool = True
     constraints: List[SemanticFilter] = field(default_factory=list)
+    required_columns: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ArtifactRequirement":
@@ -106,6 +107,7 @@ class ArtifactRequirement:
             source=str(data.get("source", "skill")),
             required=bool(data.get("required", True)),
             constraints=[SemanticFilter.from_dict(item) for item in data.get("constraints", [])],
+            required_columns=[str(item) for item in data.get("required_columns", [])],
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -115,6 +117,7 @@ class ArtifactRequirement:
             "source": self.source,
             "required": self.required,
             "constraints": [item.to_dict() for item in self.constraints],
+            "required_columns": list(self.required_columns),
         }
 
 

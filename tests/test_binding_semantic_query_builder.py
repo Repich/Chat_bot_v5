@@ -125,6 +125,52 @@ class BindingSemanticQueryBuilderTests(unittest.TestCase):
         self.assertNotIn("ТоварыНаСкладах", draft.query)
         self.assertNotIn("Номенклатура", draft.query)
 
+    def test_stock_query_keeps_product_column_when_user_requests_product_detail(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        skill = registry.get("get_stock_balances")
+        assert skill is not None
+        store = InMemoryBindingStore([custom_stock_binding()])
+        builder = SemanticQueryBuilder(BindingResolver(store))
+
+        draft = builder.build(
+            skill,
+            {
+                "product": {"ref": "product-ref-1"},
+                "required_columns": ["Номенклатура"],
+                "limit": 10,
+            },
+            ConversationContext(session_id="s1", config_fingerprint="cfg_custom"),
+        )
+
+        self.assertIn("Остатки.Товар КАК Номенклатура", draft.query)
+        self.assertIn("Остатки.Товар = &product", draft.query)
+
+    def test_entity_query_can_search_by_generic_entity_role(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        skill = registry.get("get_warehouses")
+        assert skill is not None
+        store = InMemoryBindingStore([custom_warehouse_binding()])
+        builder = SemanticQueryBuilder(BindingResolver(store))
+
+        draft = builder.build(
+            skill,
+            {
+                "filters": [
+                    {
+                        "semantic_field": "warehouse",
+                        "operator": "contains",
+                        "value": "розничный",
+                    }
+                ],
+                "limit": 10,
+            },
+            ConversationContext(session_id="s1", config_fingerprint="cfg_custom"),
+        )
+
+        self.assertIn("Места.Название ПОДОБНО", draft.query)
+        self.assertIn("ПРЕДСТАВЛЕНИЕ(Места.Категория) ПОДОБНО", draft.query)
+        self.assertEqual(draft.params["warehouse"], "розничный")
+
     def test_stock_query_without_product_returns_product_column_instead_of_requiring_context(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         skill = registry.get("get_stock_balances")

@@ -84,8 +84,26 @@ def _skill_accepts_constraint(skill, constraint) -> bool:  # type: ignore[no-unt
     return (
         any(roles_match(constraint.semantic_field, role) for role in skill.supported_filter_roles)
         or any(roles_match(input_port.name, constraint.semantic_field) for input_port in skill.inputs)
+        or any(
+            artifact_role_for_ref_list(input_port.type) and roles_match(artifact_role_for_ref_list(input_port.type), constraint.semantic_field)
+            for input_port in skill.inputs
+        )
+        or roles_match(skill.semantic_role, constraint.semantic_field)
         or constraint_selects_skill_domain(skill, constraint)
     )
+
+
+def artifact_role_for_ref_list(artifact_type: str) -> str:
+    if not artifact_type.endswith("RefList"):
+        return ""
+    base = artifact_type[: -len("RefList")]
+    mapping = {
+        "Product": "product",
+        "Warehouse": "warehouse",
+        "Counterparty": "counterparty",
+        "Document": "document",
+    }
+    return mapping.get(base, base[:1].lower() + base[1:] if base else "")
 
 
 def count_skill_misused_for_non_count_aggregate(
