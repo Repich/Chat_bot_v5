@@ -737,6 +737,12 @@
       ${renderInfoSection("Технический контракт", implementationFacts(item))}
       ${renderTags(item.tags)}
       ${item.description ? renderJsonDetails("Исходное описание контракта", { description: item.description, capabilities: item.capabilities || [] }) : ""}
+      <div class="skill-action-panel">
+        <label>Комментарий проверки
+          <textarea class="text-area compact skill-reason-input" data-skill-id="${escapeHtml(id)}" placeholder="Что проверено человеком и почему статус можно изменить"></textarea>
+        </label>
+        <p class="skill-inline-error hidden"></p>
+      </div>
       <div class="entity-actions">
         ${actionButton("Открыть", "open-skill", "skill-id", id, "primary-button")}
         ${actionButton("Отметить проверенным", "skill-promote", "skill-id", id, "secondary-button")}

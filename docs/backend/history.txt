@@ -1,3 +1,8 @@
+5.0.0-alpha.78
+- Skill lifecycle endpoint /api/admin/skills/<id>/promote теперь умеет работать с global learned_query candidates из skills/learned/candidates, а не только с bot-specific опубликованными навыками.
+- Global learned candidate при отметке проверенным переносится в skills/learned/verified, получает lifecycle_events и audit event; ошибка "Bot-specific skill not found" для learned_financial_metrics устранена.
+- Добавлен web-server regression test на продвижение global learned_financial_metrics из candidate в verified через HTTP API.
+
 5.0.0-alpha.77
 - Learned query candidates теперь можно отклонять через endpoint /api/admin/workbench/synthesis/candidates/<id>/reject: кандидат переносится из skills/learned/candidates в skills/learned/blocked, исчезает из активной очереди и сохраняет audit trail.
 - Ответ API для learned query candidates теперь включает query_spec. Для period_metric_aggregate явно показываются source, period_field, metrics и признак, что текст запроса собирается рантаймом, а не хранится как raw query.

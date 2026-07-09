@@ -32,14 +32,29 @@
     return element && element.closest ? element.closest("[data-draft-id]") : null;
   }
 
+  function closestSkillCard(button) {
+    const element = buttonElement(button);
+    return element && element.closest ? element.closest("[data-skill-id]") : null;
+  }
+
   function readDraftCardValue(button, selector) {
     const card = closestDraftCard(button);
     const element = card ? card.querySelector(selector) : null;
     return element ? String(element.value || "").trim() : "";
   }
 
+  function readSkillCardValue(button, selector) {
+    const card = closestSkillCard(button);
+    const element = card ? card.querySelector(selector) : null;
+    return element ? String(element.value || "").trim() : "";
+  }
+
   function readDraftComment(button) {
     return readDraftCardValue(button, ".draft-comment-input") || readValue("approvalCommentInput");
+  }
+
+  function readSkillReason(button) {
+    return readSkillCardValue(button, ".skill-reason-input") || readValue("skillLifecycleReasonInput");
   }
 
   function parseDraftSmokeParams(button) {
@@ -545,7 +560,7 @@
         method: "POST",
         body: {
           actor: "web-lifecycle",
-          reason: readValue("skillLifecycleReasonInput"),
+          reason: readSkillReason(button),
           target_status: readValue("skillTargetStatusInput"),
           regression_case_ids: regressionCaseIds,
           successful_runs: Number(readValue("skillSuccessfulRunsInput") || 0),

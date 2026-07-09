@@ -25,6 +25,7 @@ from wiicon5.web.admin_security import AdminSecurityConfig
 from wiicon5.web.server import make_handler, run_http_server, synthesis_candidate_trace_summary
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.preview import QueryPreviewService
+from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.smoke import McpSmokeTestService
 from wiicon5.workbench.trace_import import TraceDraftImporter
 
@@ -443,6 +444,67 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertTrue(allowed["ok"])
         self.assertIn("function adminHeaders", static_api)
         self.assertIn("X-WIICON5-Admin-Token", static_api)
+
+    def test_global_learned_candidate_can_be_promoted_from_catalog(self) -> None:
+        agent = AgentOrchestrator(registry=SkillRegistry(), decomposer=ScriptedGoalDecomposer({}))
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bot_root = root / "bot"
+            global_skills = root / "global_skills"
+            write_global_learned_financial_candidate(global_skills)
+            onboarding_manager = OnboardingManager(bot_instance_root=bot_root)
+            server = HTTPServer(
+                ("127.0.0.1", 0),
+                make_handler(
+                    agent,
+                    onboarding_manager=onboarding_manager,
+                    skill_catalog=SkillCatalogService(global_skills_dir=global_skills, bot_instance_root=bot_root),
+                ),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                promote_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/skills/learned_financial_metrics/promote",
+                    data=json.dumps(
+                        {
+                            "actor": "consultant",
+                            "reason": "Проверен источник, поле периода и формулы выручки/прибыли.",
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                promoted = json.loads(urllib.request.urlopen(promote_request, timeout=5).read().decode("utf-8"))
+                catalog = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/skills/catalog/learned_financial_metrics",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                candidate_path_exists = (
+                    global_skills / "learned" / "candidates" / "learned_financial_metrics.json"
+                ).exists()
+                verified_path_exists = (
+                    global_skills / "learned" / "verified" / "learned_financial_metrics.json"
+                ).exists()
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertTrue(promoted["ok"], promoted)
+        self.assertEqual(promoted["lifecycle"]["before_status"], "candidate")
+        self.assertEqual(promoted["lifecycle"]["after_status"], "verified")
+        self.assertTrue(promoted["lifecycle"]["path"].endswith("/learned/verified/learned_financial_metrics.json"))
+        self.assertFalse(candidate_path_exists)
+        self.assertTrue(verified_path_exists)
+        self.assertEqual(catalog["skill"]["status"], "verified")
+        self.assertEqual(catalog["skill"]["source_kind"], "global_verified")
 
     def test_health_and_chat_return_json(self) -> None:
         question = "Привет"
@@ -918,10 +980,10 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("/static/app.js", chat_page)
         self.assertIn("/static/api.js", chat_page)
         self.assertIn("/static/workbench.js", chat_page)
-        self.assertIn("app.js?v=5.0.0-alpha.77", chat_page)
-        self.assertIn("workbench.js?v=5.0.0-alpha.77", chat_page)
-        self.assertIn("renderers.js?v=5.0.0-alpha.77", chat_page)
-        self.assertIn("styles.css?v=5.0.0-alpha.77", chat_page)
+        self.assertIn("app.js?v=5.0.0-alpha.78", chat_page)
+        self.assertIn("workbench.js?v=5.0.0-alpha.78", chat_page)
+        self.assertIn("renderers.js?v=5.0.0-alpha.78", chat_page)
+        self.assertIn("styles.css?v=5.0.0-alpha.78", chat_page)
         self.assertIn("/static/renderers.js", chat_page)
         self.assertIn("topNav", chat_page)
         self.assertIn("view-chat", chat_page)
@@ -1160,6 +1222,9 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("Опубликовать как кандидат", static_renderers)
         self.assertIn("candidateQuerySpecText", static_renderers)
         self.assertIn("Шаблон запроса", static_renderers)
+        self.assertIn("skill-reason-input", static_renderers)
+        self.assertIn("readSkillReason", static_workbench)
+        self.assertIn("closestSkillCard", static_workbench)
         self.assertIn('postSkillLifecycleAction("promote"', static_app)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")
@@ -1327,6 +1392,48 @@ def write_learned_skill_candidate(skills_root: Path, *, trace_path: str) -> None
         },
     }
     (candidates / "learned_product_price_lookup.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def write_global_learned_financial_candidate(skills_root: Path) -> None:
+    candidates = skills_root / "learned" / "candidates"
+    candidates.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "skill_id": "learned_financial_metrics",
+        "version": "0.1.0",
+        "kind": "data_acquisition",
+        "status": "candidate",
+        "description": "Learned financial metrics.",
+        "capabilities": ["learned_query", "retrieve_metrics", "produce:FinancialMetricsTable"],
+        "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": False}],
+        "outputs": [{"name": "table", "type": "FinancialMetricsTable", "required": True}],
+        "tags": ["learned", "metrics"],
+        "supported_filter_roles": ["year", "period", "period_granularity"],
+        "semantic_role": "financial_metrics",
+        "implementation_strategy": "learned_query",
+        "implementation": {
+            "kind": "period_metric_aggregate",
+            "source": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+            "alias": "ВыручкаИСебестоимостьПродаж",
+            "period_field": "Период",
+            "metrics": [
+                {
+                    "label": "Выручка",
+                    "expression": "СУММА(ВыручкаИСебестоимостьПродаж.СуммаВыручкиБезНДС)",
+                },
+                {
+                    "label": "Прибыль",
+                    "expression": "СУММА(ВыручкаИСебестоимостьПродаж.СуммаВыручкиБезНДС - ВыручкаИСебестоимостьПродаж.СтоимостьБезНДС)",
+                },
+            ],
+            "activity_filter": True,
+            "activity_field": "Активность",
+            "metadata_dependencies": ["РегистрНакопления.ВыручкаИСебестоимостьПродаж"],
+        },
+    }
+    (candidates / "learned_financial_metrics.json").write_text(
         json.dumps(payload, ensure_ascii=False),
         encoding="utf-8",
     )

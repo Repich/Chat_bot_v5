@@ -10,13 +10,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
-from wiicon5.models import SkillContract, SkillStatus
+from wiicon5.models import SkillContract, SkillStatus, ValidationIssue
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.regression import load_cases, run_regression_replay, save_replay_result
 from wiicon5.workbench.audit import utc_now
 from wiicon5.workbench.approval import ApprovalStore
 from wiicon5.workbench.fingerprints import draft_hash, preview_fingerprint_payload
-from wiicon5.workbench.lifecycle import SkillLifecycleService
+from wiicon5.workbench.lifecycle import SkillLifecycleEvent, SkillLifecycleResult, SkillLifecycleService
 from wiicon5.workbench.metadata_explorer import MetadataExplorerService
 from wiicon5.workbench.models import HumanSkillDraft
 from wiicon5.workbench.onboarding_candidates import OnboardingCandidateService
@@ -946,6 +946,25 @@ def make_handler(
                         target_status=str(payload.get("target_status") or ""),
                         admin_approval=bool(payload.get("admin_approval", False)),
                     )
+                if not result.ok and any(issue.code == "skill_not_found" for issue in result.issues):
+                    result = change_catalog_learned_skill_lifecycle(
+                        effective_skill_catalog.snapshot(),
+                        skill_id,
+                        action=action,
+                        actor=actor,
+                        reason=reason,
+                        target_status=str(payload.get("target_status") or ""),
+                        regression_case_ids=[
+                            str(item)
+                            for item in payload.get("regression_case_ids", [])
+                            if str(item).strip()
+                        ]
+                        if isinstance(payload.get("regression_case_ids"), list)
+                        else [],
+                        successful_runs=int_or_default(payload.get("successful_runs"), 0),
+                        admin_approval=bool(payload.get("admin_approval", False)),
+                        audit=effective_draft_store.audit,
+                    )
                 status_code = 200 if result.ok else lifecycle_error_status(result)
                 self._send_json(status_code, {"ok": result.ok, "lifecycle": result.to_dict()})
             except Exception as exc:
@@ -1431,6 +1450,217 @@ def reject_learned_agent_candidate(snapshot, candidate_id: str, *, actor: str, c
     }
 
 
+def change_catalog_learned_skill_lifecycle(
+    snapshot,
+    skill_id: str,
+    *,
+    action: str,
+    actor: str,
+    reason: str,
+    target_status: str = "",
+    regression_case_ids: List[str] | None = None,
+    successful_runs: int = 0,
+    admin_approval: bool = False,
+    audit,
+) -> SkillLifecycleResult:
+    item = catalog_learned_skill_item(snapshot, skill_id)
+    if item is None:
+        return SkillLifecycleResult(
+            ok=False,
+            issues=[ValidationIssue("skill_not_found", f"Skill not found: {skill_id}", "skill_id")],
+        )
+    skill = item.skill
+    issues = lifecycle_required_issues(actor=actor, reason=reason)
+    target = target_status_for_catalog_action(
+        skill.status,
+        action=action,
+        requested=target_status,
+        successful_runs=successful_runs,
+        admin_approval=admin_approval,
+    )
+    if target is None:
+        issues.append(
+            ValidationIssue(
+                "unsupported_transition",
+                f"Transition from {skill.status.value} through action {action} is not allowed.",
+                "status",
+            )
+        )
+    if action == "rollback" and not admin_approval:
+        issues.append(
+            ValidationIssue(
+                "missing_admin_approval",
+                "Rollback requires explicit admin_approval=true.",
+                "admin_approval",
+            )
+        )
+    if issues:
+        return SkillLifecycleResult(
+            ok=False,
+            skill=skill,
+            before_status=skill.status.value,
+            after_status=target.value if isinstance(target, SkillStatus) else "",
+            path=str(item.source_path),
+            issues=issues,
+        )
+    assert isinstance(target, SkillStatus)
+    return write_catalog_learned_skill_transition(
+        item,
+        target,
+        actor=actor,
+        reason=reason,
+        action=action,
+        audit=audit,
+        payload={
+            "regression_case_ids": list(regression_case_ids or []),
+            "successful_runs": successful_runs,
+            "admin_approval": admin_approval,
+        },
+    )
+
+
+def catalog_learned_skill_item(snapshot, skill_id: str):
+    for item in sorted(snapshot.items, key=lambda candidate: (0 if candidate.bot_specific else 1, str(candidate.source_path))):
+        skill = item.skill
+        if skill.skill_id != skill_id:
+            continue
+        if skill.implementation_strategy != "learned_query":
+            continue
+        if "learned" in item.source_path.parts:
+            return item
+    return None
+
+
+def lifecycle_required_issues(*, actor: str, reason: str) -> List[ValidationIssue]:
+    issues: List[ValidationIssue] = []
+    if not actor.strip():
+        issues.append(ValidationIssue("missing_actor", "Actor is required for skill lifecycle changes.", "actor"))
+    if not reason.strip():
+        issues.append(ValidationIssue("missing_reason", "Reason is required for skill lifecycle changes.", "reason"))
+    return issues
+
+
+def target_status_for_catalog_action(
+    current: SkillStatus,
+    *,
+    action: str,
+    requested: str,
+    successful_runs: int,
+    admin_approval: bool,
+) -> SkillStatus | None:
+    if action == "promote":
+        target = parse_catalog_status(requested) if requested else None
+        if target is None:
+            if current == SkillStatus.CANDIDATE:
+                target = SkillStatus.VERIFIED
+            elif current == SkillStatus.VERIFIED:
+                target = SkillStatus.STABLE
+        if (current, target) in {
+            (SkillStatus.CANDIDATE, SkillStatus.VERIFIED),
+            (SkillStatus.VERIFIED, SkillStatus.STABLE),
+        }:
+            if target == SkillStatus.STABLE and not (admin_approval or successful_runs >= 3):
+                return None
+            return target
+        return None
+    if action == "block" and current not in {SkillStatus.DRAFT, SkillStatus.BLOCKED}:
+        return SkillStatus.BLOCKED
+    if action == "deprecate" and current not in {SkillStatus.DRAFT, SkillStatus.DEPRECATED}:
+        return SkillStatus.DEPRECATED
+    if action == "rollback" and current in {SkillStatus.BLOCKED, SkillStatus.DEPRECATED}:
+        target = parse_catalog_status(requested)
+        if target in {SkillStatus.CANDIDATE, SkillStatus.VERIFIED, SkillStatus.STABLE}:
+            return target
+    return None
+
+
+def parse_catalog_status(value: str) -> SkillStatus | None:
+    try:
+        return SkillStatus(value)
+    except ValueError:
+        return None
+
+
+def write_catalog_learned_skill_transition(
+    item,
+    target: SkillStatus,
+    *,
+    actor: str,
+    reason: str,
+    action: str,
+    audit,
+    payload: Mapping[str, Any],
+) -> SkillLifecycleResult:
+    skill = item.skill
+    before = skill.to_dict()
+    event = SkillLifecycleEvent(
+        event_type=f"workbench.learned_skill.{action}",
+        skill_id=skill.skill_id,
+        actor=actor.strip(),
+        from_status=skill.status.value,
+        to_status=target.value,
+        ts=utc_now(),
+        reason=reason,
+        payload=dict(payload),
+    )
+    implementation = dict(skill.implementation)
+    lifecycle_events = implementation.get("lifecycle_events")
+    if not isinstance(lifecycle_events, list):
+        lifecycle_events = []
+    lifecycle_events.append(event.to_dict())
+    implementation["lifecycle_events"] = lifecycle_events[-20:]
+    updated = SkillContract.from_dict({**before, "status": target.value, "implementation": implementation})
+    target_path = learned_skill_status_path(item.source_path, skill.skill_id, target)
+    atomic_write_text(target_path, json.dumps(updated.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    if item.source_path != target_path:
+        try:
+            item.source_path.unlink()
+        except FileNotFoundError:
+            pass
+    audit.append(
+        event_type=event.event_type,
+        actor=actor.strip(),
+        object_type="learned_skill",
+        object_id=skill.skill_id,
+        before=before,
+        after=updated.to_dict(),
+        payload={
+            **dict(payload),
+            "reason": reason,
+            "previous_path": str(item.source_path),
+            "path": str(target_path),
+        },
+    )
+    return SkillLifecycleResult(
+        ok=True,
+        skill=updated,
+        before_status=skill.status.value,
+        after_status=target.value,
+        path=str(target_path),
+        previous_path=str(item.source_path),
+        event=event,
+    )
+
+
+def learned_skill_status_path(source_path: Path, skill_id: str, status: SkillStatus) -> Path:
+    folder_by_status = {
+        SkillStatus.CANDIDATE: "candidates",
+        SkillStatus.VERIFIED: "verified",
+        SkillStatus.STABLE: "stable",
+        SkillStatus.DEPRECATED: "deprecated",
+        SkillStatus.BLOCKED: "blocked",
+        SkillStatus.DRAFT: "drafts",
+    }
+    folder = folder_by_status[status]
+    parts = list(source_path.parts)
+    for status_folder in ["candidates", "verified", "stable", "deprecated", "blocked", "drafts"]:
+        if status_folder in parts:
+            index = parts.index(status_folder)
+            parts[index] = folder
+            return Path(*parts[: index + 1]) / f"{safe_file_stem(skill_id)}.json"
+    return source_path.parent / folder / f"{safe_file_stem(skill_id)}.json"
+
+
 def learned_agent_candidate_item(snapshot, candidate_id: str):
     for item in sorted(snapshot.items, key=lambda candidate: (0 if candidate.bot_specific else 1, str(candidate.source_path))):
         skill = item.skill
@@ -1444,13 +1674,7 @@ def learned_agent_candidate_item(snapshot, candidate_id: str):
 
 
 def learned_candidate_target_path(source_path: Path, skill_id: str, status: SkillStatus) -> Path:
-    folder = "blocked" if status == SkillStatus.BLOCKED else status.value
-    parts = list(source_path.parts)
-    if "candidates" in parts:
-        index = parts.index("candidates")
-        parts[index] = folder
-        return Path(*parts[: index + 1]) / f"{safe_file_stem(skill_id)}.json"
-    return source_path.parent / folder / f"{safe_file_stem(skill_id)}.json"
+    return learned_skill_status_path(source_path, skill_id, status)
 
 
 def synthesis_candidate_trace_summary(trace_path: str) -> Dict[str, Any]:
