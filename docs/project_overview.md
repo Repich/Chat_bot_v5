@@ -82,7 +82,7 @@ runtime навыков, пайплайн синтеза запросов, инт
 - bot instance профиль, который отделяет тексты и доменные настройки конкретного
   бота от ядра агента;
 - подключаемые prompt/domain packs для правил 1С и торговых подсказок;
-- learned skills в статусе candidate с evidence и metadata dependency contract;
+- active learned skills с evidence и metadata dependency contract;
 - вычисляемый fingerprint конфигурации при режиме `WIICON5_CONFIG_FINGERPRINT=auto`.
 - onboarding pipeline по выгрузке конфигурации, который создает candidates,
   metadata index, semantic dictionary, register usage map и query patterns без
@@ -99,7 +99,7 @@ runtime навыков, пайплайн синтеза запросов, инт
   формирует диагностический handoff разработчику;
 - verifier candidate bindings через MCP перед ручным утверждением bindings;
 - regression case tooling из trace;
-- composer explainability trace с выбранными и отклоненными candidate skills.
+- composer explainability trace с выбранными и отклоненными навыками.
 
 Проект остается alpha-версией. Архитектура проверяется на реальных вопросах и
 корректируется по трассам, когда видно неправильную границу ответственности.

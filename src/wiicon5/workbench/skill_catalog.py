@@ -39,15 +39,25 @@ class SkillCatalogItem:
             "semantic_role": self.skill.semantic_role or "",
             "supported_filter_roles": list(self.skill.supported_filter_roles),
             "implementation_strategy": self.skill.implementation_strategy,
+            "implementation": dict(self.skill.implementation),
             "source_path": str(self.source_path),
             "source_kind": self.source_kind,
             "bot_specific": self.bot_specific,
+            "user_editable": self.user_editable,
             "runtime_active_by_default": self.runtime_active_by_default,
         }
 
     @property
     def runtime_active_by_default(self) -> bool:
         return self.skill.status not in {SkillStatus.DRAFT, SkillStatus.CANDIDATE, SkillStatus.DEPRECATED, SkillStatus.BLOCKED}
+
+    @property
+    def user_editable(self) -> bool:
+        if self.skill.implementation_strategy == "learned_query":
+            return True
+        if self.bot_specific:
+            return True
+        return "learned" in self.source_path.parts
 
 
 @dataclass(frozen=True)

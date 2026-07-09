@@ -37,7 +37,7 @@ class LearnedSkillStore:
     def __init__(self, *, skills_dir: Path, registry: SkillRegistry) -> None:
         self.skills_dir = skills_dir
         self.learned_dir = skills_dir / "learned"
-        self.candidates_dir = self.learned_dir / "candidates"
+        self.active_dir = self.learned_dir / "active"
         self.evidence_dir = self.learned_dir / "evidence"
         self.registry = registry
 
@@ -74,8 +74,8 @@ class LearnedSkillStore:
             config_fingerprint=config_fingerprint,
         )
         skill = skill_from_spec(spec, intent=intent, goal=goal)
-        self.candidates_dir.mkdir(parents=True, exist_ok=True)
-        path = self.candidates_dir / f"{skill.skill_id}.json"
+        self.active_dir.mkdir(parents=True, exist_ok=True)
+        path = self.active_dir / f"{skill.skill_id}.json"
         created = not path.exists()
         path.write_text(json.dumps(skill.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         evidence_path = self.write_evidence(skill, spec, synthesis_result.trace, created_from_trace)
@@ -335,7 +335,7 @@ def skill_from_spec(
             "skill_id": skill_id,
             "version": "0.1.0",
             "kind": SkillKind.DATA.value,
-            "status": SkillStatus.CANDIDATE.value,
+            "status": SkillStatus.VERIFIED.value,
             "description": f"Learned query skill for {description_terms}.",
             "capabilities": [
                 "learned_query",
@@ -386,7 +386,7 @@ def lookup_skill_from_spec(spec: Dict[str, Any], *, intent: IntentResult) -> Ski
             "skill_id": skill_id,
             "version": "0.1.0",
             "kind": SkillKind.DATA.value,
-            "status": SkillStatus.CANDIDATE.value,
+            "status": SkillStatus.VERIFIED.value,
             "description": f"Learned parameterized lookup query for {description_terms}.",
             "capabilities": [
                 "learned_query",

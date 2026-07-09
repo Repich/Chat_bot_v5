@@ -196,11 +196,15 @@ Prompts разделены на слои:
 работать только с `one_c_standard`, а WIICON/local профиль подключает торговые
 подсказки отдельно.
 
-### Learned Skills Lifecycle
+### Learned Skills
 
-Новый learned skill после одного успешного synthesis не считается verified. Он
-сохраняется как `candidate` в `skills/learned/candidates` и получает evidence в
-`skills/learned/evidence/<skill_id>/`.
+Новый обобщаемый learned skill после успешного synthesis сразу считается
+доступным агенту. Он сохраняется в `skills/learned/active` со статусом
+`verified`, добавляется в runtime registry и появляется в каталоге навыков.
+Человек не переводит его по длинному lifecycle: он может открыть навык,
+поправить описание или implementation/query и сохранить изменения, либо удалить
+неудачный навык. Если похожий вопрос снова понадобится, агент создаст навык
+заново.
 
 В implementation learned skill хранится:
 
@@ -215,17 +219,15 @@ metadata dependency contract еще существуют.
 
 ### Skill Workbench
 
-Подробная архитектура human-in-the-loop процесса описана в
+Подробная архитектура каталога навыков описана в
 [`docs/architecture/skill_workbench.md`](architecture/skill_workbench.md).
-Workbench не является JSON-редактором навыков. Он вводит управляемый lifecycle:
-человек создает или проверяет `HumanSkillDraft`, система валидирует источники и
-поля, генерирует безопасный preview query, запускает smoke test через MCP,
-сохраняет evidence и только после approval публикует bot-specific candidate
-skill.
+Workbench больше не ведет пользователя через статусы candidate/verified/stable.
+Он показывает каталог навыков, объясняет назначение каждого skill contract и
+дает простые действия для пользовательских/learned навыков: сохранить правку или
+удалить. Базовые seed skills из `skills/atomic` защищены от правки в UI.
 
-Ключевое ограничение: candidate skills не становятся runtime-active по умолчанию,
-а onboarding hints и LLM reasoning не считаются подтвержденными metadata fields
-без MCP/XML evidence.
+Ключевое ограничение остается прежним: onboarding hints и LLM reasoning не
+считаются подтвержденными metadata fields без MCP/XML evidence.
 
 ### Configuration Profile
 
@@ -290,7 +292,8 @@ XML-derived поля получают `trust=verified`, а поля, найде�
 Trace можно превратить в regression case. Runner поддерживает два режима:
 валидацию формата case pack и replay через агента. Replay проверяет source,
 тип artifact, ожидаемые колонки, уточнения и запрещенные объекты метаданных.
-Promotion candidate -> verified требует успешный replay для связанных case id.
+Regression replay остается инструментом контроля качества после изменения или
+удаления навыков, но больше не является обязательным шагом promotion workflow.
 
 ### Skill Composer Explainability
 

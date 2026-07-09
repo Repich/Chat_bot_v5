@@ -194,7 +194,7 @@ class WorkbenchSynthesisCandidateTests(unittest.TestCase):
 
             result = orchestrator.handle(question, session_id="s1")
             candidates = store.list_candidates()
-            learned_path = root / "skills" / "learned" / "candidates" / "learned_product_price_lookup.json"
+            learned_path = root / "skills" / "learned" / "active" / "learned_product_price_lookup.json"
             learned_exists = learned_path.exists()
             skipped_files = list((root / "runs").glob("agent_*/workbench/synthesis_candidate_skipped.json"))
             skipped = json.loads(skipped_files[0].read_text(encoding="utf-8")) if skipped_files else {}

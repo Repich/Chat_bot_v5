@@ -1,105 +1,68 @@
 # Workbench User Guide
 
-Use Workbench when the agent found a useful query, when onboarding suggests a
-candidate, or when an expert wants to define a reusable business skill.
+Workbench нужен для простого контроля навыков агента. Агент сам создает
+обобщаемые learned skills после успешного ответа. Такой навык сразу активен и
+может быть использован в похожем вопросе.
 
-## 1. Inspect Existing Skills
+## 1. Открыть Каталог Навыков
 
-Open `Settings -> Skill Workbench -> Навыки`. The Workbench panel shows a
-human-readable summary first and keeps the raw JSON below it for diagnostics.
+Откройте `Мастерская навыков -> Навыки`.
 
-To open one skill, paste its `skill_id` into `Skill ID` and click
-`Открыть skill`.
+Карточка навыка показывает:
 
-Check:
+- что делает навык;
+- когда он выбирается;
+- какие входные данные принимает;
+- что возвращает;
+- технический контракт и путь к файлу.
 
-- status: `candidate`, `verified`, `stable`, `deprecated`, or `blocked`;
-- example capabilities and supported filters;
-- inputs and outputs;
-- source path and whether the skill is bot-specific;
-- runtime activity flag.
+Базовые системные навыки защищены от правки в интерфейсе. Это seed skills из
+`skills/atomic`, которые нужны агенту для штатной работы.
 
-`candidate`, `deprecated`, and `blocked` skills are visible for review but are
-not used by the agent by default.
+## 2. Проверить Learned Skill
 
-## 2. Review Candidates
+Learned/user-created навыки можно редактировать прямо в карточке.
 
-Workbench has candidate queues from:
+Проверьте:
 
-- onboarding files;
-- successful query synthesis;
-- imported skill packs;
-- traces converted into drafts.
+- описание навыка;
+- источник 1С и поля в `implementation`;
+- текст запроса 1С, если он хранится в навыке;
+- параметры, фильтры, лимиты и output columns;
+- соответствует ли результат смыслу вопроса, на котором навык был создан.
 
-Use `Onboarding candidates` and `Agent candidates` to load the queues. For each
-candidate, either create a draft, reject it, or ignore similar future
-suggestions. Candidate summaries are for review; the full evidence remains in
-the raw JSON block.
+Если навык корректен, ничего дополнительно утверждать не нужно: он уже активен.
 
-## 3. Edit A Draft
+## 3. Исправить Навык
 
-A draft should describe business meaning, not code:
+Для learned skills карточка показывает редактируемые поля:
 
-- title and description;
-- example questions;
-- 1C data sources;
-- field mappings and business roles;
-- filters;
-- calculation recipe;
-- presentation columns and notes.
+- `Запрос 1С`, если implementation хранит готовый query;
+- `Настройки выполнения, JSON`.
 
-Hints from onboarding are useful, but final query fields must be confirmed by
-MCP or verified XML metadata. When metadata is available, preview checks the
-draft against that metadata instead of trusting the draft fields alone.
+Измените нужные значения и нажмите `Сохранить изменения`.
 
-For the first supported manual scenario, use the guided `top_n_by_metric` form:
+Сохранение применяется сразу. Следующий похожий вопрос может использовать уже
+исправленный навык.
 
-- source object: the 1C register, document table, or virtual table name;
-- grouping role and field;
-- metric role and field;
-- optional filter role and field;
-- aggregation and limit;
-- field confirmation flag after checking metadata.
+## 4. Удалить Навык
 
-`Draft JSON` is an advanced override. Leave it empty for normal consultant use.
+Если навык неверный, слишком частный или опасный, нажмите `Удалить`.
 
-Metadata object cards can fill the builder directly: use `Use as source` for the
-source object, then choose `Group`, `Metric`, or `Filter` near a field. The
-button only fills the form; preview still validates the resulting draft against
-available metadata.
+Удаление проще старого lifecycle: навык исчезает из каталога и перестает
+использоваться. Если похожий вопрос снова понадобится, агент попробует создать
+новый навык на основании актуальных метаданных и результата MCP.
 
-Each create/update/preview/smoke/publish action returns `trace_path` in the raw
-JSON response. Use that folder when diagnosing Workbench behavior: it contains
-compact `request`, `draft_before`/`draft_after`, preview, smoke, validation, or
-publish payloads depending on the action.
+## 5. Где Смотреть Диагностику
 
-## 4. Validate And Smoke
+Для разбора ошибок используйте:
 
-Before publication:
+- trace run в ответе агента;
+- `runs/<run_id>/diagnostics/query_synthesis_failure.json`, если синтез запроса
+  не справился;
+- сырой JSON в карточке результата Workbench;
+- `docs/backend/history.txt` и `docs/frontend/history.txt` для изменений версии.
 
-1. Generate preview query.
-2. Review warnings and validation issues.
-3. If the draft query has parameters, fill `Smoke params JSON` with test values.
-4. Run MCP smoke test.
-5. Inspect sample rows.
-6. Approve only if the business meaning and result are correct.
-
-Smoke test samples are intentionally limited; they are evidence, not a full data
-export.
-Approval and publication are tied to the current draft hash, preview hash, and
-successful `smoke_id`. If the draft changes after smoke, rerun smoke and approve
-the new result.
-
-## 5. Publish And Promote
-
-Publishing requires an explicit approval comment and the latest successful
-`smoke_id`; it creates a `candidate` skill. To make it runtime-active:
-
-1. Create or choose regression cases.
-2. Run regression replay from the Workbench panel.
-3. Paste the skill id into `Skill ID`, add the regression case ids and a reason,
-   then promote candidate to `verified`.
-4. Later promote verified to `stable` after successful runs or explicit admin
-   approval.
-
-Use `block` for unsafe or incorrect skills and `deprecated` for replaced skills.
+Старые endpoint-ы черновиков и кандидатов могут сохраняться для совместимости и
+диагностики, но основной пользовательский сценарий больше не требует черновиков,
+approval, smoke, promotion или ручного перевода статусов.

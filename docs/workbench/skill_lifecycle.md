@@ -1,41 +1,14 @@
 # Skill Lifecycle
 
-Workbench uses explicit skill statuses.
+Начиная с `5.0.0-alpha.79` длинный пользовательский lifecycle навыков отключен.
 
-## Statuses
+Актуальная модель:
 
-- `candidate`: created from a draft, import, or generated evidence; not active by
-  default.
-- `verified`: reviewed, smoke-tested, approved, and regression-replayed; active.
-- `stable`: mature verified skill; active.
-- `deprecated`: replaced or obsolete; inactive.
-- `blocked`: unsafe or wrong; inactive.
+- агент создает обобщаемый learned skill сразу активным;
+- человек открывает его в каталоге;
+- человек при необходимости правит query/implementation;
+- человек удаляет неверный навык вместо перевода по статусам.
 
-## Allowed Transitions
-
-```text
-candidate -> verified
-verified -> stable
-candidate/verified/stable -> deprecated
-any non-draft skill -> blocked
-deprecated/blocked -> candidate/verified/stable by explicit rollback
-```
-
-Direct `candidate -> stable` is forbidden.
-
-## Promotion Gates
-
-`candidate -> verified` requires:
-
-- published candidate skill;
-- human approval evidence;
-- at least one regression case id;
-- successful replay result for every supplied case id.
-
-`verified -> stable` requires:
-
-- enough successful runs, or
-- explicit admin approval with a reason.
-
-Every transition updates the bot-specific skill file, moves it into the matching
-status folder, appends lifecycle evidence, and writes an audit event.
+Внутренний enum статусов и старые admin endpoint-ы могут оставаться в коде для
+обратной совместимости и диагностики старых данных, но web-интерфейс больше не
+ведет консультанта через `candidate -> verified -> stable`.

@@ -1,7 +1,7 @@
 # Workbench Admin Security
 
-Workbench endpoints under `/api/admin/*` can inspect metadata, run smoke tests,
-start onboarding, and publish candidate skills. They are admin functionality.
+Workbench endpoints under `/api/admin/*` can inspect metadata, start onboarding,
+and edit or delete learned/user-created skills. They are admin functionality.
 
 ## Settings
 
@@ -24,9 +24,9 @@ Rules:
   `Authorization: Bearer <token>` or `X-WIICON5-Admin-Token: <token>`.
 - `WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS` limits onboarding config dump paths. Use
   the platform path separator for multiple roots.
-- `WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT=false` keeps manual raw-query draft
-  editing disabled. Leave it off unless an architect is intentionally validating
-  raw queries through the full Workbench lifecycle.
+- `WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT=false` keeps legacy manual raw-query
+  draft editing disabled. Leave it off unless an architect is intentionally
+  using old diagnostic endpoints.
 
 The regular `/chat`, `/health`, history, and version endpoints do not require the
 admin token.

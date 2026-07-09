@@ -1443,7 +1443,7 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("Основная касса", result.message)
         self.assertIn("domain:StockBalanceTable", gap_payload["gaps"][0]["missing"])
 
-    def test_orchestrator_persists_learned_period_metric_as_inactive_candidate(self) -> None:
+    def test_orchestrator_persists_learned_period_metric_as_active_skill(self) -> None:
         first_question = "Покажи выручку и прибыль за 2025 год"
         second_question = "Покажи выручку и прибыль за все годы по годам"
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills" / "atomic")
@@ -1493,7 +1493,7 @@ class QuerySynthesisTests(unittest.TestCase):
 
             first = orchestrator.handle(first_question, session_id="s1")
 
-            learned_path = skills_dir / "learned" / "candidates" / "learned_financial_metrics.json"
+            learned_path = skills_dir / "learned" / "active" / "learned_financial_metrics.json"
             learned_exists = learned_path.exists()
             learned_payload = json.loads(learned_path.read_text(encoding="utf-8")) if learned_exists else {}
             evidence_path = skills_dir / "learned" / "evidence" / "learned_financial_metrics" / "creation_trace.json"
@@ -1502,7 +1502,7 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(first.source, "query_synthesis_ok")
         self.assertTrue(learned_exists)
         self.assertTrue(evidence_exists)
-        self.assertEqual(learned_payload["status"], "candidate")
+        self.assertEqual(learned_payload["status"], "verified")
         self.assertIn("metadata_dependency_contract", learned_payload["implementation"])
         self.assertEqual(
             learned_payload["implementation"]["metadata_dependency_contract"][0]["object"],
@@ -1512,7 +1512,7 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertFalse(learned_payload["implementation"]["evidence"]["human_confirmed"])
         self.assertEqual(learned_payload["implementation"]["config_fingerprint"], "cfg")
         self.assertIsNotNone(registry.get("learned_financial_metrics"))
-        self.assertNotIn("learned_financial_metrics", [skill.skill_id for skill in registry.active()])
+        self.assertIn("learned_financial_metrics", [skill.skill_id for skill in registry.active()])
         self.assertEqual(len(llm.calls), 2)
 
     def test_learned_store_does_not_persist_non_generalized_fixed_query(self) -> None:
@@ -1541,7 +1541,7 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertFalse(learned_dir_exists)
 
-    def test_learned_store_persists_parameterized_lookup_candidate(self) -> None:
+    def test_learned_store_persists_active_parameterized_lookup(self) -> None:
         query = price_lookup_query()
         registry = SkillRegistry([])
         with TemporaryDirectory() as temp_dir:
@@ -1577,7 +1577,7 @@ class QuerySynthesisTests(unittest.TestCase):
                 config_fingerprint="cfg",
             )
 
-            skill_payload = json.loads((Path(temp_dir) / "learned" / "candidates" / "learned_product_price_lookup.json").read_text(encoding="utf-8"))
+            skill_payload = json.loads((Path(temp_dir) / "learned" / "active" / "learned_product_price_lookup.json").read_text(encoding="utf-8"))
 
         self.assertIsNotNone(result)
         self.assertEqual(skill_payload["implementation"]["kind"], "parameterized_lookup_query")
@@ -1589,6 +1589,7 @@ class QuerySynthesisTests(unittest.TestCase):
         )
         self.assertEqual(skill_payload["implementation"]["config_fingerprint"], "cfg")
         self.assertIsNotNone(registry.get("learned_product_price_lookup"))
+        self.assertIn("learned_product_price_lookup", [skill.skill_id for skill in registry.active()])
 
     def test_learned_lookup_canonicalizes_product_name_role(self) -> None:
         registry = SkillRegistry([])
@@ -1624,7 +1625,7 @@ class QuerySynthesisTests(unittest.TestCase):
                 ),
             )
 
-            skill_path = Path(temp_dir) / "learned" / "candidates" / "learned_product_price_lookup.json"
+            skill_path = Path(temp_dir) / "learned" / "active" / "learned_product_price_lookup.json"
             skill_exists = skill_path.exists()
             skill_payload = json.loads(skill_path.read_text(encoding="utf-8"))
 
@@ -1723,12 +1724,25 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("price_type", str(exc.exception))
 
     def test_learned_query_rejects_different_config_fingerprint(self) -> None:
-        skill = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills").get("learned_financial_metrics")
-        assert skill is not None
         skill = SkillContract.from_dict(
             {
-                **skill.to_dict(),
-                "implementation": {**skill.implementation, "config_fingerprint": "cfg_a"},
+                "skill_id": "learned_financial_metrics",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Financial metrics",
+                "capabilities": ["learned_query", "retrieve_metrics"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": False}],
+                "outputs": [{"name": "table", "type": "FinancialMetricsTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "kind": "period_metric_aggregate",
+                    "source": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+                    "alias": "ВыручкаИСебестоимостьПродаж",
+                    "period_field": "Период",
+                    "metrics": [{"label": "Выручка", "expression": "СУММА(ВыручкаИСебестоимостьПродаж.СуммаВыручкиБезНДС)"}],
+                    "config_fingerprint": "cfg_a",
+                },
             }
         )
 

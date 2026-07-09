@@ -397,6 +397,10 @@ def make_handler(
             parsed = urlparse(self.path)
             if self._reject_admin_if_needed(parsed.path):
                 return
+            if parsed.path.startswith("/api/admin/skills/catalog/"):
+                skill_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                self._update_catalog_skill(skill_id)
+                return
             if parsed.path.startswith("/api/admin/workbench/drafts/"):
                 draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
                 self._update_draft(draft_id)
@@ -407,6 +411,10 @@ def make_handler(
             parsed = urlparse(self.path)
             if self._reject_admin_if_needed(parsed.path):
                 return
+            if parsed.path.startswith("/api/admin/skills/catalog/"):
+                skill_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                self._update_catalog_skill(skill_id)
+                return
             if parsed.path.startswith("/api/admin/workbench/drafts/"):
                 draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
                 self._update_draft(draft_id)
@@ -416,6 +424,11 @@ def make_handler(
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if self._reject_admin_if_needed(parsed.path):
+                return
+            if parsed.path.startswith("/api/admin/skills/catalog/"):
+                skill_id = unquote(parsed.path.rsplit("/", 1)[-1])
+                actor = first_query_value(parse_qs(parsed.query), "actor") or "admin"
+                self._delete_catalog_skill(skill_id, actor=actor)
                 return
             if parsed.path.startswith("/api/admin/workbench/drafts/"):
                 draft_id = unquote(parsed.path.rsplit("/", 1)[-1])
@@ -460,6 +473,84 @@ def make_handler(
                 self._send_json(201, {"ok": True, "draft": created.to_dict(), "trace_path": str(trace.path)})
             except Exception as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _update_catalog_skill(self, skill_id: str) -> None:
+            try:
+                payload = self._read_json()
+                actor = str(payload.get("actor") or "admin")
+                item = effective_skill_catalog.snapshot().get(skill_id)
+                if item is None:
+                    self._send_json(404, {"ok": False, "error": "skill_not_found", "skill_id": skill_id})
+                    return
+                if not skill_catalog_item_is_user_editable(item):
+                    self._send_json(
+                        403,
+                        {
+                            "ok": False,
+                            "error": "skill_not_editable",
+                            "message": "Only learned/user-created skills can be edited from the UI.",
+                            "skill_id": skill_id,
+                        },
+                    )
+                    return
+                updated = updated_skill_contract_from_payload(item.skill, payload)
+                atomic_write_text(
+                    item.source_path,
+                    json.dumps(updated.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                )
+                effective_draft_store.audit.append(
+                    event_type="workbench.skill.updated",
+                    actor=actor,
+                    object_type="skill",
+                    object_id=skill_id,
+                    before=item.skill.to_dict(),
+                    after=updated.to_dict(),
+                    payload={"path": str(item.source_path)},
+                )
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "skill": {
+                            **item.to_dict(),
+                            **updated.to_dict(),
+                            "source_path": str(item.source_path),
+                        },
+                    },
+                )
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        def _delete_catalog_skill(self, skill_id: str, *, actor: str) -> None:
+            item = effective_skill_catalog.snapshot().get(skill_id)
+            if item is None:
+                self._send_json(404, {"ok": False, "error": "skill_not_found", "skill_id": skill_id})
+                return
+            if not skill_catalog_item_is_user_editable(item):
+                self._send_json(
+                    403,
+                    {
+                        "ok": False,
+                        "error": "skill_not_deletable",
+                        "message": "Only learned/user-created skills can be deleted from the UI.",
+                        "skill_id": skill_id,
+                    },
+                )
+                return
+            before = item.skill.to_dict()
+            try:
+                item.source_path.unlink()
+            except FileNotFoundError:
+                pass
+            effective_draft_store.audit.append(
+                event_type="workbench.skill.deleted",
+                actor=actor,
+                object_type="skill",
+                object_id=skill_id,
+                before=before,
+                payload={"path": str(item.source_path)},
+            )
+            self._send_json(200, {"ok": True, "skill_id": skill_id, "path": str(item.source_path)})
 
         def _update_draft(self, draft_id: str) -> None:
             try:
@@ -1191,6 +1282,48 @@ def lifecycle_error_status(result) -> int:
     if "missing_actor" in codes or "missing_reason" in codes:
         return 400
     return 409
+
+
+def skill_catalog_item_is_user_editable(item) -> bool:
+    return bool(getattr(item, "user_editable", False))
+
+
+def updated_skill_contract_from_payload(skill: SkillContract, payload: Mapping[str, Any]) -> SkillContract:
+    current = skill.to_dict()
+    incoming = payload.get("skill") if isinstance(payload.get("skill"), Mapping) else {}
+    if incoming:
+        allowed = {
+            "version",
+            "kind",
+            "description",
+            "capabilities",
+            "inputs",
+            "outputs",
+            "tags",
+            "semantic_role",
+            "supported_filter_roles",
+            "implementation_strategy",
+            "implementation",
+        }
+        for key in allowed:
+            if key in incoming:
+                current[key] = incoming[key]
+    if "description" in payload:
+        current["description"] = str(payload.get("description") or "")
+    implementation = dict(current.get("implementation") or {})
+    if isinstance(payload.get("implementation"), Mapping):
+        implementation = dict(payload["implementation"])
+    if "query" in payload:
+        implementation["query"] = str(payload.get("query") or "")
+    if isinstance(payload.get("params"), Mapping):
+        implementation["params"] = dict(payload["params"])
+    if implementation:
+        current["implementation"] = implementation
+    current["skill_id"] = skill.skill_id
+    if skill.implementation_strategy == "learned_query":
+        current["status"] = SkillStatus.VERIFIED.value
+        current["implementation_strategy"] = "learned_query"
+    return SkillContract.from_dict(current)
 
 
 def raw_query_edit_requested(payload: Dict[str, Any]) -> bool:

@@ -1,57 +1,44 @@
 # Skill Workbench Overview
 
-Skill Workbench is the human review layer for WIICON ChatBot 5. It lets a 1C
-expert or strong business user inspect, create, test, approve, and promote agent
-skills without editing Python code.
-
-The key rule is simple:
+Skill Workbench is the human control layer for WIICON ChatBot 5 skills. The
+current model is intentionally simple:
 
 ```text
-The human confirms business meaning and data structure.
-The system generates and verifies the formal skill.
+agent learns a reusable skill -> skill is active immediately
+human reviews it -> human edits or deletes it when needed
 ```
 
-Workbench works with bot-specific data under `bot_instances/<bot_id>/`:
+There is no user-facing status workflow. The interface does not ask a consultant
+to move a skill through candidate, approval, verified, and stable states.
 
-- human-readable skill drafts;
-- onboarding and query-synthesis candidates;
-- query preview and smoke evidence;
-- approval records;
-- regression cases and replay results;
-- candidate, verified, stable, deprecated, and blocked skills;
-- append-only audit events.
+## What The Workbench Shows
+
+- catalog of loaded skills;
+- readable skill purpose and applicability;
+- inputs, outputs, capabilities, tags, implementation strategy;
+- editable query/implementation for learned or bot-specific skills;
+- raw JSON for diagnostics.
+
+Seed skills from `skills/atomic` are read-only in the web UI. Learned skills and
+bot-specific user skills are editable and deletable.
 
 ## Main Flow
 
 ```text
-onboarding/query synthesis/trace/manual draft
--> HumanSkillDraft
--> preview query
--> MCP smoke test
--> human approval
--> candidate skill
--> regression replay
--> verified skill
--> stable skill
+successful query synthesis
+-> generalized learned skill
+-> skills/learned/active/<skill_id>.json
+-> runtime registry
+-> Workbench catalog
+-> edit or delete by human
 ```
 
-Candidate skills are not runtime-active by default. The agent can use promoted
-`verified` and `stable` skills.
+If a learned skill is wrong, deleting it is the intended rejection path. The next
+similar user question gives the agent a chance to build a better version using
+current metadata, MCP results, and the latest prompts.
 
-## Web Client Shape
+## What Remains Internal
 
-The current web Workbench is intentionally simple:
-
-- a readable summary panel for skills, drafts, metadata, candidates, lifecycle,
-  and regression results;
-- raw JSON below the summary for diagnostics and support;
-- guided `top_n_by_metric` draft creation for the first manual skill-building
-  path;
-- explicit buttons for preview, smoke, approval, candidate publication,
-  regression replay, and lifecycle transitions.
-
-## What Workbench Is Not
-
-Workbench is not a raw JSON editor and not a shortcut around validation. Imported
-skills, onboarding hints, and generated queries stay as candidates until the
-normal review lifecycle has been completed.
+Older draft/candidate endpoints can remain for compatibility, tests, and
+diagnostics, but they are not the primary UI path. The Workbench screen is built
+around the skill catalog, not around lifecycle queues.

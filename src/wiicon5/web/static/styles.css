@@ -833,13 +833,6 @@ label {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.field-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
 .data-table {
   width: 100%;
   border-collapse: collapse;

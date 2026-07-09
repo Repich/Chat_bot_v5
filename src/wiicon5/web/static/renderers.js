@@ -692,12 +692,7 @@
   }
 
   function renderDraftWorkflowHelp() {
-    return `<ol class="compact-list">
-      <li><strong>Предпросмотр</strong> строит и проверяет запрос без публикации навыка.</li>
-      <li><strong>Проверить</strong> выполняет smoke-запуск через MCP с тестовыми параметрами.</li>
-      <li><strong>Утвердить проверку</strong> фиксирует решение человека: черновик проверен и может стать кандидатом.</li>
-      <li><strong>Опубликовать как кандидат</strong> создает skill-кандидат на основе черновика; после этого навык проходит дальнейший жизненный цикл.</li>
-    </ol>`;
+    return `<p class="muted">Черновики оставлены только для совместимости со старыми диагностическими endpoint-ами. В рабочем сценарии агент создает активный навык сразу, а человек правит или удаляет его через каталог навыков.</p>`;
   }
 
   function renderDraftActionInputs(id) {
@@ -721,13 +716,13 @@
     const item = skill || {};
     const id = item.skill_id || item.id || "";
     const outputs = producedArtifacts(item);
+    const editable = skillIsEditable(item);
     return `<article class="entity-card skill-card" data-skill-id="${escapeHtml(id)}">
       <div class="entity-card-header">
         <div>
           <div class="entity-kind">Навык</div>
           <h3>${escapeHtml(item.title || id || "Навык")}</h3>
         </div>
-        ${renderStatusPill(item.status || item.lifecycle_status || "active")}
       </div>
       ${renderInfoSection("Что делает", `<p>${escapeHtml(skillPurpose(item))}</p>`)}
       ${renderInfoSection("Когда выбирается", skillApplicability(item))}
@@ -737,18 +732,38 @@
       ${renderInfoSection("Технический контракт", implementationFacts(item))}
       ${renderTags(item.tags)}
       ${item.description ? renderJsonDetails("Исходное описание контракта", { description: item.description, capabilities: item.capabilities || [] }) : ""}
-      <div class="skill-action-panel">
-        <label>Комментарий проверки
-          <textarea class="text-area compact skill-reason-input" data-skill-id="${escapeHtml(id)}" placeholder="Что проверено человеком и почему статус можно изменить"></textarea>
-        </label>
-        <p class="skill-inline-error hidden"></p>
-      </div>
+      ${editable ? renderSkillEditor(item) : `<p class="muted">Базовый системный навык защищен от правки в интерфейсе.</p>`}
       <div class="entity-actions">
         ${actionButton("Открыть", "open-skill", "skill-id", id, "primary-button")}
-        ${actionButton("Отметить проверенным", "skill-promote", "skill-id", id, "secondary-button")}
-        ${actionButton("Заблокировать", "skill-block", "skill-id", id, "ghost-button")}
+        ${editable ? actionButton("Сохранить изменения", "skill-save", "skill-id", id, "secondary-button") : ""}
+        ${editable ? actionButton("Удалить", "skill-delete", "skill-id", id, "danger-button") : ""}
       </div>
     </article>`;
+  }
+
+  function skillIsEditable(skill) {
+    if (Object.prototype.hasOwnProperty.call(skill || {}, "user_editable")) {
+      return Boolean(skill.user_editable);
+    }
+    const path = String(skill.source_path || "");
+    return skill.implementation_strategy === "learned_query" || Boolean(skill.bot_specific) || path.indexOf("/learned/") >= 0;
+  }
+
+  function renderSkillEditor(skill) {
+    const implementation = skill.implementation && typeof skill.implementation === "object" ? skill.implementation : {};
+    const query = implementation.query ? String(implementation.query) : "";
+    const queryEditor = query
+      ? `<label>Запрос 1С
+          <textarea class="text-area json-area skill-query-input" spellcheck="false">${escapeHtml(query)}</textarea>
+        </label>`
+      : "";
+    return `<div class="skill-action-panel">
+      ${queryEditor}
+      <label>Настройки выполнения, JSON
+        <textarea class="text-area json-area skill-implementation-input" spellcheck="false">${escapeHtml(JSON.stringify(implementation, null, 2))}</textarea>
+      </label>
+      <p class="muted">Изменения применяются сразу. Если навык неверный, удалите его: агент создаст новый при следующем похожем вопросе.</p>
+    </div>`;
   }
 
   function renderDraftCard(draft) {
@@ -780,8 +795,6 @@
         ${actionButton("Открыть", "open-draft", "draft-id", id, "primary-button")}
         ${actionButton("Предпросмотр", "draft-preview", "draft-id", id, "secondary-button")}
         ${actionButton("Проверить", "draft-smoke", "draft-id", id, "secondary-button")}
-        ${actionButton("Утвердить проверку", "draft-approve", "draft-id", id, "secondary-button")}
-        ${actionButton("Опубликовать как кандидат", "draft-publish", "draft-id", id, "secondary-button")}
         ${actionButton("Удалить", "draft-delete", "draft-id", id, "danger-button")}
       </div>
       ${renderDraftActionFeedback(id)}
@@ -871,7 +884,7 @@
   function renderSkillsResponse(data) {
     const skills = data.skills || [];
     if (!skills.length) {
-      return `<div class="empty-state"><h3>Навыков пока нет</h3><p>После публикации кандидатов они появятся в этом списке.</p></div>`;
+      return `<div class="empty-state"><h3>Навыков пока нет</h3><p>После успешного обучения агента новые навыки появятся здесь сразу активными.</p></div>`;
     }
     return `<div class="summary-kpi">Навыков: ${escapeHtml(summaryCount(data.summary, skills.length))}</div>
       <div class="card-list entity-list">${skills.slice(0, 50).map(renderSkillCard).join("")}</div>`;
@@ -896,7 +909,7 @@
     }
     return `<div class="summary-kpi">Кандидатов: ${escapeHtml(summaryCount(data.summary, candidates.length))}</div>
       ${notice}
-      <p class="workbench-hint">Выберите кандидата: для raw synthesis создайте черновик, для обобщенного learned skill откройте навык и проверьте его жизненный цикл.</p>
+      <p class="workbench-hint">Это старый диагностический список. В рабочем сценарии обобщенные learned-навыки появляются в каталоге навыков сразу активными.</p>
       <div class="card-list entity-list">${candidates.slice(0, 50).map(renderCandidateCard).join("")}</div>`;
   }
 
@@ -925,9 +938,9 @@
 
   function renderPublicationResult(publication) {
     if (publication && publication.ok) {
-      return `<p><strong>Публикация выполнена.</strong> Черновик опубликован как кандидат навыка.</p>${renderIssueList(publication.issues)}`;
+      return `<p><strong>Старое действие выполнено.</strong> Черновик обработан механизмом совместимости.</p>${renderIssueList(publication.issues)}`;
     }
-    return `<p><strong>Публикация пока не выполнена.</strong> Нужно устранить блокеры.</p>${renderIssueList(publication && publication.issues)}`;
+    return `<p><strong>Старое действие не выполнено.</strong> Нужно устранить блокеры.</p>${renderIssueList(publication && publication.issues)}`;
   }
 
   function renderApprovalResult(approval) {
@@ -938,7 +951,7 @@
   }
 
   function renderLifecycleResult(lifecycle) {
-    return `<p>Жизненный цикл: ${escapeHtml(displayLabel((lifecycle && lifecycle.before_status) || ""))} -> ${escapeHtml(displayLabel((lifecycle && lifecycle.after_status) || ""))}</p>${renderIssueList(lifecycle && lifecycle.issues)}`;
+    return `<p>Старое действие со статусом: ${escapeHtml(displayLabel((lifecycle && lifecycle.before_status) || ""))} -> ${escapeHtml(displayLabel((lifecycle && lifecycle.after_status) || ""))}</p>${renderIssueList(lifecycle && lifecycle.issues)}`;
   }
 
   function renderDraftActionResult(data) {

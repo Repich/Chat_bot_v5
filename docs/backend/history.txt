@@ -1,3 +1,9 @@
+5.0.0-alpha.79
+- Learned skills теперь сохраняются сразу в skills/learned/active со статусом verified и добавляются в runtime registry без пользовательского candidate/promotion lifecycle.
+- Добавлены PATCH/DELETE endpoint-ы /api/admin/skills/catalog/<skill_id> для правки и удаления learned/user-created навыков; seed skills защищены от изменения через UI.
+- Catalog API теперь возвращает implementation и user_editable, чтобы Workbench мог показывать и редактировать запрос/implementation навыка.
+- Удалены старые runtime learned candidate/evidence файлы из репозитория; существующие пользовательские learned skills будут создаваться заново по мере работы агента.
+
 5.0.0-alpha.78
 - Skill lifecycle endpoint /api/admin/skills/<id>/promote теперь умеет работать с global learned_query candidates из skills/learned/candidates, а не только с bot-specific опубликованными навыками.
 - Global learned candidate при отметке проверенным переносится в skills/learned/verified, получает lifecycle_events и audit event; ошибка "Bot-specific skill not found" для learned_financial_metrics устранена.

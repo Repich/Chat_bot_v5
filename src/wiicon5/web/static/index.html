@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WIICON ChatBot 5</title>
-  <link rel="stylesheet" href="/static/styles.css?v=5.0.0-alpha.78">
+  <link rel="stylesheet" href="/static/styles.css?v=5.0.0-alpha.79">
 </head>
 <body>
   <div id="app" class="app">
@@ -61,12 +61,9 @@
         <div class="workbench-layout">
           <aside class="workspace-sidebar">
             <h2>Мастерская навыков</h2>
-            <p class="muted">Выберите очередь, откройте карточку и выполните следующее действие без ручного копирования идентификатора.</p>
+            <p class="muted">Все навыки агента сразу активны. Откройте навык, проверьте запрос, при необходимости поправьте или удалите.</p>
             <div class="workbench-tabs">
               <button id="skillCatalogButton" class="secondary-button" type="button">Навыки</button>
-              <button id="draftListButton" class="secondary-button" type="button">Черновики</button>
-              <button id="synthesisCandidatesButton" class="secondary-button" type="button">Кандидаты агента</button>
-              <button id="onboardingCandidatesButton" class="secondary-button" type="button">Кандидаты обучения</button>
             </div>
             <details class="advanced-panel">
               <summary>Открыть по идентификатору</summary>
@@ -75,85 +72,10 @@
                 <input id="skillDetailsInput" class="text-input" type="text" placeholder="skill_...">
                 <button id="skillDetailsButton" class="secondary-button" type="button">Открыть</button>
               </div>
-              <label class="field-label" for="draftDetailsInput">Идентификатор черновика</label>
-              <div class="inline-row">
-                <input id="draftDetailsInput" class="text-input" type="text" placeholder="draft_...">
-                <button id="draftDetailsButton" class="secondary-button" type="button">Открыть</button>
-              </div>
             </details>
           </aside>
 
           <section class="workspace-main">
-            <div class="card">
-              <div class="card-header">
-                <h2>Состояние выбранного объекта</h2>
-                <span id="workbenchStatusBadge" class="badge">ожидание</span>
-              </div>
-              <div id="workbenchStepper" class="stepper">
-                <span class="step active" data-step="draft">Черновик</span>
-                <span class="step" data-step="preview">Предпросмотр</span>
-                <span class="step" data-step="smoke">Проверочный запуск</span>
-                <span class="step" data-step="approval">Утверждение</span>
-                <span class="step" data-step="candidate">Кандидат</span>
-                <span class="step" data-step="verified">Проверен</span>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-header">
-                <h2>Мастер черновика</h2>
-                <span class="muted">ручное создание навыка</span>
-              </div>
-              <details class="advanced-panel draft-builder-details">
-                <summary>Создать черновик вручную</summary>
-                <p class="workbench-hint">Обычно черновик создается из карточки кандидата. Ручной мастер нужен, когда консультант уже знает объект 1С и поля.</p>
-              <div class="draft-grid">
-                <label>Название навыка<input id="draftTitleInput" class="text-input" type="text" placeholder="Остатки по складу"></label>
-                <label>Пример вопроса<input id="draftExampleQuestionInput" class="text-input" type="text" placeholder="Какой вопрос должен закрывать навык"></label>
-                <label>Описание<input id="draftDescriptionInput" class="text-input" type="text" placeholder="Бизнес-смысл навыка"></label>
-                <label>Псевдоним источника<input id="draftSourceAliasInput" class="text-input" type="text" value="Источник"></label>
-                <label>Источник 1С<input id="draftSourceObjectInput" class="text-input" type="text" placeholder="РегистрНакопления..."></label>
-                <label>Роль группировки<input id="draftGroupRoleInput" class="text-input" type="text" value="product"></label>
-                <label>Поле группировки<input id="draftGroupFieldInput" class="text-input" type="text" placeholder="Номенклатура"></label>
-                <label>Роль метрики<input id="draftMeasureRoleInput" class="text-input" type="text" value="metric"></label>
-                <label>Поле метрики<input id="draftMeasureFieldInput" class="text-input" type="text" placeholder="СуммаОстаток"></label>
-                <label>Название метрики<input id="draftMeasureLabelInput" class="text-input" type="text" placeholder="Сумма"></label>
-                <label>Агрегация<select id="draftAggregationInput" class="text-input"><option value="sum">сумма</option><option value="count">количество</option><option value="max">максимум</option><option value="min">минимум</option></select></label>
-                <label>Ограничение строк<input id="draftLimitInput" class="text-input" type="number" min="0" value="10"></label>
-                <label>Роль фильтра<input id="draftFilterRoleInput" class="text-input" type="text" placeholder="warehouse_type"></label>
-                <label>Поле фильтра<input id="draftFilterFieldInput" class="text-input" type="text" placeholder="Склад.ТипСклада"></label>
-                <label>Параметр фильтра<input id="draftFilterParameterInput" class="text-input" type="text" placeholder="ТипСклада"></label>
-                <label>Оператор фильтра<select id="draftFilterOperatorInput" class="text-input"><option value="equals">равно</option><option value="contains">содержит</option></select></label>
-              </div>
-              <label class="checkbox-line"><input id="draftFieldsConfirmedInput" type="checkbox"> Поля подтверждены в метаданных</label>
-              <details class="advanced-panel">
-                <summary>Технический JSON черновика</summary>
-                <textarea id="draftJsonInput" class="text-area json-area" spellcheck="false" placeholder='{"title":"...","example_questions":["..."]}'></textarea>
-              </details>
-              <div class="button-grid wide">
-                <button id="createDraftButton" class="primary-button" type="button">Создать</button>
-                <button id="previewDraftButton" class="secondary-button" type="button">Предпросмотр</button>
-                <button id="smokeDraftButton" class="secondary-button" type="button">Проверить</button>
-                <button id="publishDraftButton" class="secondary-button" type="button">Опубликовать кандидата</button>
-              </div>
-              </details>
-            </div>
-
-            <div class="card">
-              <div class="card-header">
-                <h2>Проверка и утверждение</h2>
-                <span class="muted">используется кнопками на карточках черновиков</span>
-              </div>
-              <div class="draft-grid compact-grid">
-                <label>Комментарий утверждения
-                  <textarea id="approvalCommentInput" class="text-area compact" placeholder="Что проверено человеком"></textarea>
-                </label>
-                <label>Тестовые параметры
-                  <textarea id="smokeParamsInput" class="text-area compact" spellcheck="false" placeholder='{"Склад":"Центральный"}'></textarea>
-                </label>
-              </div>
-            </div>
-
             <div class="card result-card">
               <div class="card-header">
                 <h2>Результат</h2>
@@ -161,63 +83,6 @@
               </div>
               <div id="workbenchSummary" class="summary-content">Мастерская навыков не загружена.</div>
               <div id="workbenchOutput" class="technical-output"></div>
-            </div>
-
-            <div class="card">
-              <details class="advanced-panel">
-                <summary>Дополнительные действия</summary>
-                <div class="draft-grid compact-grid">
-                  <label>Идентификатор кандидата обучения
-                    <input id="candidateIdInput" class="text-input" type="text" placeholder="onb_...">
-                  </label>
-                  <div class="button-grid">
-                    <button id="candidateCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
-                    <button id="candidateRejectButton" class="secondary-button" type="button">Отклонить</button>
-                  </div>
-                  <label>Идентификатор кандидата агента
-                    <input id="synthesisCandidateIdInput" class="text-input" type="text" placeholder="syn_...">
-                  </label>
-                  <div class="button-grid">
-                    <button id="synthesisCreateDraftButton" class="secondary-button" type="button">Создать черновик</button>
-                    <button id="synthesisRejectButton" class="secondary-button" type="button">Отклонить</button>
-                  </div>
-                  <button id="synthesisIgnoreSimilarButton" class="secondary-button" type="button">Игнорировать похожие</button>
-                </div>
-              </details>
-              <details class="advanced-panel">
-                <summary>Жизненный цикл и регрессия</summary>
-                <div class="draft-grid compact-grid">
-                  <label>Идентификатор навыка
-                    <input id="skillLifecycleIdInput" class="text-input" type="text" placeholder="skill_...">
-                  </label>
-                  <label>Причина изменения
-                    <input id="skillLifecycleReasonInput" class="text-input" type="text" placeholder="Что проверено и почему меняем статус">
-                  </label>
-                  <label>Идентификаторы регрессионных проверок
-                    <input id="skillRegressionCasesInput" class="text-input" type="text" placeholder="reg_case_1, reg_case_2">
-                  </label>
-                  <label>Новый статус
-                    <select id="skillTargetStatusInput" class="text-input"><option value="">По умолчанию</option><option value="verified">проверен</option><option value="stable">стабилен</option></select>
-                  </label>
-                  <label>Успешных проверок
-                    <input id="skillSuccessfulRunsInput" class="text-input" type="number" min="0" value="0">
-                  </label>
-                  <label class="checkbox-line"><input id="skillAdminApprovalInput" type="checkbox"> Подтверждено администратором</label>
-                  <div class="button-grid wide">
-                    <button id="skillPromoteButton" class="secondary-button" type="button">Применить статус</button>
-                    <button id="skillRollbackButton" class="secondary-button" type="button">Откатить</button>
-                    <button id="skillDeprecateButton" class="secondary-button" type="button">Пометить устаревшим</button>
-                    <button id="skillBlockButton" class="secondary-button" type="button">Заблокировать</button>
-                  </div>
-                  <label>Путь к регрессионным проверкам
-                    <input id="regressionCasesPathInput" class="text-input" type="text" placeholder="Пусто = bot_instance/regression">
-                  </label>
-                  <label>Префикс сессии
-                    <input id="regressionSessionPrefixInput" class="text-input" type="text" value="web-regression">
-                  </label>
-                  <button id="runRegressionButton" class="secondary-button" type="button">Запустить регрессию</button>
-                </div>
-              </details>
             </div>
           </section>
         </div>
@@ -293,9 +158,9 @@
     </main>
   </div>
 
-  <script src="/static/api.js?v=5.0.0-alpha.78"></script>
-  <script src="/static/renderers.js?v=5.0.0-alpha.78"></script>
-  <script src="/static/workbench.js?v=5.0.0-alpha.78"></script>
-  <script src="/static/app.js?v=5.0.0-alpha.78"></script>
+  <script src="/static/api.js?v=5.0.0-alpha.79"></script>
+  <script src="/static/renderers.js?v=5.0.0-alpha.79"></script>
+  <script src="/static/workbench.js?v=5.0.0-alpha.79"></script>
+  <script src="/static/app.js?v=5.0.0-alpha.79"></script>
 </body>
 </html>

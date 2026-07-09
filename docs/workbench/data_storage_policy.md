@@ -23,7 +23,8 @@ be committed accidentally:
 - `bot_instances/<bot_id>/workbench/audit/`;
 - `bot_instances/<bot_id>/workbench/smoke/`;
 - `bot_instances/<bot_id>/runs/`;
-- `bot_instances/<bot_id>/skills/candidates/`;
+- `bot_instances/<bot_id>/skills/learned/active/`;
+- legacy diagnostic folders such as `bot_instances/<bot_id>/skills/candidates/`;
 - `bot_instances/<bot_id>/skills/evidence/`;
 - `bot_instances/<bot_id>/regression/results/`.
 
@@ -31,12 +32,12 @@ These files can contain real business questions, metadata names, query text,
 sample rows, approval comments, and trace paths. Treat them as diagnostic
 evidence, not as product source.
 
-## Promotion Rule
+## Sharing Rule
 
 If a bot-specific skill must be shared, export it as a skill pack and review the
-pack contents before committing or transferring it. Importing a pack creates
-candidate skills only; they still require validation, smoke, approval, regression
-replay, and promotion before runtime use.
+pack contents before committing or transferring it. Imported or learned skills
+should be checked in the catalog after import; delete or edit them if they are
+too specific for the target bot instance.
 
 ## Regression Cases
 

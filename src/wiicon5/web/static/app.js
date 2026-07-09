@@ -386,17 +386,16 @@
     container.innerHTML = objects.map((object) => {
       const name = object.full_name || object.name || "";
       const fields = Array.isArray(object.fields) ? object.fields : [];
-      const fieldButtons = fields.slice(0, 40).map((field) => {
+      const fieldTags = fields.slice(0, 40).map((field) => {
         const fieldName = field.name || field;
-        return `<button class="ghost-button metadata-field-button" type="button" data-field-name="${renderers.escapeHtml(fieldName)}">${renderers.escapeHtml(fieldName)}</button>`;
+        return `<span class="tag">${renderers.escapeHtml(fieldName)}</span>`;
       }).join("");
       return `<article class="card metadata-object-card" data-object-name="${renderers.escapeHtml(name)}">
         ${renderers.renderMetadataObjectCard(object)}
         <div class="button-grid wide">
-          <button class="secondary-button metadata-source-button" type="button" data-object-name="${renderers.escapeHtml(name)}">Использовать как источник</button>
           <button class="secondary-button metadata-open-button" type="button" data-object-name="${renderers.escapeHtml(name)}">Открыть</button>
         </div>
-        <div class="field-picker">${fieldButtons}</div>
+        <div class="tag-row">${fieldTags}</div>
       </article>`;
     }).join("");
   }
@@ -474,8 +473,6 @@
     event.preventDefault();
     event.stopPropagation();
     const action = actionButton.dataset.action;
-    const candidateId = actionButton.dataset.candidateId || "";
-    const draftId = actionButton.dataset.draftId || "";
     const skillId = actionButton.dataset.skillId || "";
     const tracePath = actionButton.dataset.tracePath || "";
     if (action === "open-trace") {
@@ -486,34 +483,13 @@
       window.WiiconWorkbench.loadSkillDetailsById(skillId, actionButton);
       return;
     }
-    if (action === "skill-promote" || action === "skill-block") {
-      const lifecycleAction = action === "skill-promote" ? "promote" : "block";
-      window.WiiconWorkbench.postSkillLifecycleActionById(skillId, lifecycleAction, actionButton);
+    if (action === "skill-save") {
+      window.WiiconWorkbench.saveSkillById(skillId, actionButton);
       return;
     }
-    if (action === "open-draft") {
-      window.WiiconWorkbench.loadDraftDetailsById(draftId, actionButton);
+    if (action === "skill-delete") {
+      window.WiiconWorkbench.deleteSkillById(skillId, actionButton);
       return;
-    }
-    if (action === "draft-delete") {
-      window.WiiconWorkbench.deleteDraftById(draftId, actionButton);
-      return;
-    }
-    if (action.startsWith("draft-")) {
-      const draftAction = action.replace("draft-", "");
-      const backendAction = draftAction === "publish" ? "publish-candidate" : draftAction;
-      window.WiiconWorkbench.setCurrentDraftId(draftId);
-      window.WiiconWorkbench.postDraftAction(backendAction, actionButton);
-      return;
-    }
-    if (action.startsWith("synthesis-")) {
-      const synthesisAction = action.replace("synthesis-", "");
-      window.WiiconWorkbench.postSynthesisCandidateActionById(candidateId, synthesisAction, actionButton);
-      return;
-    }
-    if (action.startsWith("onboarding-")) {
-      const onboardingAction = action.replace("onboarding-", "");
-      window.WiiconWorkbench.postCandidateActionById(candidateId, onboardingAction, actionButton);
     }
   }
 
@@ -551,24 +527,6 @@
 
     optionalBind("skillCatalogButton", "click", (event) => window.WiiconWorkbench.loadSkillCatalog(event.currentTarget));
     optionalBind("skillDetailsButton", "click", (event) => window.WiiconWorkbench.loadSkillDetails(event.currentTarget));
-    optionalBind("draftListButton", "click", (event) => window.WiiconWorkbench.loadDraftList(event.currentTarget));
-    optionalBind("draftDetailsButton", "click", (event) => window.WiiconWorkbench.loadDraftDetails(event.currentTarget));
-    optionalBind("createDraftButton", "click", (event) => window.WiiconWorkbench.createDraft(event.currentTarget));
-    optionalBind("previewDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("preview", event.currentTarget));
-    optionalBind("smokeDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("smoke", event.currentTarget));
-    optionalBind("publishDraftButton", "click", (event) => window.WiiconWorkbench.postDraftAction("publish-candidate", event.currentTarget));
-    optionalBind("onboardingCandidatesButton", "click", (event) => window.WiiconWorkbench.loadOnboardingCandidates(event.currentTarget));
-    optionalBind("candidateCreateDraftButton", "click", (event) => window.WiiconWorkbench.postCandidateAction("create-draft", event.currentTarget));
-    optionalBind("candidateRejectButton", "click", (event) => window.WiiconWorkbench.postCandidateAction("reject", event.currentTarget));
-    optionalBind("synthesisCandidatesButton", "click", (event) => window.WiiconWorkbench.loadSynthesisCandidates(event.currentTarget));
-    optionalBind("synthesisCreateDraftButton", "click", (event) => window.WiiconWorkbench.postSynthesisCandidateAction("create-draft", event.currentTarget));
-    optionalBind("synthesisRejectButton", "click", (event) => window.WiiconWorkbench.postSynthesisCandidateAction("reject", event.currentTarget));
-    optionalBind("synthesisIgnoreSimilarButton", "click", (event) => window.WiiconWorkbench.postSynthesisCandidateAction("ignore-similar", event.currentTarget));
-    optionalBind("skillPromoteButton", "click", (event) => window.WiiconWorkbench.postSkillLifecycleAction("promote", event.currentTarget));
-    optionalBind("skillRollbackButton", "click", (event) => window.WiiconWorkbench.postSkillLifecycleAction("rollback", event.currentTarget));
-    optionalBind("skillDeprecateButton", "click", (event) => window.WiiconWorkbench.postSkillLifecycleAction("deprecate", event.currentTarget));
-    optionalBind("skillBlockButton", "click", (event) => window.WiiconWorkbench.postSkillLifecycleAction("block", event.currentTarget));
-    optionalBind("runRegressionButton", "click", (event) => window.WiiconWorkbench.runRegressionReplay(event.currentTarget));
     optionalBind("clearWorkbenchOutputButton", "click", () => {
       requiredElement("workbenchSummary").textContent = "Мастерская навыков очищена.";
       requiredElement("workbenchOutput").innerHTML = "";
@@ -578,20 +536,11 @@
     optionalBind("metadataSearchButton", "click", (event) => loadMetadataSearch(event.currentTarget));
     optionalBind("metadataObjectButton", "click", (event) => loadMetadataObject(event.currentTarget));
     requiredElement("metadataResults").addEventListener("click", (event) => {
-      const sourceButton = event.target.closest(".metadata-source-button");
-      if (sourceButton) {
-        window.WiiconWorkbench.applyMetadataSource(sourceButton.dataset.objectName);
-        return;
-      }
       const openButton = event.target.closest(".metadata-open-button");
       if (openButton) {
         requiredElement("metadataObjectInput").value = openButton.dataset.objectName;
         loadMetadataObject(openButton);
         return;
-      }
-      const fieldButton = event.target.closest(".metadata-field-button");
-      if (fieldButton) {
-        window.WiiconWorkbench.applyMetadataField(fieldButton.dataset.fieldName, "group");
       }
     });
 

@@ -112,7 +112,7 @@ for (const file of files) {
         )
 
     @unittest.skipUnless(shutil.which("osascript"), "JavaScriptCore renderer check requires osascript")
-    def test_static_renderers_show_candidates_before_summary(self) -> None:
+    def test_static_renderers_show_editable_skill_actions(self) -> None:
         script = """
 ObjC.import('Foundation');
 var window = {};
@@ -121,176 +121,59 @@ const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8Stri
 eval(text);
 const html = window.WiiconRenderers.renderSummary({
   ok: true,
-  candidates: [{
-    candidate_id: 'syn_test',
-    question: 'Покажи клиента с максимальной задолженностью',
-    answer: 'Альтаир, задолженность 194889',
-    row_count: 1,
-    status: 'candidate',
-    trace_path: '/tmp/trace',
-    query: 'ВЫБРАТЬ Контрагенты.Наименование КАК Клиент ИЗ Справочник.Контрагенты КАК Контрагенты',
-    params: { Период: '2026-01-01' },
-    metadata_objects: [{ full_name: 'РегистрНакопления.РасчетыСКлиентамиПоДокументам' }],
-    payload: {
-      intent: { business_goal: 'Найти клиента с максимальной задолженностью', reasoning: 'Нужно получить данные 1С.' },
-      goal: {
-        business_goal: 'Найти клиента с максимальной задолженностью',
-        required_artifacts: [{
-          constraints: [{ semantic_field: 'measure', operator: 'max', value: 'задолженность', raw_user_text: 'самая высокая' }]
-        }]
-      },
-      trace_summary: {
-        attempt_count: 2,
-        successful_attempt_count: 1,
-        final_query: {
-          query: 'ВЫБРАТЬ Контрагенты.Наименование КАК Клиент ИЗ Справочник.Контрагенты КАК Контрагенты',
-          params: { Период: '2026-01-01' },
-          limit: 100
-        },
-        rows_sample: [{ Клиент: 'Альтаир', Задолженность: 194889 }],
-        row_count: 1,
-        query_review: {
-          ok: true,
-          sources: [{ alias: 'Контрагенты', source: 'Справочник.Контрагенты', object_type: 'Справочник' }]
-        },
-        sufficiency: { sufficient: true, reasoning: 'Результат содержит клиента и задолженность.' },
-        answer_reasoning: 'Ответ основан на единственной строке результата.'
-      }
-    }
-  }],
-  summary: { total: 1, by_status: { candidate: 1 } }
-});
-for (const expected of ['Покажи клиента', 'Что хотел получить пользователь', 'Критерии отбора', 'Параметры запроса', 'Использованные источники 1С', 'Запрос 1С', 'Что вернул MCP', 'Проверки агента', 'Что проверить перед решением', 'Справочник.Контрагенты', 'Альтаир']) {
-  if (html.indexOf(expected) < 0) {
-    throw new Error('candidate detail is missing ' + expected + ': ' + html);
-  }
-}
-if (html.indexOf('Создать черновик') < 0) {
-  throw new Error('candidate action is missing: ' + html);
-}
-if (html.indexOf('data-action="synthesis-create-draft"') < 0) {
-  throw new Error('candidate action binding is missing: ' + html);
-}
-if (html.indexOf('data-action="open-trace"') < 0) {
-  throw new Error('candidate trace action is missing: ' + html);
-}
-if (html.indexOf('total:') >= 0 && html.indexOf('Покажи клиента') > html.indexOf('total:')) {
-  throw new Error('summary rendered before candidates: ' + html);
-}
-const learnedHtml = window.WiiconRenderers.renderSummary({
-  ok: true,
-  candidates: [{
-    candidate_id: 'learned_product_price_lookup',
-    candidate_kind: 'learned_skill',
+  skills: [{
     skill_id: 'learned_product_price_lookup',
-    question: 'Получить розничные цены на куртки',
-    answer: 'Обобщенный кандидат навыка, созданный агентом.',
-    status: 'candidate',
-    trace_path: '/tmp/trace',
-    query: 'ВЫБРАТЬ 1 КАК Цена',
-    params: { МаскаТовара: '%куртк%' },
-    metadata_objects: [{ full_name: 'РегистрСведений.ЦеныНоменклатуры' }],
-    payload: {
-      goal: { business_goal: 'Получить розничные цены на куртки', required_artifacts: [] },
-      trace_summary: {
-        final_query: { query: 'ВЫБРАТЬ 1 КАК Цена', params: { МаскаТовара: '%куртк%' }, limit: 100 },
-        rows_sample: [{ Цена: 34000 }],
-        row_count: 1
-      }
-    }
-  }],
-  summary: { total: 1, by_status: { candidate: 1 }, by_kind: { learned_skill: 1 } }
-});
-for (const expected of ['Обобщенный кандидат от агента', 'Открыть навык', 'data-action="open-skill"', 'data-skill-id="learned_product_price_lookup"']) {
-  if (learnedHtml.indexOf(expected) < 0) {
-    throw new Error('learned candidate rendering is missing ' + expected + ': ' + learnedHtml);
-  }
-}
-if (learnedHtml.indexOf('data-action="synthesis-create-draft"') >= 0) {
-  throw new Error('learned skill candidate must not use synthesis draft action: ' + learnedHtml);
-}
-const linkedHtml = window.WiiconRenderers.renderSummary({
-  ok: true,
-  candidates: [{
-    candidate_id: 'syn_linked',
-    question: 'Покажи клиента',
-    status: 'candidate',
-    payload: { draft_id: 'draft_existing' }
+    kind: 'data_acquisition',
+    status: 'verified',
+    description: 'Получает цены номенклатуры по типу цены и названию товара.',
+    capabilities: ['query_1c'],
+    inputs: [],
+    outputs: [{ name: 'prices', type: 'PriceTable', required: true, description: 'Цены номенклатуры' }],
+    tags: ['learned'],
+    implementation_strategy: 'learned_query',
+    implementation: {
+      kind: 'parameterized_lookup_query',
+      query: 'ВЫБРАТЬ 1 КАК Цена',
+      params: { ВидЦены: 'Розничная' }
+    },
+    user_editable: true,
+    source_path: '/tmp/skills/learned/active/learned_product_price_lookup.json'
   }],
   summary: { total: 1 }
 });
-if (linkedHtml.indexOf('Открыть черновик') < 0 || linkedHtml.indexOf('draft_existing') < 0) {
-  throw new Error('linked draft action is missing: ' + linkedHtml);
+for (const expected of ['Навыков: 1', 'Получает цены номенклатуры', 'Запрос 1С', 'Настройки выполнения, JSON', 'Сохранить изменения', 'Удалить']) {
+  if (html.indexOf(expected) < 0) {
+    throw new Error('editable skill detail is missing ' + expected + ': ' + html);
+  }
 }
-const draftHtml = window.WiiconRenderers.renderSummary({
+for (const expected of ['data-action="skill-save"', 'data-action="skill-delete"', 'skill-query-input', 'skill-implementation-input']) {
+  if (html.indexOf(expected) < 0) {
+    throw new Error('editable skill action is missing ' + expected + ': ' + html);
+  }
+}
+if (html.indexOf('Опубликовать как кандидат') >= 0 || html.indexOf('Жизненный цикл') >= 0 || html.indexOf('Отметить проверенным') >= 0) {
+  throw new Error('old lifecycle wording leaked into skill list: ' + html);
+}
+const protectedHtml = window.WiiconRenderers.renderSummary({
   ok: true,
-  notice: 'Черновик draft_existing найден. Следующий шаг: открыть черновик.',
-  draft: {
-    draft_id: 'draft_existing',
-    title: 'Черновик',
-    status: 'draft',
-    description: 'Проверяет клиента с максимальной задолженностью',
-    source_kind: 'query_synthesis_candidate',
-    example_questions: ['Покажи клиента с максимальной задолженностью'],
-    data_sources: [{ alias: 'Расчеты', object_name: 'РегистрНакопления.РасчетыСКлиентами', trust: 'hint' }],
-    calculation: { kind: 'trace_query', raw: { query: 'ВЫБРАТЬ 1 ИЗ Справочник.Контрагенты', limit: 1 } },
-    synthesis_candidate: {
-      candidate_id: 'syn_linked',
-      question: 'Покажи клиента',
-      answer: 'Клиент найден',
-      row_count: 1,
-      metadata_objects: [{ full_name: 'Справочник.Контрагенты' }]
-    }
+  skill: {
+    skill_id: 'render_entity_list_answer',
+    kind: 'presentation',
+    status: 'stable',
+    description: 'Render list',
+    capabilities: [],
+    inputs: [],
+    outputs: [],
+    implementation_strategy: 'deterministic_entity_list_renderer',
+    user_editable: false,
+    source_path: '/tmp/skills/atomic/presentation/render_entity_list_answer.json'
   }
 });
-if (draftHtml.indexOf('Следующий шаг') < 0 || draftHtml.indexOf('draft_existing') < 0) {
-  throw new Error('draft notice is missing: ' + draftHtml);
+if (protectedHtml.indexOf('Базовый системный навык защищен') < 0) {
+  throw new Error('protected skill hint is missing: ' + protectedHtml);
 }
-if (draftHtml.indexOf('Запрос 1С') < 0 || draftHtml.indexOf('Утвердить проверку') < 0 || draftHtml.indexOf('Опубликовать как кандидат') < 0) {
-  throw new Error('draft decision details are missing: ' + draftHtml);
-}
-if (draftHtml.indexOf('draft-comment-input') < 0 || draftHtml.indexOf('draft-smoke-params-input') < 0 || draftHtml.indexOf('draft-action-result-local') < 0 || draftHtml.indexOf('draft-action-feedback') < 0) {
-  throw new Error('draft local action inputs are missing: ' + draftHtml);
-}
-if (draftHtml.indexOf('data-action="draft-delete"') < 0) {
-  throw new Error('draft delete action is missing: ' + draftHtml);
-}
-const draftListHtml = window.WiiconRenderers.renderSummary({
-  ok: true,
-  notice: 'Черновик draft_existing удален.',
-  drafts: []
-});
-if (draftListHtml.indexOf('draft_existing удален') < 0) {
-  throw new Error('draft list notice is missing: ' + draftListHtml);
-}
-const previewAndDraftHtml = window.WiiconRenderers.renderSummary({
-  ok: true,
-  notice: 'Предпросмотр построен.',
-  draft: {
-    draft_id: 'draft_existing',
-    title: 'Черновик',
-    status: 'draft',
-    calculation: { kind: 'trace_query', raw: { query: 'ВЫБРАТЬ 1', limit: 1 } }
-  },
-  preview: { ok: true, query: 'ВЫБРАТЬ 1', params: { Период: '2026-01-01' }, limit: 1, issues: [], safety: { ok: true } }
-});
-if (previewAndDraftHtml.indexOf('Результат предпросмотра') < 0 || previewAndDraftHtml.indexOf('Черновик навыка') < 0 || previewAndDraftHtml.indexOf('draft-comment-input') < 0) {
-  throw new Error('preview replaced draft card: ' + previewAndDraftHtml);
-}
-const approvalAndDraftHtml = window.WiiconRenderers.renderSummary({
-  ok: true,
-  draft: { draft_id: 'draft_existing', title: 'Черновик', status: 'draft' },
-  approval: { approval_id: 'appr_1', decision: 'approved', comment: 'Проверено', smoke_id: 'smoke_1' }
-});
-if (approvalAndDraftHtml.indexOf('Результат утверждения') < 0 || approvalAndDraftHtml.indexOf('appr_1') < 0 || approvalAndDraftHtml.indexOf('Черновик навыка') < 0) {
-  throw new Error('approval result is not visible with draft card: ' + approvalAndDraftHtml);
-}
-const blockedPublishHtml = window.WiiconRenderers.renderSummary({
-  ok: true,
-  publication: { ok: false, issues: [{ code: 'missing_successful_smoke' }, { code: 'missing_human_approval' }] }
-});
-if (blockedPublishHtml.indexOf('Публикация пока не выполнена') < 0 || blockedPublishHtml.indexOf('Сначала выполните успешный проверочный запуск') < 0 || blockedPublishHtml.indexOf('утвердите черновик человеком') < 0) {
-  throw new Error('publish blockers are not visible in Russian: ' + blockedPublishHtml);
+if (protectedHtml.indexOf('data-action="skill-save"') >= 0 || protectedHtml.indexOf('data-action="skill-delete"') >= 0) {
+  throw new Error('protected skill must not expose edit/delete actions: ' + protectedHtml);
 }
 """
         subprocess.run(
@@ -445,13 +328,13 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("function adminHeaders", static_api)
         self.assertIn("X-WIICON5-Admin-Token", static_api)
 
-    def test_global_learned_candidate_can_be_promoted_from_catalog(self) -> None:
+    def test_active_learned_skill_can_be_updated_and_deleted_from_catalog(self) -> None:
         agent = AgentOrchestrator(registry=SkillRegistry(), decomposer=ScriptedGoalDecomposer({}))
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             bot_root = root / "bot"
             global_skills = root / "global_skills"
-            write_global_learned_financial_candidate(global_skills)
+            write_active_learned_financial_skill(global_skills)
             onboarding_manager = OnboardingManager(bot_instance_root=bot_root)
             server = HTTPServer(
                 ("127.0.0.1", 0),
@@ -465,20 +348,27 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
             thread.start()
             try:
                 host, port = server.server_address
-                promote_request = urllib.request.Request(
-                    f"http://{host}:{port}/api/admin/skills/learned_financial_metrics/promote",
+                update_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/skills/catalog/learned_financial_metrics",
                     data=json.dumps(
                         {
                             "actor": "consultant",
-                            "reason": "Проверен источник, поле периода и формулы выручки/прибыли.",
+                            "implementation": {
+                                "kind": "period_metric_aggregate",
+                                "source": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+                                "alias": "ВыручкаИСебестоимостьПродаж",
+                                "period_field": "Период",
+                                "metrics": [{"label": "Выручка", "expression": "СУММА(ВыручкаИСебестоимостьПродаж.СуммаВыручкиБезНДС)"}],
+                                "limit": 50,
+                            },
                         },
                         ensure_ascii=False,
                     ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
-                    method="POST",
+                    method="PATCH",
                 )
-                promoted = json.loads(urllib.request.urlopen(promote_request, timeout=5).read().decode("utf-8"))
-                catalog = json.loads(
+                updated = json.loads(urllib.request.urlopen(update_request, timeout=5).read().decode("utf-8"))
+                updated_catalog = json.loads(
                     urllib.request.urlopen(
                         f"http://{host}:{port}/api/admin/skills/catalog/learned_financial_metrics",
                         timeout=5,
@@ -486,25 +376,26 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                     .read()
                     .decode("utf-8")
                 )
-                candidate_path_exists = (
-                    global_skills / "learned" / "candidates" / "learned_financial_metrics.json"
-                ).exists()
-                verified_path_exists = (
-                    global_skills / "learned" / "verified" / "learned_financial_metrics.json"
+                delete_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/skills/catalog/learned_financial_metrics?actor=consultant",
+                    method="DELETE",
+                )
+                deleted = json.loads(urllib.request.urlopen(delete_request, timeout=5).read().decode("utf-8"))
+                active_path_exists = (
+                    global_skills / "learned" / "active" / "learned_financial_metrics.json"
                 ).exists()
             finally:
                 server.shutdown()
                 thread.join(timeout=2)
                 server.server_close()
 
-        self.assertTrue(promoted["ok"], promoted)
-        self.assertEqual(promoted["lifecycle"]["before_status"], "candidate")
-        self.assertEqual(promoted["lifecycle"]["after_status"], "verified")
-        self.assertTrue(promoted["lifecycle"]["path"].endswith("/learned/verified/learned_financial_metrics.json"))
-        self.assertFalse(candidate_path_exists)
-        self.assertTrue(verified_path_exists)
-        self.assertEqual(catalog["skill"]["status"], "verified")
-        self.assertEqual(catalog["skill"]["source_kind"], "global_verified")
+        self.assertTrue(updated["ok"], updated)
+        self.assertEqual(updated["skill"]["implementation"]["limit"], 50)
+        self.assertEqual(updated_catalog["skill"]["implementation"]["limit"], 50)
+        self.assertEqual(updated_catalog["skill"]["status"], "verified")
+        self.assertEqual(updated_catalog["skill"]["source_kind"], "global_learned")
+        self.assertTrue(deleted["ok"], deleted)
+        self.assertFalse(active_path_exists)
 
     def test_health_and_chat_return_json(self) -> None:
         question = "Привет"
@@ -639,26 +530,6 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                     urllib.request.urlopen(reject_synthesis_request, timeout=5).read().decode("utf-8")
                 )
                 synthesis_candidates_after_reject = json.loads(
-                    urllib.request.urlopen(
-                        f"http://{host}:{port}/api/admin/workbench/synthesis/candidates",
-                        timeout=5,
-                    )
-                    .read()
-                    .decode("utf-8")
-                )
-                reject_learned_candidate_request = urllib.request.Request(
-                    f"http://{host}:{port}/api/admin/workbench/synthesis/candidates/learned_product_price_lookup/reject",
-                    data=json.dumps(
-                        {"actor": "candidate-admin", "comment": "Слишком частная проверка"},
-                        ensure_ascii=False,
-                    ).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                rejected_learned_candidate = json.loads(
-                    urllib.request.urlopen(reject_learned_candidate_request, timeout=5).read().decode("utf-8")
-                )
-                synthesis_candidates_after_learned_reject = json.loads(
                     urllib.request.urlopen(
                         f"http://{host}:{port}/api/admin/workbench/synthesis/candidates",
                         timeout=5,
@@ -980,10 +851,11 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("/static/app.js", chat_page)
         self.assertIn("/static/api.js", chat_page)
         self.assertIn("/static/workbench.js", chat_page)
-        self.assertIn("app.js?v=5.0.0-alpha.78", chat_page)
-        self.assertIn("workbench.js?v=5.0.0-alpha.78", chat_page)
-        self.assertIn("renderers.js?v=5.0.0-alpha.78", chat_page)
-        self.assertIn("styles.css?v=5.0.0-alpha.78", chat_page)
+        asset_version = version["version"]
+        self.assertIn(f"app.js?v={asset_version}", chat_page)
+        self.assertIn(f"workbench.js?v={asset_version}", chat_page)
+        self.assertIn(f"renderers.js?v={asset_version}", chat_page)
+        self.assertIn(f"styles.css?v={asset_version}", chat_page)
         self.assertIn("/static/renderers.js", chat_page)
         self.assertIn("topNav", chat_page)
         self.assertIn("view-chat", chat_page)
@@ -1004,45 +876,28 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("startOnboardingButton", chat_page)
         self.assertIn("adminTokenInput", chat_page)
         self.assertIn("workbench-layout", chat_page)
-        self.assertIn("Проверка и утверждение", chat_page)
-        self.assertIn("Дополнительные действия", chat_page)
         self.assertIn("skillCatalogButton", chat_page)
-        self.assertIn("draftListButton", chat_page)
-        self.assertIn("onboardingCandidatesButton", chat_page)
-        self.assertIn("synthesisCandidatesButton", chat_page)
         self.assertIn("metadataSearchInput", chat_page)
-        self.assertIn("createDraftButton", chat_page)
-        self.assertIn("previewDraftButton", chat_page)
-        self.assertIn("smokeDraftButton", chat_page)
-        self.assertIn("approvalCommentInput", chat_page)
-        self.assertIn("candidateIdInput", chat_page)
-        self.assertIn("candidateCreateDraftButton", chat_page)
-        self.assertIn("candidateRejectButton", chat_page)
-        self.assertIn("synthesisCandidateIdInput", chat_page)
-        self.assertIn("synthesisCreateDraftButton", chat_page)
-        self.assertIn("synthesisRejectButton", chat_page)
-        self.assertIn("synthesisIgnoreSimilarButton", chat_page)
         self.assertIn("workbenchSummary", chat_page)
         self.assertIn("metadataObjectInput", chat_page)
         self.assertIn("metadataObjectButton", chat_page)
-        self.assertIn("draftDetailsButton", chat_page)
-        self.assertIn("draftExampleQuestionInput", chat_page)
-        self.assertIn("draftSourceObjectInput", chat_page)
-        self.assertIn("draftGroupFieldInput", chat_page)
-        self.assertIn("draftMeasureFieldInput", chat_page)
-        self.assertIn("draftFieldsConfirmedInput", chat_page)
-        self.assertIn("field-picker", static_app)
-        self.assertIn("Использовать как источник", static_app)
-        self.assertIn("skillLifecycleIdInput", chat_page)
         self.assertIn("skillDetailsButton", chat_page)
-        self.assertIn("skillRegressionCasesInput", chat_page)
-        self.assertIn("skillPromoteButton", chat_page)
-        self.assertIn("skillRollbackButton", chat_page)
-        self.assertIn("skillDeprecateButton", chat_page)
-        self.assertIn("skillBlockButton", chat_page)
-        self.assertIn("runRegressionButton", chat_page)
-        self.assertIn("regressionCasesPathInput", chat_page)
-        self.assertIn("publishDraftButton", chat_page)
+        for removed_id in [
+            "draftListButton",
+            "onboardingCandidatesButton",
+            "synthesisCandidatesButton",
+            "createDraftButton",
+            "previewDraftButton",
+            "smokeDraftButton",
+            "approvalCommentInput",
+            "candidateIdInput",
+            "synthesisCandidateIdInput",
+            "skillLifecycleIdInput",
+            "skillPromoteButton",
+            "runRegressionButton",
+            "publishDraftButton",
+        ]:
+            self.assertNotIn(removed_id, chat_page)
         self.assertIn(".workbench-layout", static_css)
         self.assertIn("ADMIN_TOKEN_STORAGE_KEY", static_api)
         self.assertIn("function adminHeaders", static_api)
@@ -1064,86 +919,56 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("openSelectedDocumentation", static_app)
         self.assertIn("renderMarkdownContent", static_renderers)
         self.assertIn("renderSkillCard", static_renderers)
-        self.assertIn("renderDraftCard", static_renderers)
         self.assertIn("renderMetadataObjectCard", static_renderers)
-        self.assertIn("renderCandidateCard", static_renderers)
-        self.assertIn("renderCandidatesResponse", static_renderers)
         self.assertIn("renderJsonDetails", static_renderers)
         self.assertIn("loadSkillCatalog", static_workbench)
-        self.assertIn("loadOnboardingCandidates", static_workbench)
-        self.assertIn("loadSynthesisCandidates", static_workbench)
-        self.assertIn("postDraftAction", static_workbench)
-        self.assertIn("postCandidateAction", static_workbench)
-        self.assertIn("postCandidateActionById", static_workbench)
-        self.assertIn("postSynthesisCandidateAction", static_workbench)
-        self.assertIn("postSynthesisCandidateActionById", static_workbench)
-        self.assertIn("/api/admin/workbench/synthesis/candidates?status=candidate", static_workbench)
-        self.assertIn("postSkillLifecycleAction", static_workbench)
-        self.assertIn("postSkillLifecycleActionById", static_workbench)
-        self.assertIn("runRegressionReplay", static_workbench)
+        self.assertIn("saveSkillById", static_workbench)
+        self.assertIn("deleteSkillById", static_workbench)
+        self.assertIn("skill-save", static_app)
+        self.assertIn("skill-delete", static_app)
+        self.assertIn("skill-query-input", static_renderers)
+        self.assertIn("skill-implementation-input", static_renderers)
         self.assertIn("renderWorkbenchSummary", static_workbench)
         self.assertIn("showTracePath", static_workbench)
-        self.assertIn("buildTopMetricDraftFromForm", static_workbench)
         self.assertIn("handleWorkbenchActionClick", static_app)
         self.assertIn('document.addEventListener("click", handleWorkbenchActionClick)', static_app)
         self.assertIn('closest("#view-workbench")', static_app)
         self.assertNotIn('requiredElement("workbenchSummary").addEventListener("click"', static_app)
         self.assertIn("event.preventDefault();", static_app)
         self.assertIn("event.stopPropagation();", static_app)
-        self.assertIn("synthesis-create-draft", static_renderers)
-        self.assertIn("synthesis-reject", static_renderers)
         self.assertIn("open-trace", static_renderers)
         self.assertIn("open-trace", static_app)
-        self.assertIn("open-draft", static_renderers)
         self.assertStaticRequiredElementsExist(chat_page, static_app)
         self.assertButtonBindings(
             chat_page,
             static_app,
-            [
-                "skillCatalogButton",
-                "draftListButton",
-                "metadataSearchButton",
-                "createDraftButton",
-                "previewDraftButton",
-                "smokeDraftButton",
-                "publishDraftButton",
-                "skillPromoteButton",
-                "runRegressionButton",
-            ],
+            ["skillCatalogButton", "metadataSearchButton"],
         )
         self.assertIn("/api/admin/skills/catalog", static_workbench)
-        self.assertIn("/api/admin/workbench/drafts", static_workbench)
         self.assertIn("/api/admin/metadata/search", static_app)
-        self.assertIn("/api/admin/regression/run", static_workbench)
         self.assertTrue(onboarding_status["ok"])
         self.assertFalse(onboarding_status["status"]["trained"])
         self.assertTrue(onboarding_candidates["ok"])
         self.assertEqual(onboarding_candidates["summary"]["total"], 1)
         self.assertTrue(synthesis_candidates["ok"])
         synthesis_candidate_ids = [item["candidate_id"] for item in synthesis_candidates["candidates"]]
-        learned_candidate = next(
-            item
-            for item in synthesis_candidates["candidates"]
-            if item["candidate_id"] == "learned_product_price_lookup" and item.get("query") == "ВЫБРАТЬ 1 КАК Цена"
-        )
         self.assertIn("syn_active", synthesis_candidate_ids)
-        self.assertEqual(learned_candidate["candidate_kind"], "learned_skill")
-        self.assertEqual(learned_candidate["query_spec"]["kind"], "parameterized_lookup_query")
-        self.assertGreaterEqual(synthesis_candidates["summary"]["total"], 2)
-        self.assertGreaterEqual(synthesis_candidates_all["summary"]["total"], 3)
+        self.assertNotIn("learned_product_price_lookup", synthesis_candidate_ids)
+        self.assertEqual(synthesis_candidates["summary"]["total"], 1)
+        self.assertGreaterEqual(synthesis_candidates_all["summary"]["total"], 2)
         self.assertEqual(rejected_synthesis_candidate["candidate"]["status"], "rejected")
         after_reject_ids = [item["candidate_id"] for item in synthesis_candidates_after_reject["candidates"]]
         self.assertNotIn("syn_active", after_reject_ids)
-        self.assertIn("learned_product_price_lookup", after_reject_ids)
-        self.assertEqual(rejected_learned_candidate["candidate"]["status"], "blocked")
-        after_learned_reject_ids = [
-            item["candidate_id"] for item in synthesis_candidates_after_learned_reject["candidates"]
-        ]
-        self.assertNotIn("learned_product_price_lookup", after_learned_reject_ids)
         self.assertEqual(candidate_draft["draft"]["source_kind"], "onboarding_candidate")
         self.assertEqual(rejected_candidate["rejection"]["candidate_id"], onboarding_candidate_id)
         self.assertTrue(skill_catalog["ok"])
         self.assertGreaterEqual(skill_catalog["summary"]["total"], 1)
+        learned_catalog_skill = next(
+            item for item in skill_catalog["skills"] if item["skill_id"] == "learned_product_price_lookup"
+        )
+        self.assertTrue(learned_catalog_skill["runtime_active_by_default"])
+        self.assertTrue(learned_catalog_skill["user_editable"])
+        self.assertEqual(learned_catalog_skill["source_kind"], "bot_learned")
         self.assertTrue(docs_index["ok"])
         self.assertIn("docs/workbench/user_guide.md", [item["path"] for item in docs_index["docs"]])
         self.assertTrue(docs_content["ok"])
@@ -1192,40 +1017,20 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertTrue(imported_draft["ok"])
         self.assertEqual(imported_draft["draft"]["source_kind"], "trace")
         self.assertEqual(imported_draft["draft"]["example_questions"], ["Покажи товар с самым большим остатком"])
-        self.assertIn("applyMetadataSource", static_workbench)
-        self.assertIn("applyMetadataField", static_workbench)
         self.assertIn("loadSkillDetails", static_workbench)
-        self.assertIn("loadDraftDetails", static_workbench)
-        self.assertIn("deleteDraftById", static_workbench)
-        self.assertIn("readDraftComment", static_workbench)
-        self.assertIn("showDraftCardError", static_workbench)
-        self.assertIn("showDraftActionResult", static_workbench)
-        self.assertIn("draft-action-result-local", static_workbench)
-        self.assertIn("draft-action-feedback", static_workbench)
-        self.assertIn("Заполните комментарий в карточке черновика", static_workbench)
-        self.assertIn("DRAFT_ACTION_NOTICES", static_workbench)
-        self.assertIn("withButtonState(button, label", static_workbench)
+        self.assertIn("saveSkillById", static_workbench)
+        self.assertIn("deleteSkillById", static_workbench)
+        self.assertIn("runWorkbenchAction", static_workbench)
         self.assertIn("handleWorkbenchActionClick", static_app)
         self.assertIn('document.addEventListener("click", handleWorkbenchActionClick)', static_app)
         self.assertIn('closest("#view-workbench")', static_app)
         self.assertNotIn('requiredElement("workbenchSummary").addEventListener("click"', static_app)
-        self.assertIn("postDraftAction(backendAction", static_app)
-        self.assertIn("draft-delete", static_app)
-        self.assertIn("draft-approve", static_renderers)
-        self.assertIn("missing_successful_smoke", static_renderers)
-        self.assertIn("Публикация пока не выполнена", static_renderers)
-        self.assertIn("draft-comment-input", static_renderers)
-        self.assertIn("draft-smoke-params-input", static_renderers)
-        self.assertIn("renderApprovalResult", static_renderers)
-        self.assertIn("renderDraftActionResult", static_renderers)
-        self.assertIn("Утвердить проверку", static_renderers)
-        self.assertIn("Опубликовать как кандидат", static_renderers)
-        self.assertIn("candidateQuerySpecText", static_renderers)
-        self.assertIn("Шаблон запроса", static_renderers)
-        self.assertIn("skill-reason-input", static_renderers)
-        self.assertIn("readSkillReason", static_workbench)
+        self.assertIn("skill-save", static_app)
+        self.assertIn("skill-delete", static_app)
+        self.assertIn("Настройки выполнения, JSON", static_renderers)
+        self.assertIn("Изменения применяются сразу", static_renderers)
         self.assertIn("closestSkillCard", static_workbench)
-        self.assertIn('postSkillLifecycleAction("promote"', static_app)
+        self.assertNotIn('postSkillLifecycleAction("promote"', static_app)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")
         self.assertEqual([item["role"] for item in conversation["messages"]], ["user", "assistant"])
@@ -1361,13 +1166,13 @@ def write_synthesis_candidates(bot_root: Path) -> None:
 
 
 def write_learned_skill_candidate(skills_root: Path, *, trace_path: str) -> None:
-    candidates = skills_root / "learned" / "candidates"
+    candidates = skills_root / "learned" / "active"
     candidates.mkdir(parents=True, exist_ok=True)
     payload = {
         "skill_id": "learned_product_price_lookup",
         "version": "0.1.0",
         "kind": "data_acquisition",
-        "status": "candidate",
+        "status": "verified",
         "description": "Learned product price lookup.",
         "capabilities": ["learned_query", "parameterized_lookup_query", "product", "price_type", "produce:PriceTable"],
         "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": True}],
@@ -1397,14 +1202,14 @@ def write_learned_skill_candidate(skills_root: Path, *, trace_path: str) -> None
     )
 
 
-def write_global_learned_financial_candidate(skills_root: Path) -> None:
-    candidates = skills_root / "learned" / "candidates"
+def write_active_learned_financial_skill(skills_root: Path) -> None:
+    candidates = skills_root / "learned" / "active"
     candidates.mkdir(parents=True, exist_ok=True)
     payload = {
         "skill_id": "learned_financial_metrics",
         "version": "0.1.0",
         "kind": "data_acquisition",
-        "status": "candidate",
+        "status": "verified",
         "description": "Learned financial metrics.",
         "capabilities": ["learned_query", "retrieve_metrics", "produce:FinancialMetricsTable"],
         "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": False}],
