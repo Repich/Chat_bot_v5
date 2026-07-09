@@ -10,8 +10,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
+from wiicon5.models import SkillContract, SkillStatus
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.regression import load_cases, run_regression_replay, save_replay_result
+from wiicon5.workbench.audit import utc_now
 from wiicon5.workbench.approval import ApprovalStore
 from wiicon5.workbench.fingerprints import draft_hash, preview_fingerprint_payload
 from wiicon5.workbench.lifecycle import SkillLifecycleService
@@ -22,7 +24,7 @@ from wiicon5.workbench.preview import QueryPreviewService
 from wiicon5.workbench.publish import APPROVAL_GATE_CODES, CandidatePublisher, latest_successful_smoke
 from wiicon5.workbench.skill_catalog import SkillCatalogService
 from wiicon5.workbench.smoke import McpSmokeTestService
-from wiicon5.workbench.store import HumanSkillDraftStore
+from wiicon5.workbench.store import HumanSkillDraftStore, atomic_write_text, safe_file_stem
 from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 from wiicon5.workbench.trace import WorkbenchTraceWriter
 from wiicon5.workbench.trace_import import TraceDraftImporter
@@ -561,12 +563,24 @@ def make_handler(
             try:
                 payload = self._read_json()
                 actor = str(payload.get("actor") or "admin")
-                candidate = effective_synthesis_candidate_store.reject_candidate(
-                    candidate_id,
-                    actor=actor,
-                    comment=str(payload.get("comment") or ""),
-                )
-                self._send_json(200, {"ok": True, "candidate": candidate.to_dict()})
+                comment = str(payload.get("comment") or "")
+                try:
+                    candidate = effective_synthesis_candidate_store.reject_candidate(
+                        candidate_id,
+                        actor=actor,
+                        comment=comment,
+                    )
+                    self._send_json(200, {"ok": True, "candidate": candidate.to_dict()})
+                    return
+                except KeyError:
+                    learned = reject_learned_agent_candidate(
+                        effective_skill_catalog.snapshot(),
+                        candidate_id,
+                        actor=actor,
+                        comment=comment,
+                        audit=effective_draft_store.audit,
+                    )
+                    self._send_json(200, {"ok": True, "candidate": learned})
             except KeyError:
                 self._send_json(
                     404,
@@ -1224,10 +1238,19 @@ def learned_agent_candidates_from_catalog(snapshot, *, status: str, term: str, l
         return []
     result: List[Dict[str, Any]] = []
     seen_skill_ids: set[str] = set()
+    bot_specific_learned_ids = {
+        item.skill.skill_id
+        for item in snapshot.items
+        if item.bot_specific
+        and item.skill.implementation_strategy == "learned_query"
+        and "learned" in item.source_path.parts
+    }
     catalog_items = sorted(snapshot.items, key=lambda item: (0 if item.bot_specific else 1, str(item.source_path)))
     for item in catalog_items:
         skill = item.skill
         if skill.skill_id in seen_skill_ids:
+            continue
+        if not item.bot_specific and skill.skill_id in bot_specific_learned_ids:
             continue
         if skill.implementation_strategy != "learned_query":
             continue
@@ -1269,6 +1292,7 @@ def learned_skill_candidate_to_response(item) -> Dict[str, Any]:
         "trace_path": trace_path,
         "query": str(implementation.get("query") or ""),
         "params": implementation.get("params") if isinstance(implementation.get("params"), Mapping) else {},
+        "query_spec": learned_query_spec_summary(implementation),
         "limit": implementation.get("limit"),
         "row_count": row_count,
         "final_artifact_type": output_type,
@@ -1296,6 +1320,137 @@ def learned_candidate_search_text(candidate: Mapping[str, Any]) -> str:
             " ".join(str(item) for item in learned_skill.get("tags", []) if item),
         ]
     )
+
+
+def learned_query_spec_summary(implementation: Mapping[str, Any]) -> Dict[str, Any]:
+    kind = str(implementation.get("kind") or "")
+    summary: Dict[str, Any] = {"kind": kind}
+    if kind == "period_metric_aggregate":
+        metrics = []
+        for metric in implementation.get("metrics", []) or []:
+            if not isinstance(metric, Mapping):
+                continue
+            metrics.append(
+                {
+                    "label": str(metric.get("label") or ""),
+                    "expression": str(metric.get("expression") or ""),
+                }
+            )
+        summary.update(
+            {
+                "source": str(implementation.get("source") or ""),
+                "alias": str(implementation.get("alias") or ""),
+                "period_field": str(implementation.get("period_field") or ""),
+                "metrics": metrics,
+                "activity_filter": bool(implementation.get("activity_filter")),
+                "activity_field": str(implementation.get("activity_field") or ""),
+                "note": (
+                    "У этого learned_query нет сохраненного полного текста запроса: "
+                    "рантайм собирает запрос из источника, поля периода, метрик и фильтров вопроса."
+                ),
+            }
+        )
+    elif kind == "parameterized_lookup_query":
+        summary.update(
+            {
+                "parameter_bindings": [
+                    dict(item)
+                    for item in implementation.get("parameter_bindings", []) or []
+                    if isinstance(item, Mapping)
+                ],
+                "supported_filter_roles": [
+                    str(item)
+                    for item in implementation.get("supported_filter_roles", []) or []
+                    if str(item or "").strip()
+                ],
+                "output_columns": [
+                    str(item)
+                    for item in implementation.get("output_columns", []) or []
+                    if str(item or "").strip()
+                ],
+            }
+        )
+    return summary
+
+
+def reject_learned_agent_candidate(snapshot, candidate_id: str, *, actor: str, comment: str, audit) -> Dict[str, Any]:
+    item = learned_agent_candidate_item(snapshot, candidate_id)
+    if item is None:
+        raise KeyError(candidate_id)
+    skill = item.skill
+    before = skill.to_dict()
+    implementation = dict(skill.implementation)
+    lifecycle_events = implementation.get("lifecycle_events")
+    if not isinstance(lifecycle_events, list):
+        lifecycle_events = []
+    event = {
+        "event_type": "workbench.learned_candidate.rejected",
+        "skill_id": skill.skill_id,
+        "actor": actor.strip() or "admin",
+        "from_status": skill.status.value,
+        "to_status": SkillStatus.BLOCKED.value,
+        "ts": utc_now(),
+        "reason": comment,
+    }
+    lifecycle_events.append(event)
+    implementation["lifecycle_events"] = lifecycle_events[-20:]
+    blocked = SkillContract.from_dict(
+        {
+            **before,
+            "status": SkillStatus.BLOCKED.value,
+            "implementation": implementation,
+        }
+    )
+    target = learned_candidate_target_path(item.source_path, skill.skill_id, SkillStatus.BLOCKED)
+    atomic_write_text(target, json.dumps(blocked.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    try:
+        item.source_path.unlink()
+    except FileNotFoundError:
+        pass
+    audit.append(
+        event_type="workbench.learned_candidate.rejected",
+        actor=actor.strip() or "admin",
+        object_type="learned_skill_candidate",
+        object_id=skill.skill_id,
+        before=before,
+        after=blocked.to_dict(),
+        payload={
+            "comment": comment,
+            "previous_path": str(item.source_path),
+            "path": str(target),
+        },
+    )
+    return {
+        "candidate_id": blocked.skill_id,
+        "candidate_kind": "learned_skill",
+        "skill_id": blocked.skill_id,
+        "status": blocked.status.value,
+        "previous_path": str(item.source_path),
+        "path": str(target),
+        "message": "Обобщенный кандидат отклонен и перенесен в blocked.",
+    }
+
+
+def learned_agent_candidate_item(snapshot, candidate_id: str):
+    for item in sorted(snapshot.items, key=lambda candidate: (0 if candidate.bot_specific else 1, str(candidate.source_path))):
+        skill = item.skill
+        if skill.skill_id != candidate_id:
+            continue
+        if skill.implementation_strategy != "learned_query":
+            continue
+        if "learned" in item.source_path.parts and "candidates" in item.source_path.parts:
+            return item
+    return None
+
+
+def learned_candidate_target_path(source_path: Path, skill_id: str, status: SkillStatus) -> Path:
+    folder = "blocked" if status == SkillStatus.BLOCKED else status.value
+    parts = list(source_path.parts)
+    if "candidates" in parts:
+        index = parts.index("candidates")
+        parts[index] = folder
+        return Path(*parts[: index + 1]) / f"{safe_file_stem(skill_id)}.json"
+    return source_path.parent / folder / f"{safe_file_stem(skill_id)}.json"
 
 
 def synthesis_candidate_trace_summary(trace_path: str) -> Dict[str, Any]:

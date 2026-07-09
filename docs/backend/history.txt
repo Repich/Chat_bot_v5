@@ -1,3 +1,8 @@
+5.0.0-alpha.77
+- Learned query candidates теперь можно отклонять через endpoint /api/admin/workbench/synthesis/candidates/<id>/reject: кандидат переносится из skills/learned/candidates в skills/learned/blocked, исчезает из активной очереди и сохраняет audit trail.
+- Ответ API для learned query candidates теперь включает query_spec. Для period_metric_aggregate явно показываются source, period_field, metrics и признак, что текст запроса собирается рантаймом, а не хранится как raw query.
+- Добавлена web-server регрессия на отклонение learned_product_price_lookup и скрытие его из активного списка кандидатов агента.
+
 5.0.0-alpha.76
 - Endpoint /api/admin/workbench/synthesis/candidates теперь показывает не только raw query_synthesis candidates syn_*, но и обобщенные learned_query candidates из skills/learned/candidates.
 - Learned skill candidate отдается как candidate_kind=learned_skill с query, params, trace_path, metadata dependencies и ссылкой на исходный skill contract, чтобы консультант видел объект проверки после подавления частного syn_*.

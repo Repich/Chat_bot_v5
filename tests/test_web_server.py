@@ -563,7 +563,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                     .read()
                     .decode("utf-8")
                 )
-                synthesis_candidate_id = synthesis_candidates["candidates"][0]["candidate_id"]
+                synthesis_candidate_id = "syn_active"
                 reject_synthesis_request = urllib.request.Request(
                     f"http://{host}:{port}/api/admin/workbench/synthesis/candidates/{synthesis_candidate_id}/reject",
                     data=json.dumps(
@@ -577,6 +577,26 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                     urllib.request.urlopen(reject_synthesis_request, timeout=5).read().decode("utf-8")
                 )
                 synthesis_candidates_after_reject = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/workbench/synthesis/candidates",
+                        timeout=5,
+                    )
+                    .read()
+                    .decode("utf-8")
+                )
+                reject_learned_candidate_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/workbench/synthesis/candidates/learned_product_price_lookup/reject",
+                    data=json.dumps(
+                        {"actor": "candidate-admin", "comment": "Слишком частная проверка"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                rejected_learned_candidate = json.loads(
+                    urllib.request.urlopen(reject_learned_candidate_request, timeout=5).read().decode("utf-8")
+                )
+                synthesis_candidates_after_learned_reject = json.loads(
                     urllib.request.urlopen(
                         f"http://{host}:{port}/api/admin/workbench/synthesis/candidates",
                         timeout=5,
@@ -898,10 +918,10 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("/static/app.js", chat_page)
         self.assertIn("/static/api.js", chat_page)
         self.assertIn("/static/workbench.js", chat_page)
-        self.assertIn("app.js?v=5.0.0-alpha.76", chat_page)
-        self.assertIn("workbench.js?v=5.0.0-alpha.76", chat_page)
-        self.assertIn("renderers.js?v=5.0.0-alpha.76", chat_page)
-        self.assertIn("styles.css?v=5.0.0-alpha.76", chat_page)
+        self.assertIn("app.js?v=5.0.0-alpha.77", chat_page)
+        self.assertIn("workbench.js?v=5.0.0-alpha.77", chat_page)
+        self.assertIn("renderers.js?v=5.0.0-alpha.77", chat_page)
+        self.assertIn("styles.css?v=5.0.0-alpha.77", chat_page)
         self.assertIn("/static/renderers.js", chat_page)
         self.assertIn("topNav", chat_page)
         self.assertIn("view-chat", chat_page)
@@ -1046,12 +1066,18 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         )
         self.assertIn("syn_active", synthesis_candidate_ids)
         self.assertEqual(learned_candidate["candidate_kind"], "learned_skill")
+        self.assertEqual(learned_candidate["query_spec"]["kind"], "parameterized_lookup_query")
         self.assertGreaterEqual(synthesis_candidates["summary"]["total"], 2)
         self.assertGreaterEqual(synthesis_candidates_all["summary"]["total"], 3)
         self.assertEqual(rejected_synthesis_candidate["candidate"]["status"], "rejected")
         after_reject_ids = [item["candidate_id"] for item in synthesis_candidates_after_reject["candidates"]]
         self.assertNotIn("syn_active", after_reject_ids)
         self.assertIn("learned_product_price_lookup", after_reject_ids)
+        self.assertEqual(rejected_learned_candidate["candidate"]["status"], "blocked")
+        after_learned_reject_ids = [
+            item["candidate_id"] for item in synthesis_candidates_after_learned_reject["candidates"]
+        ]
+        self.assertNotIn("learned_product_price_lookup", after_learned_reject_ids)
         self.assertEqual(candidate_draft["draft"]["source_kind"], "onboarding_candidate")
         self.assertEqual(rejected_candidate["rejection"]["candidate_id"], onboarding_candidate_id)
         self.assertTrue(skill_catalog["ok"])
@@ -1132,6 +1158,8 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("renderDraftActionResult", static_renderers)
         self.assertIn("Утвердить проверку", static_renderers)
         self.assertIn("Опубликовать как кандидат", static_renderers)
+        self.assertIn("candidateQuerySpecText", static_renderers)
+        self.assertIn("Шаблон запроса", static_renderers)
         self.assertIn('postSkillLifecycleAction("promote"', static_app)
         self.assertTrue(chat["ok"])
         self.assertEqual(chat["result"]["source"], "general_answer")

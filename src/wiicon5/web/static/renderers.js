@@ -394,6 +394,52 @@
     return finalQuery.query || candidate.query || "";
   }
 
+  function candidateQuerySpec(candidate) {
+    return candidate && candidate.query_spec && typeof candidate.query_spec === "object" ? candidate.query_spec : {};
+  }
+
+  function candidateQuerySpecText(candidate) {
+    const spec = candidateQuerySpec(candidate);
+    const kind = spec.kind || "";
+    if (!kind) {
+      return "";
+    }
+    if (kind === "period_metric_aggregate") {
+      const metrics = Array.isArray(spec.metrics)
+        ? spec.metrics.map((metric) => `${metric.label || "Метрика"} = ${metric.expression || ""}`.trim()).filter(Boolean)
+        : [];
+      const lines = [
+        "Тип: агрегатный learned_query, текст запроса собирается перед выполнением.",
+        spec.source ? `Источник 1С: ${spec.source}` : "",
+        spec.alias ? `Псевдоним: ${spec.alias}` : "",
+        spec.period_field ? `Поле периода: ${spec.period_field}` : "",
+        spec.activity_filter ? `Фильтр активности: ${spec.activity_field || "Активность"}` : "",
+        metrics.length ? `Метрики:\n${metrics.map((item) => `- ${item}`).join("\n")}` : "",
+        spec.note || "",
+      ].filter(Boolean);
+      return lines.join("\n");
+    }
+    if (kind === "parameterized_lookup_query") {
+      const bindings = Array.isArray(spec.parameter_bindings)
+        ? spec.parameter_bindings.map((binding) => {
+            const role = binding.semantic_field || "";
+            const parameter = binding.parameter || "";
+            const transform = binding.transform || "";
+            return `${role} -> ${parameter}${transform ? ` (${transform})` : ""}`.trim();
+          }).filter(Boolean)
+        : [];
+      const columns = Array.isArray(spec.output_columns) ? spec.output_columns.filter(Boolean) : [];
+      const roles = Array.isArray(spec.supported_filter_roles) ? spec.supported_filter_roles.filter(Boolean) : [];
+      return [
+        "Тип: параметризованный learned_query.",
+        roles.length ? `Поддерживаемые роли фильтров: ${roles.join(", ")}` : "",
+        bindings.length ? `Привязки параметров:\n${bindings.map((item) => `- ${item}`).join("\n")}` : "",
+        columns.length ? `Выходные колонки: ${columns.join(", ")}` : "",
+      ].filter(Boolean).join("\n");
+    }
+    return `Тип learned_query: ${kind}`;
+  }
+
   function candidateFinalParams(candidate) {
     const trace = synthesisTraceSummary(candidate);
     const finalQuery = trace.final_query && typeof trace.final_query === "object" ? trace.final_query : {};
@@ -419,7 +465,10 @@
         return `${alias}${source.source || ""}${type}`.trim();
       })
       .filter(Boolean);
-    return compactList(labels, 12);
+    if (labels.length) {
+      return compactList(labels, 12);
+    }
+    return compactList(metadataObjectNames(candidate), 12);
   }
 
   function candidateConstraints(candidate) {
@@ -759,13 +808,14 @@
     const rowCount = item.row_count == null ? "" : item.row_count;
     const source = learnedSkill ? "learned_query" : synthesis ? (item.source || "query_synthesis") : (item.type || item.source || "onboarding");
     const createAction = synthesis ? "synthesis-create-draft" : learnedSkill ? "open-skill" : "onboarding-create-draft";
-    const rejectAction = synthesis ? "synthesis-reject" : "onboarding-reject";
+    const rejectAction = learnedSkill || synthesis ? "synthesis-reject" : "onboarding-reject";
     const draftId = synthesis ? linkedDraftId(item) : "";
     const createLabel = learnedSkill ? "Открыть навык" : draftId ? "Открыть черновик" : "Создать черновик";
     const trace = synthesisTraceSummary(item);
     const intent = candidateIntent(item);
     const goal = candidateGoal(item);
     const query = candidateFinalQuery(item);
+    const querySpec = candidateQuerySpecText(item);
     const params = queryParamsText(candidateFinalParams(item));
     const rows = candidateResultRows(item);
     const sources = candidateUsedSources(item);
@@ -796,6 +846,7 @@
       ${params ? renderInfoSection("Параметры запроса", renderQueryBlock(params)) : ""}
       ${renderInfoSection("Использованные источники 1С", renderTextList(sources, "Источники не выделены из проверки запроса."))}
       ${query ? renderInfoSection("Запрос 1С", renderQueryBlock(query)) : ""}
+      ${!query && querySpec ? renderInfoSection("Шаблон запроса", renderQueryBlock(querySpec)) : ""}
       ${renderInfoSection("Что вернул MCP", `${renderFacts({ "Строк всего": rowCount, "Показано строк": rows.length || "" })}${renderSimpleTable(rows)}`)}
       ${renderInfoSection("Проверки агента", renderCandidateAttempts(item))}
       ${sufficiency.reasoning ? renderInfoSection("Почему результат признан достаточным", `<p>${escapeHtml(sufficiency.reasoning)}</p>`) : ""}
@@ -804,7 +855,7 @@
       ${renderCandidateTechnicalDetails(item)}
       <div class="entity-actions">
         ${actionButton(createLabel, createAction, learnedSkill ? "skill-id" : "candidate-id", learnedSkill ? (item.skill_id || id) : id, "primary-button")}
-        ${learnedSkill ? "" : actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}
+        ${actionButton("Отклонить", rejectAction, "candidate-id", id, "secondary-button")}
         ${item.trace_path ? actionButton("Открыть трассировку", "open-trace", "trace-path", item.trace_path, "secondary-button") : ""}
         ${synthesis ? actionButton("Игнорировать похожие", "synthesis-ignore-similar", "candidate-id", id, "ghost-button") : ""}
       </div>
