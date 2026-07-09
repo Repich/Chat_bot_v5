@@ -358,7 +358,8 @@ def params_used_with_like_operator(query: str) -> set[str]:
     params: set[str] = set()
     for match in re.finditer(r"\bПОДОБНО\b(?P<tail>.{0,160})", query, flags=re.IGNORECASE | re.DOTALL):
         tail = match.group("tail")
-        for param_match in re.finditer(r"&(?P<param>[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)", tail):
+        param_match = re.search(r"&(?P<param>[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)", tail)
+        if param_match:
             params.add(param_match.group("param"))
     return params
 

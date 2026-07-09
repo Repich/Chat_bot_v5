@@ -33,6 +33,7 @@ class SkillComposer:
         self.validator = SkillPlanValidator(registry)
 
     def compose(self, goal: GoalDecomposition) -> ComposeResult:
+        goal = self._normalize_question_entity_filters(goal)
         aggregate_gap = self._aggregate_document_list_gap(goal)
         if aggregate_gap is not None:
             return ComposeResult(plan=None, gaps=[aggregate_gap])
@@ -71,6 +72,68 @@ class SkillComposer:
                 search_trace=state.search_trace,
             )
         return ComposeResult(plan=plan, gaps=[], search_trace=state.search_trace)
+
+    def _normalize_question_entity_filters(self, goal: GoalDecomposition) -> GoalDecomposition:
+        transferable: List[ArtifactRequirement] = []
+        passthrough: List[ArtifactRequirement] = []
+        for requirement in goal.required_artifacts:
+            if question_entity_ref_requirement(requirement):
+                transferable.append(requirement)
+            else:
+                passthrough.append(requirement)
+        if not transferable:
+            return goal
+
+        changed = False
+        normalized: List[ArtifactRequirement] = []
+        for requirement in passthrough:
+            accepted: List[SemanticFilter] = []
+            for entity_requirement in transferable:
+                if table_requirement_accepts_constraints(
+                    requirement,
+                    entity_requirement.constraints,
+                    goal=goal,
+                    registry=self.registry,
+                    type_system=self.type_system,
+                ):
+                    accepted.extend(entity_requirement.constraints)
+            if accepted:
+                changed = True
+                normalized.append(
+                    ArtifactRequirement(
+                        name=requirement.name,
+                        type=requirement.type,
+                        source=requirement.source,
+                        required=requirement.required,
+                        constraints=list(requirement.constraints) + accepted,
+                        required_columns=list(requirement.required_columns),
+                    )
+                )
+            else:
+                normalized.append(requirement)
+
+        for entity_requirement in transferable:
+            if any(
+                table_requirement_accepts_constraints(
+                    requirement,
+                    entity_requirement.constraints,
+                    goal=goal,
+                    registry=self.registry,
+                    type_system=self.type_system,
+                )
+                for requirement in passthrough
+            ):
+                continue
+            normalized.append(entity_requirement)
+
+        if not changed:
+            return goal
+        return GoalDecomposition(
+            business_goal=goal.business_goal,
+            final_artifact_type=goal.final_artifact_type,
+            expected_answer_type=goal.expected_answer_type,
+            required_artifacts=normalized,
+        )
 
     def _ensure_artifact(
         self,
@@ -443,6 +506,42 @@ def _skill_accepts_constraint(skill: SkillContract, constraint: SemanticFilter) 
         or roles_match(skill.semantic_role, constraint.semantic_field)
         or constraint_selects_skill_domain(skill, constraint)
     )
+
+
+def question_entity_ref_requirement(requirement: ArtifactRequirement) -> bool:
+    if requirement.source != "question":
+        return False
+    if not requirement.type.endswith("Ref") or requirement.type.endswith("RefList"):
+        return False
+    return bool(requirement.constraints)
+
+
+def table_requirement_accepts_constraints(
+    requirement: ArtifactRequirement,
+    constraints: List[SemanticFilter],
+    *,
+    goal: GoalDecomposition,
+    registry: SkillRegistry,
+    type_system: TypeSystem,
+) -> bool:
+    if not constraints or not type_system.is_assignable(requirement.type, "TypedTable"):
+        return False
+    for skill in registry.active():
+        if not any(type_system.is_assignable(output.type, requirement.type) for output in skill.outputs):
+            continue
+        merged = ArtifactRequirement(
+            name=requirement.name,
+            type=requirement.type,
+            source=requirement.source,
+            required=requirement.required,
+            constraints=list(requirement.constraints) + list(constraints),
+            required_columns=list(requirement.required_columns),
+        )
+        if all(_skill_accepts_constraint(skill, constraint) for constraint in constraints) and skill_domain_compatible(
+            skill, merged, goal
+        ):
+            return True
+    return False
 
 
 def _constraint_targets_input(skill: SkillContract, constraint: SemanticFilter) -> bool:

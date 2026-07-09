@@ -1,3 +1,6 @@
+5.0.0-alpha.81
+- Static asset URLs обновлены до alpha.81 для cache-busting после backend-исправления generic entity lookup.
+
 5.0.0-alpha.80
 - Static asset URLs обновлены до alpha.80 для cache-busting после backend-изменений в пайплайне навыков.
 

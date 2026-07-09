@@ -267,6 +267,59 @@ class SkillComposerTests(unittest.TestCase):
         self.assertEqual(stock_node.inputs["warehouses"], "${inv_001.warehouses}")
         self.assertEqual(stock_node.inputs["required_columns"], ["Номенклатура"])
 
+    def test_composer_merges_question_entity_ref_filter_into_compatible_table(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        composer = SkillComposer(registry)
+        goal = GoalDecomposition(
+            business_goal="Показать остатки ботинок на розничном складе с детализацией по номенклатуре",
+            final_artifact_type="UserAnswer",
+            expected_answer_type="table",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="product_filter",
+                    type="ProductRef",
+                    source="question",
+                    constraints=[
+                        SemanticFilter(
+                            semantic_field="product",
+                            operator="equals",
+                            value="ботинки",
+                            raw_user_text="ботинки",
+                        )
+                    ],
+                ),
+                ArtifactRequirement(
+                    name="warehouse_filter",
+                    type="WarehouseRefList",
+                    source="question",
+                    constraints=[
+                        SemanticFilter(
+                            semantic_field="warehouse",
+                            operator="equals",
+                            value="розничный склад",
+                            raw_user_text="розничный склад",
+                        )
+                    ],
+                ),
+                ArtifactRequirement(
+                    name="stock_table",
+                    type="StockBalanceTable",
+                    required_columns=["Номенклатура", "Склад", "Остаток"],
+                ),
+            ],
+        )
+
+        result = composer.compose(goal)
+
+        self.assertEqual(result.gaps, [])
+        self.assertIsNotNone(result.plan)
+        assert result.plan is not None
+        self.assertEqual([node.skill_id for node in result.plan.nodes], ["get_warehouses", "get_stock_balances", "render_table_answer"])
+        stock_node = next(node for node in result.plan.nodes if node.skill_id == "get_stock_balances")
+        self.assertEqual(stock_node.inputs["product"], "ботинки")
+        self.assertEqual(stock_node.inputs["warehouses"], "${inv_001.warehouses}")
+        self.assertEqual(stock_node.inputs["required_columns"], ["Номенклатура", "Склад", "Остаток"])
+
     def test_composer_builds_document_count_by_period_plan(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         composer = SkillComposer(registry)

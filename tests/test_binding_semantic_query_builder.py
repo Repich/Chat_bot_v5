@@ -4,8 +4,12 @@ import unittest
 from pathlib import Path
 
 from wiicon5.conversation.context import ConversationContext
+from typing import Any, Dict, List
+
 from wiicon5.knowledge.bindings import BindingResolver, InMemoryBindingStore, ScriptedBindingDiscoverer
-from wiicon5.mcp.client import DictMcpClient
+from wiicon5.knowledge.metadata import MetadataProvider, metadata_object_from_payload
+from wiicon5.mcp.client import DictMcpClient, McpClient
+from wiicon5.mcp.contracts import McpMetadataRequest, McpMetadataResponse, McpQueryRequest, McpQueryResponse
 from wiicon5.models import SkillBinding
 from wiicon5.query.semantic_query_builder import SemanticQueryBuilder
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
@@ -168,8 +172,105 @@ class BindingSemanticQueryBuilderTests(unittest.TestCase):
         )
 
         self.assertIn("Места.Название ПОДОБНО", draft.query)
-        self.assertIn("ПРЕДСТАВЛЕНИЕ(Места.Категория) ПОДОБНО", draft.query)
-        self.assertEqual(draft.params["warehouse"], "розничный")
+        self.assertIn("Места.Категория = &warehouse_Категория", draft.query)
+        self.assertNotIn("ПРЕДСТАВЛЕНИЕ(Места.Категория)", draft.query)
+        self.assertEqual(draft.params["warehouse_Название"], "розничный")
+        self.assertEqual(draft.params["warehouse_Категория"], "розничный")
+
+    def test_data_runner_resolves_generic_reference_filter_before_mcp_query(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        skill = registry.get("get_warehouses")
+        assert skill is not None
+        store = InMemoryBindingStore([custom_warehouse_binding()])
+        builder = SemanticQueryBuilder(BindingResolver(store))
+        mcp = SequentialMcpClient(
+            [
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "Значение": {
+                                "_objectRef": True,
+                                "УникальныйИдентификатор": "retail",
+                                "ТипОбъекта": "ПеречислениеСсылка.ТипыСкладов",
+                                "Представление": "Розничный магазин",
+                            },
+                            "Представление": "Розничный магазин",
+                        }
+                    ],
+                },
+                {
+                    "success": True,
+                    "data": [{"Ссылка": "w-retail", "Наименование": "Торговый зал"}],
+                },
+            ]
+        )
+        runner = DataSkillRunner(
+            query_builder=builder,
+            mcp_client=mcp,
+            metadata_provider=SingleObjectMetadataProvider(
+                {
+                    "ПолноеИмя": "Справочник.МестаХранения",
+                    "Синоним": "Места хранения",
+                    "Реквизиты": [
+                        {"Имя": "Ссылка", "Тип": "СправочникСсылка.МестаХранения"},
+                        {"Имя": "Название", "Тип": "Строка(100)"},
+                        {"Имя": "Категория", "Тип": "ПеречислениеСсылка.ТипыСкладов"},
+                    ],
+                }
+            ),
+        )
+
+        result = runner.run(
+            skill,
+            {
+                "filters": [
+                    {
+                        "semantic_field": "warehouse",
+                        "operator": "contains",
+                        "value": "розничный склад",
+                    }
+                ],
+                "limit": 10,
+            },
+            ConversationContext(session_id="s1", config_fingerprint="cfg_custom"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(mcp.query_calls), 2)
+        final_call = mcp.query_calls[1]
+        self.assertNotIn("ПРЕДСТАВЛЕНИЕ(Места.Категория) ПОДОБНО", final_call.query)
+        self.assertIn("Места.Категория = &warehouse_Категория", final_call.query)
+        self.assertEqual(final_call.params["warehouse_Категория"]["УникальныйИдентификатор"], "retail")
+        self.assertEqual(result.artifacts[0].value[0]["Наименование"], "Торговый зал")
+
+    def test_generic_entity_equals_uses_text_search_not_strict_reference_comparison(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        skill = registry.get("get_warehouses")
+        assert skill is not None
+        store = InMemoryBindingStore([custom_warehouse_binding()])
+        builder = SemanticQueryBuilder(BindingResolver(store))
+
+        draft = builder.build(
+            skill,
+            {
+                "filters": [
+                    {
+                        "semantic_field": "warehouse",
+                        "operator": "equals",
+                        "value": "розничный склад",
+                    }
+                ],
+                "limit": 10,
+            },
+            ConversationContext(session_id="s1", config_fingerprint="cfg_custom"),
+        )
+
+        self.assertIn("Места.Название ПОДОБНО", draft.query)
+        self.assertIn("Места.Категория = &warehouse_Категория", draft.query)
+        self.assertNotIn("ПРЕДСТАВЛЕНИЕ(Места.Категория)", draft.query)
+        self.assertEqual(draft.params["warehouse_Название"], "розничный")
+        self.assertEqual(draft.params["warehouse_Категория"], "розничный")
 
     def test_stock_query_without_product_returns_product_column_instead_of_requiring_context(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
@@ -220,6 +321,32 @@ class BindingSemanticQueryBuilderTests(unittest.TestCase):
         self.assertIn("СГРУППИРОВАТЬ ПО", draft.query)
         self.assertIn("УПОРЯДОЧИТЬ ПО", draft.query)
         self.assertNotIn("Документ.ПеремещениеТоваров", draft.query)
+
+class SingleObjectMetadataProvider(MetadataProvider):
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self.object = metadata_object_from_payload(payload)
+
+    def search_objects(self, term: str):
+        return [self.object]
+
+    def get_object(self, full_name: str):
+        return self.object
+
+
+class SequentialMcpClient(McpClient):
+    def __init__(self, query_responses: List[Dict[str, object]]) -> None:
+        self.query_responses = list(query_responses)
+        self.query_calls: List[McpQueryRequest] = []
+
+    def execute_query(self, request: McpQueryRequest) -> McpQueryResponse:
+        self.query_calls.append(request)
+        if not self.query_responses:
+            return McpQueryResponse(success=False, error="No scripted MCP query response.")
+        return McpQueryResponse.from_dict(self.query_responses.pop(0))
+
+    def get_metadata(self, request: McpMetadataRequest) -> McpMetadataResponse:
+        return McpMetadataResponse(success=False, error="Metadata is not scripted for this test.")
+
 
 if __name__ == "__main__":
     unittest.main()

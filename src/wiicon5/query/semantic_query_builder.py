@@ -246,21 +246,70 @@ def compile_generic_entity_filter(alias: str, binding: SkillBinding, item: Seman
             f"Binding for {binding.skill_id} does not define searchable fields for semantic role: {item.semantic_field}"
         )
     operator = item.operator.lower()
-    parameter_expr = render_1c_value(item.value, params, item.semantic_field)
+    value = normalize_generic_search_value(binding, item)
     conditions = []
     for field in candidate_fields:
-        left = generic_search_expression(alias, field)
-        if operator in {"equals", "eq", "=", "равно"}:
-            conditions.append(f"{left} = {parameter_expr}")
-        elif operator in {"contains", "substring"}:
-            conditions.append(f"{left} ПОДОБНО \"%\" + {parameter_expr} + \"%\"")
-        elif operator in {"starts_with", "prefix"}:
-            conditions.append(f"{left} ПОДОБНО {parameter_expr} + \"%\"")
-        else:
-            raise QueryBuildError(f"Unsupported semantic filter operator for generic entity lookup: {item.operator}")
+        conditions.append(generic_entity_field_condition(alias, field, item.semantic_field, operator, value, params))
     if len(conditions) == 1:
         return conditions[0]
     return "(" + " ИЛИ ".join(conditions) + ")"
+
+
+def generic_entity_field_condition(
+    alias: str,
+    field: str,
+    semantic_field: str,
+    operator: str,
+    value: Any,
+    params: Dict[str, Any],
+) -> str:
+    parameter_expr = "&" + add_param(params, f"{semantic_field}_{field}", value)
+    if generic_field_is_text(field):
+        left = f"{alias}.{field}"
+        if operator in {"equals", "eq", "=", "равно", "contains", "substring"}:
+            return f"{left} ПОДОБНО \"%\" + {parameter_expr} + \"%\""
+        if operator in {"starts_with", "prefix"}:
+            return f"{left} ПОДОБНО {parameter_expr} + \"%\""
+    else:
+        left = f"{alias}.{field}"
+        if operator in {"equals", "eq", "=", "равно", "contains", "substring", "starts_with", "prefix"}:
+            return f"{left} = {parameter_expr}"
+    raise QueryBuildError(f"Unsupported semantic filter operator for generic entity lookup: {operator}")
+
+
+def normalize_generic_search_value(binding: SkillBinding, item: SemanticFilter) -> Any:
+    value = item.value
+    if not isinstance(value, str):
+        return value
+    normalized = " ".join(value.split())
+    if not normalized:
+        return value
+    stop_words = generic_entity_stop_words(binding.semantic_role, item.semantic_field)
+    tokens = [token for token in re.split(r"\s+", normalized) if token]
+    meaningful = [token for token in tokens if token.lower().strip(".,;:()[]{}\"'") not in stop_words]
+    if meaningful:
+        return " ".join(meaningful)
+    return normalized
+
+
+def generic_entity_stop_words(*roles: str) -> set[str]:
+    normalized_roles = {str(role or "").strip().lower() for role in roles}
+    result = set()
+    if "warehouse" in normalized_roles:
+        result.update(
+            {
+                "склад",
+                "склада",
+                "складе",
+                "складов",
+                "склады",
+                "warehouse",
+                "warehouses",
+            }
+        )
+    if "product" in normalized_roles:
+        result.update({"товар", "товара", "товары", "номенклатура", "номенклатуры", "product", "products"})
+    return result
 
 
 def generic_entity_filter_fields(binding: SkillBinding) -> List[str]:
@@ -276,10 +325,8 @@ def generic_entity_filter_fields(binding: SkillBinding) -> List[str]:
     return result[:4]
 
 
-def generic_search_expression(alias: str, field: str) -> str:
-    if field.endswith(".Наименование") or field in {"Наименование", "Название"}:
-        return f"{alias}.{field}"
-    return f"ПРЕДСТАВЛЕНИЕ({alias}.{field})"
+def generic_field_is_text(field: str) -> bool:
+    return field.endswith(".Наименование") or field in {"Наименование", "Название"}
 
 
 def column_required(inputs: Dict[str, Any], *names: str) -> bool:
