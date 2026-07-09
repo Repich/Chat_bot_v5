@@ -1752,6 +1752,58 @@ class QuerySynthesisTests(unittest.TestCase):
         )
 
         self.assertIn("top_sold_product_metric_ambiguous", {item["code"] for item in issues})
+        issue = next(item for item in issues if item["code"] == "top_sold_product_metric_ambiguous")
+        self.assertEqual(issue["severity"], "clarification")
+        self.assertIn("по количеству", issue["clarification_options"])
+        self.assertIn("по выручке", issue["clarification_options"])
+
+    def test_synthesis_returns_clarification_for_ambiguous_top_sold_product_metric(self) -> None:
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["продажи", "номенклатура"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ ПЕРВЫЕ 1
+                        Продажи.Номенклатура КАК Товар,
+                        СУММА(Продажи.СуммаВыручки) КАК СуммаПродаж
+                    ИЗ
+                        РегистрНакопления.Продажи КАК Продажи
+                    ГДЕ
+                        Продажи.Период МЕЖДУ &НачПериода И &КонПериода
+                        И Продажи.Активность
+                    СГРУППИРОВАТЬ ПО
+                        Продажи.Номенклатура
+                    УПОРЯДОЧИТЬ ПО
+                        СуммаПродаж УБЫВ
+                    """,
+                    params={"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"},
+                ),
+            ]
+        )
+        mcp = DictMcpClient({"success": True, "data": [{"Товар": "Телевизор", "СуммаПродаж": 1000}]})
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=SalesRegisterMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Какой самый продаваемый товар за 2024 год?",
+            intent=data_intent("Получить самый продаваемый товар за 2024 год"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.needs_clarification)
+        self.assertIn("по количеству", result.message)
+        self.assertIn("по выручке", result.message)
+        self.assertEqual(len(mcp.query_calls), 0)
+        self.assertEqual(
+            result.trace["attempts"][0]["goal_semantic_review"]["issues"][0]["severity"],
+            "clarification",
+        )
 
     def test_semantic_review_allows_explicit_top_product_by_revenue(self) -> None:
         issues = goal_semantic_review_issues(
@@ -1765,6 +1817,23 @@ class QuerySynthesisTests(unittest.TestCase):
             goal=None,
             message="Какой товар самый продаваемый по выручке за 2024 год?",
             intent=data_intent("Получить самый продаваемый по выручке товар за 2024 год"),
+            metadata_objects=[],
+        )
+
+        self.assertNotIn("top_sold_product_metric_ambiguous", {item["code"] for item in issues})
+
+    def test_semantic_review_allows_explicit_top_product_by_turnover(self) -> None:
+        issues = goal_semantic_review_issues(
+            query=(
+                "ВЫБРАТЬ ПЕРВЫЕ 1 Продажи.Номенклатура КАК Товар, "
+                "СУММА(Продажи.СуммаВыручки) КАК СуммаПродаж "
+                "ИЗ РегистрНакопления.ВыручкаИСебестоимостьПродаж КАК Продажи "
+                "УПОРЯДОЧИТЬ ПО СуммаПродаж УБЫВ"
+            ),
+            params={},
+            goal=None,
+            message="Какой товар самый продаваемый по обороту за 2024 год?",
+            intent=data_intent("Получить самый продаваемый по обороту товар за 2024 год"),
             metadata_objects=[],
         )
 
@@ -1785,6 +1854,9 @@ class QuerySynthesisTests(unittest.TestCase):
         )
 
         self.assertIn("average_document_metric_needs_document_grain", {item["code"] for item in issues})
+        issue = next(item for item in issues if item["code"] == "average_document_metric_needs_document_grain")
+        self.assertEqual(issue["severity"], "repair_required")
+        self.assertIn("зерну документа", issue["repair_hint"])
 
     def test_learned_store_persists_active_parameterized_lookup(self) -> None:
         query = price_lookup_query()
@@ -2500,6 +2572,34 @@ class FinancialMetadataProvider(MetadataProvider):
                 "Ресурсы": [
                     {"Имя": "СуммаВыручкиБезНДС", "Тип": "Число"},
                     {"Имя": "СтоимостьБезНДС", "Тип": "Число"},
+                ],
+            }
+        )
+        self.last_requests: List[Dict[str, object]] = []
+
+    def search_objects(self, term: str) -> List[MetadataObject]:
+        self.last_requests.append({"operation": "search_objects", "term": term})
+        return [self.object]
+
+    def get_object(self, full_name: str) -> MetadataObject:
+        self.last_requests.append({"operation": "get_object", "full_name": full_name})
+        return self.object
+
+
+class SalesRegisterMetadataProvider(MetadataProvider):
+    def __init__(self) -> None:
+        self.object = metadata_object_from_payload(
+            {
+                "ПолноеИмя": "РегистрНакопления.Продажи",
+                "Синоним": "Продажи",
+                "СтандартныеРеквизиты": [
+                    {"Имя": "Период", "Тип": "Дата"},
+                    {"Имя": "Активность", "Тип": "Булево"},
+                ],
+                "Измерения": [{"Имя": "Номенклатура", "Тип": "СправочникСсылка.Номенклатура"}],
+                "Ресурсы": [
+                    {"Имя": "СуммаВыручки", "Тип": "Число"},
+                    {"Имя": "Количество", "Тип": "Число"},
                 ],
             }
         )

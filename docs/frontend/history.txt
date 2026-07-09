@@ -1,3 +1,7 @@
+5.0.0-alpha.85
+- Frontend behavior не менялся; версия синхронизирована с backend-изменением semantic review severity и clarification для неоднозначных метрик.
+- Static asset URLs обновлены до alpha.85.
+
 5.0.0-alpha.84
 - Frontend behavior не менялся; версия синхронизирована с backend-исправлением learned-навыков, семантической проверки и fallback-форматирования ответов.
 - Static asset URLs обновлены до alpha.84.

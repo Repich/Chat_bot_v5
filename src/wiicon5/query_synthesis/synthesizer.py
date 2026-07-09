@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
+from wiicon5.domain_packs.trade_ru.semantic_review import trade_ru_semantic_review_issues
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.intent.models import IntentResult
 from wiicon5.knowledge.metadata import (
@@ -42,6 +43,13 @@ from wiicon5.query_synthesis.failure_solver import (
     FailureSolver,
     FailureSolverDecision,
     failure_diagnostic_payload,
+)
+from wiicon5.query_synthesis.semantic_review import (
+    clarification_issue,
+    repair_required_issues,
+    semantic_issue,
+    semantic_review_error,
+    semantic_review_ok,
 )
 from wiicon5.query_synthesis.sufficiency import (
     ResultSufficiencyReview,
@@ -376,13 +384,25 @@ class QuerySynthesisEngine:
                 metadata_objects=metadata_objects,
             )
             attempt_trace["goal_semantic_review"] = {
-                "ok": not semantic_issues,
+                "ok": semantic_review_ok(semantic_issues),
                 "issues": semantic_issues,
             }
-            if semantic_issues:
-                previous_error = "Query semantic review failed: " + "; ".join(
-                    issue["message"] for issue in semantic_issues
+            clarify_issue = clarification_issue(semantic_issues)
+            if clarify_issue is not None:
+                attempt_trace["clarification_issue"] = clarify_issue
+                result = semantic_clarification_result(
+                    question=message,
+                    query=query,
+                    params=params,
+                    issue=clarify_issue,
+                    trace=trace,
+                    error="Clarification is required before continuing query synthesis.",
                 )
+                trace["clarification"] = result.context_artifacts[0].value if result.context_artifacts else {}
+                return result
+            repair_issues = repair_required_issues(semantic_issues)
+            if repair_issues:
+                previous_error = semantic_review_error("Query semantic review requires repair: ", repair_issues)
                 previous_query = query
                 attempt_trace["error"] = previous_error
                 continue
@@ -808,13 +828,25 @@ class QuerySynthesisEngine:
             metadata_objects=metadata_objects,
         )
         attempt_trace["goal_semantic_review"] = {
-            "ok": not semantic_issues,
+            "ok": semantic_review_ok(semantic_issues),
             "issues": semantic_issues,
         }
-        if semantic_issues:
-            error = "Failure solver query semantic review failed: " + "; ".join(
-                issue["message"] for issue in semantic_issues
+        clarify_issue = clarification_issue(semantic_issues)
+        if clarify_issue is not None:
+            attempt_trace["clarification_issue"] = clarify_issue
+            result = semantic_clarification_result(
+                question=message,
+                query=query,
+                params=params,
+                issue=clarify_issue,
+                trace=trace,
+                error="Clarification is required after failure solver semantic review.",
             )
+            trace["clarification"] = result.context_artifacts[0].value if result.context_artifacts else {}
+            return result
+        repair_issues = repair_required_issues(semantic_issues)
+        if repair_issues:
+            error = semantic_review_error("Failure solver query semantic review requires repair: ", repair_issues)
             attempt_trace["error"] = error
             return QuerySynthesisResult(ok=False, error=error, trace=trace)
 
@@ -1467,6 +1499,47 @@ def clarification_artifact(
     )
 
 
+def semantic_clarification_result(
+    *,
+    question: str,
+    query: str,
+    params: Dict[str, Any],
+    issue: Dict[str, Any],
+    trace: Dict[str, Any],
+    error: str,
+) -> QuerySynthesisResult:
+    sufficiency = ResultSufficiencyReview(
+        sufficient=False,
+        partial=False,
+        needs_clarification=True,
+        clarification_question=str(issue.get("clarification_question") or "Уточните, какой показатель нужно показать?"),
+        clarification_options=[str(item) for item in issue.get("clarification_options", []) or []],
+        reasoning=str(issue.get("message") or ""),
+        missing_facts=[str(issue.get("code") or "semantic_clarification")],
+    )
+    artifact = clarification_artifact(
+        question=question,
+        query=query,
+        params=params,
+        columns=[],
+        rows=[],
+        sufficiency=sufficiency,
+    )
+    return QuerySynthesisResult(
+        ok=False,
+        context_artifacts=[artifact],
+        message=clarification_message(
+            sufficiency=sufficiency,
+            question=question,
+            columns=[],
+            rows=[],
+        ),
+        error=error,
+        needs_clarification=True,
+        trace=trace,
+    )
+
+
 def clarification_message(
     *,
     sufficiency: ResultSufficiencyReview,
@@ -1596,22 +1669,22 @@ def goal_semantic_review_issues(
     message: str = "",
     intent: Optional[IntentResult] = None,
     metadata_objects: List[MetadataObject],
-) -> List[Dict[str, str]]:
-    issues: List[Dict[str, str]] = []
+) -> List[Dict[str, Any]]:
+    issues: List[Dict[str, Any]] = []
     constraints = [constraint for item in (goal.required_artifacts if goal is not None else []) for constraint in item.constraints]
     haystack = normalized_semantic_text(query, params)
 
     for constraint in constraints:
         if constraint.semantic_field == "warehouse_type" and not warehouse_type_filter_reflected(constraint, haystack):
             issues.append(
-                {
-                    "code": "required_filter_not_reflected",
-                    "message": (
+                semantic_issue(
+                    code="required_filter_not_reflected",
+                    message=(
                         "Запрос не отражает обязательный фильтр warehouse_type из цели. "
                         "Сохрани ограничение пользователя в запросе: получи подходящие склады или используй "
                         "проверенное условие по типу склада."
                     ),
-                }
+                )
             )
 
     if top_product_aggregate_required(goal=goal, message=message, intent=intent):
@@ -1624,83 +1697,8 @@ def goal_semantic_review_issues(
         )
         if aggregate_issue is not None:
             issues.append(aggregate_issue)
-    sold_metric_issue = top_sold_product_metric_issue(query=query, message=message, intent=intent)
-    if sold_metric_issue is not None:
-        issues.append(sold_metric_issue)
-    average_document_issue = average_document_metric_issue(query=query, message=message, intent=intent)
-    if average_document_issue is not None:
-        issues.append(average_document_issue)
+    issues.extend(trade_ru_semantic_review_issues(query=query, message=message, intent=intent))
     return issues
-
-
-def top_sold_product_metric_issue(
-    *,
-    query: str,
-    message: str = "",
-    intent: Optional[IntentResult] = None,
-) -> Optional[Dict[str, str]]:
-    text = " ".join(
-        [
-            message,
-            getattr(intent, "business_goal", "") if intent is not None else "",
-            " ".join(getattr(intent, "domain_terms", []) or []) if intent is not None else "",
-        ]
-    ).lower()
-    if not any(marker in text for marker in ["сам", "больше всего", "наибольш", "топ", "top"]):
-        return None
-    if not any(marker in text for marker in ["продаваем", "продаж", "купил", "брали"]):
-        return None
-    if not any(marker in text for marker in ["товар", "номенклатур", "product"]):
-        return None
-    if any(marker in text for marker in ["по выруч", "по сумм", "по стоимости", "деньг", "руб"]):
-        return None
-    normalized_query = " ".join(query.lower().split())
-    if any(marker in normalized_query for marker in ["количество", "quantity", "count("]):
-        return None
-    if any(marker in normalized_query for marker in ["выруч", "суммапродаж", "суммавыруч", "сумма"]):
-        return {
-            "code": "top_sold_product_metric_ambiguous",
-            "message": (
-                "Пользователь спросил самый продаваемый товар без уточнения 'по выручке'. "
-                "По умолчанию это количество проданных единиц. Построй запрос по количеству, "
-                "либо задай уточняющий вопрос, если нужно ранжировать по сумме/выручке."
-            ),
-        }
-    return None
-
-
-def average_document_metric_issue(
-    *,
-    query: str,
-    message: str = "",
-    intent: Optional[IntentResult] = None,
-) -> Optional[Dict[str, str]]:
-    text = " ".join(
-        [
-            message,
-            getattr(intent, "business_goal", "") if intent is not None else "",
-            " ".join(getattr(intent, "domain_terms", []) or []) if intent is not None else "",
-        ]
-    ).lower()
-    if "средн" not in text:
-        return None
-    if not any(marker in text for marker in ["реализац", "заказ", "поступлен", "документ"]):
-        return None
-    normalized_query = " ".join(query.lower().split())
-    if "среднее(" not in normalized_query:
-        return None
-    if "регистрнакопления." not in normalized_query:
-        return None
-    if any(marker in normalized_query for marker in ["регистратор", ".документ", ".ссылка"]):
-        return None
-    return {
-        "code": "average_document_metric_needs_document_grain",
-        "message": (
-            "Пользователь спрашивает среднее значение по документам. Нельзя считать СРЕДНЕЕ() "
-            "по строкам сырого регистра без приведения к зерну документа: используй сумму документа "
-            "из документа или сначала сгруппируй движения по регистратору/документу, затем усредняй суммы документов."
-        ),
-    }
 
 
 def top_product_aggregate_required(
@@ -1759,7 +1757,7 @@ def top_product_aggregate_grain_issue(
     message: str = "",
     intent: Optional[IntentResult] = None,
     metadata_objects: List[MetadataObject],
-) -> Optional[Dict[str, str]]:
+) -> Optional[Dict[str, Any]]:
     normalized_query = " ".join(query.lower().split())
     if not ("первые" in normalized_query and "упорядочить по" in normalized_query):
         return None
@@ -1778,14 +1776,14 @@ def top_product_aggregate_grain_issue(
             continue
         if query_groups_product(query) and query_sums_balance_resource(query, resources):
             return None
-        return {
-            "code": "aggregate_grain_not_confirmed",
-            "message": (
+        return semantic_issue(
+            code="aggregate_grain_not_confirmed",
+            message=(
                 "Для top/max товара по остаткам запрос к Остатки() должен агрегировать строки регистра "
                 "до зерна товара: СУММА(<Ресурс>Остаток), СГРУППИРОВАТЬ ПО Номенклатура, сортировка по агрегату. "
                 "Нельзя отвечать ПЕРВЫЕ 1 по одной строке регистра, если у регистра есть дополнительные измерения."
             ),
-        }
+        )
     return None
 
 
