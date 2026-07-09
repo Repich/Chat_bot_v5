@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from wiicon5.app.config import Settings
-from wiicon5.app.factory import build_agent
+from wiicon5.app.factory import build_agent, learned_skill_root, skill_registry_roots
 from wiicon5.llm.client import ScriptedLLMClient
 from wiicon5.mcp.client import DictMcpClient
 
@@ -85,6 +85,22 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.failure_solver_model, "gpt-test")
         self.assertEqual(settings.failure_solver_timeout_seconds, 180)
         self.assertEqual(settings.failure_solver_codex_command, "python3 scripts/codex_failure_solver.py")
+
+    def test_settings_loads_auto_learned_skill_options(self) -> None:
+        settings = Settings.from_env(
+            {
+                "WIICON5_AUTO_LEARNED_SKILLS_ENABLED": "false",
+                "WIICON5_AUTO_LEARNED_SKILLS_ACTIVATE": "false",
+                "WIICON5_AUTO_LEARNED_SKILLS_SCOPE": "global",
+                "WIICON5_AUTO_LEARNED_SKILLS_FAILURE_THRESHOLD": "5",
+            },
+            root=PROJECT_ROOT,
+        )
+
+        self.assertFalse(settings.auto_learned_skills_enabled)
+        self.assertFalse(settings.auto_learned_skills_activate)
+        self.assertEqual(settings.auto_learned_skills_scope, "global")
+        self.assertEqual(settings.auto_learned_skills_failure_threshold, 5)
 
     def test_settings_loads_bot_instance_yaml(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -253,6 +269,26 @@ class AppFactoryTests(unittest.TestCase):
         self.assertNotEqual(context.config_fingerprint, "auto")
         self.assertTrue(str(context.config_fingerprint).startswith("cfg_"))
         self.assertGreaterEqual(len(mcp.metadata_calls), 1)
+
+    def test_learned_skill_root_is_bot_specific_by_default(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = Settings.from_env({}, root=root)
+
+        self.assertEqual(learned_skill_root(settings), root / "bot_instances" / "local" / "skills")
+        self.assertIn(root / "bot_instances" / "local" / "skills", skill_registry_roots(settings))
+        self.assertNotIn(root / "skills" / "learned", skill_registry_roots(settings))
+
+    def test_global_learned_scope_is_explicit_and_loaded_on_restart(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = Settings.from_env(
+                {"WIICON5_AUTO_LEARNED_SKILLS_SCOPE": "global"},
+                root=root,
+            )
+
+        self.assertEqual(learned_skill_root(settings), root / "skills")
+        self.assertIn(root / "skills" / "learned", skill_registry_roots(settings))
 
 
 if __name__ == "__main__":

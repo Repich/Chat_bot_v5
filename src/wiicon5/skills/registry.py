@@ -45,6 +45,7 @@ class SkillRegistry:
             skill
             for skill in self._skills.values()
             if skill.status in {SkillStatus.VERIFIED, SkillStatus.STABLE}
+            and not skill_auto_blocked(skill)
         ]
 
     def by_output_type(self, artifact_type: str) -> List[SkillContract]:
@@ -58,3 +59,8 @@ class SkillRegistry:
 
 def is_skill_contract_payload(data: object) -> bool:
     return isinstance(data, dict) and isinstance(data.get("skill_id"), str) and isinstance(data.get("kind"), str)
+
+
+def skill_auto_blocked(skill: SkillContract) -> bool:
+    health = skill.implementation.get("runtime_health") if isinstance(skill.implementation, dict) else {}
+    return isinstance(health, dict) and bool(health.get("auto_blocked"))

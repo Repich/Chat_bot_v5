@@ -4,9 +4,12 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from wiicon5.conversation.context import ConversationContext
+from wiicon5.execution.runtime import SkillRunResult
 from wiicon5.intent.models import IntentResult
 from wiicon5.models import SkillContract, SkillKind, SkillStatus
 from wiicon5.planner.goal import GoalDecomposition
@@ -34,12 +37,13 @@ class LearnedSkillWriteResult:
 
 
 class LearnedSkillStore:
-    def __init__(self, *, skills_dir: Path, registry: SkillRegistry) -> None:
+    def __init__(self, *, skills_dir: Path, registry: SkillRegistry, auto_activate: bool = True) -> None:
         self.skills_dir = skills_dir
         self.learned_dir = skills_dir / "learned"
-        self.active_dir = self.learned_dir / "active"
+        self.active_dir = self.learned_dir / ("active" if auto_activate else "inactive")
         self.evidence_dir = self.learned_dir / "evidence"
         self.registry = registry
+        self.auto_activate = auto_activate
 
     def learn_from_synthesis(
         self,
@@ -72,14 +76,18 @@ class LearnedSkillStore:
             trace=synthesis_result.trace,
             created_from_trace=created_from_trace,
             config_fingerprint=config_fingerprint,
+            auto_activate=self.auto_activate,
         )
         skill = skill_from_spec(spec, intent=intent, goal=goal)
         self.active_dir.mkdir(parents=True, exist_ok=True)
         path = self.active_dir / f"{skill.skill_id}.json"
         created = not path.exists()
+        if not created:
+            skill = preserve_existing_runtime_health(skill, path)
         path.write_text(json.dumps(skill.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         evidence_path = self.write_evidence(skill, spec, synthesis_result.trace, created_from_trace)
-        self.registry.add(skill)
+        if self.auto_activate:
+            self.registry.add(skill)
         return LearnedSkillWriteResult(skill=skill, path=path, created=created, evidence_path=evidence_path)
 
     def write_evidence(
@@ -168,6 +176,7 @@ def enrich_spec_with_lifecycle(
     trace: Dict[str, Any],
     created_from_trace: str,
     config_fingerprint: str,
+    auto_activate: bool = True,
 ) -> Dict[str, Any]:
     result = dict(spec)
     final_query = dict(trace.get("final_query") or {})
@@ -181,10 +190,245 @@ def enrich_spec_with_lifecycle(
         "sufficiency_review": latest_sufficiency_review(trace),
         "human_confirmed": False,
         "successful_runs": 1,
+        "created_by": "agent",
+        "verification_mode": "runtime_auto",
+        "experiment": "auto_learning_v1",
     }
+    result["activation_mode"] = "auto_active" if auto_activate else "auto_inactive"
+    result["human_confirmed"] = False
+    result["verification_mode"] = "runtime_auto"
+    result["created_by"] = "agent"
+    result["experiment"] = "auto_learning_v1"
+    result["runtime_health"] = default_runtime_health()
     if config_fingerprint:
         result["config_fingerprint"] = config_fingerprint
     return result
+
+
+class LearnedSkillRuntimeHealthStore:
+    def __init__(self, *, skills_dir: Path, registry: SkillRegistry, failure_threshold: int = 3) -> None:
+        self.skills_dir = skills_dir
+        self.learned_dir = skills_dir / "learned"
+        self.active_dir = self.learned_dir / "active"
+        self.evidence_dir = self.learned_dir / "evidence"
+        self.registry = registry
+        self.failure_threshold = max(1, int(failure_threshold or 3))
+
+    def record(
+        self,
+        skill: SkillContract,
+        result: SkillRunResult,
+        context: ConversationContext,
+        *,
+        invocation_id: str = "",
+        inputs: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if skill.implementation_strategy != "learned_query":
+            return
+        skill_path = self.active_dir / f"{skill.skill_id}.json"
+        if not skill_path.exists():
+            return
+        health = dict(skill.implementation.get("runtime_health") or default_runtime_health())
+        failed = learned_result_failed(result)
+        now = utc_iso()
+        health["reuse_count"] = int(health.get("reuse_count") or 0) + 1
+        health["last_used_at"] = now
+        if failed:
+            health["failure_count"] = int(health.get("failure_count") or 0) + 1
+            health["consecutive_failures"] = int(health.get("consecutive_failures") or 0) + 1
+            health["last_error"] = learned_result_error(result)
+            health["last_failed_at"] = now
+        else:
+            health["success_count"] = int(health.get("success_count") or 0) + 1
+            health["consecutive_failures"] = 0
+            health["last_error"] = ""
+        if int(health.get("consecutive_failures") or 0) >= self.failure_threshold:
+            health["auto_blocked"] = True
+            health["auto_blocked_at"] = now
+
+        skill.implementation["runtime_health"] = health
+        self._patch_skill_file(skill_path, health)
+        self._append_reuse_evidence(
+            skill=skill,
+            health=health,
+            result=result,
+            context=context,
+            invocation_id=invocation_id,
+            inputs=inputs or {},
+            failed=failed,
+        )
+
+    def _patch_skill_file(self, path: Path, health: Dict[str, Any]) -> None:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        implementation = data.setdefault("implementation", {})
+        implementation["runtime_health"] = health
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _append_reuse_evidence(
+        self,
+        *,
+        skill: SkillContract,
+        health: Dict[str, Any],
+        result: SkillRunResult,
+        context: ConversationContext,
+        invocation_id: str,
+        inputs: Dict[str, Any],
+        failed: bool,
+    ) -> None:
+        evidence_dir = self.evidence_dir / skill.skill_id
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "ts": utc_iso(),
+            "skill_id": skill.skill_id,
+            "invocation_id": invocation_id,
+            "question": latest_user_question(context),
+            "ok": result.ok and not failed,
+            "failed": failed,
+            "error": learned_result_error(result),
+            "inputs": inputs,
+            "runtime_health": health,
+        }
+        with (evidence_dir / "reuse_runs.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def default_runtime_health() -> Dict[str, Any]:
+    return {
+        "reuse_count": 0,
+        "success_count": 0,
+        "failure_count": 0,
+        "consecutive_failures": 0,
+        "last_used_at": "",
+        "last_failed_at": "",
+        "last_error": "",
+        "auto_blocked": False,
+        "auto_blocked_at": "",
+    }
+
+
+def preserve_existing_runtime_health(skill: SkillContract, path: Path) -> SkillContract:
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return skill
+    implementation = existing.get("implementation") if isinstance(existing.get("implementation"), dict) else {}
+    health = implementation.get("runtime_health")
+    if isinstance(health, dict):
+        skill.implementation["runtime_health"] = dict(health)
+    return skill
+
+
+def learned_result_failed(result: SkillRunResult) -> bool:
+    if not result.ok:
+        return True
+    for artifact in result.artifacts:
+        value = artifact.value
+        if isinstance(value, dict) and isinstance(value.get("rows"), list) and not value.get("rows"):
+            return True
+        if isinstance(value, list) and not value:
+            return True
+    return False
+
+
+def learned_result_error(result: SkillRunResult) -> str:
+    if result.error:
+        return result.error
+    if learned_result_failed(result):
+        return "empty_result"
+    return ""
+
+
+def latest_user_question(context: ConversationContext) -> str:
+    for message in reversed(context.messages):
+        if message.role == "user":
+            return message.content
+    return ""
+
+
+def utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def auto_learning_report(skills_dir: Path) -> Dict[str, Any]:
+    learned_dir = skills_dir / "learned"
+    active_dir = learned_dir / "active"
+    inactive_dir = learned_dir / "inactive"
+    skills = []
+    for root in [active_dir, inactive_dir]:
+        if not root.exists():
+            continue
+        for path in sorted(root.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or not data.get("skill_id"):
+                    continue
+            except (OSError, json.JSONDecodeError):
+                continue
+            implementation = data.get("implementation") if isinstance(data.get("implementation"), dict) else {}
+            evidence = implementation.get("evidence") if isinstance(implementation.get("evidence"), dict) else {}
+            health = implementation.get("runtime_health") if isinstance(implementation.get("runtime_health"), dict) else default_runtime_health()
+            skills.append(
+                {
+                    "skill_id": data.get("skill_id"),
+                    "status": data.get("status", ""),
+                    "path": str(path),
+                    "active": root == active_dir,
+                    "kind": implementation.get("kind", ""),
+                    "activation_mode": implementation.get("activation_mode", ""),
+                    "human_confirmed": bool(implementation.get("human_confirmed") or evidence.get("human_confirmed")),
+                    "created_by": implementation.get("created_by", ""),
+                    "created_from_trace": evidence.get("created_from_trace", ""),
+                    "created_from_question": evidence.get("question", ""),
+                    "config_fingerprint": implementation.get("config_fingerprint", ""),
+                    "runtime_health": dict(health),
+                    "reused_for": reused_questions(learned_dir / "evidence" / str(data.get("skill_id")) / "reuse_runs.jsonl"),
+                }
+            )
+    summary = learning_summary(skills)
+    return {"summary": summary, "skills": skills}
+
+
+def reused_questions(path: Path) -> List[str]:
+    if not path.exists():
+        return []
+    result: List[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        question = str(payload.get("question") or "").strip()
+        if question and question not in result:
+            result.append(question)
+    return result[-20:]
+
+
+def learning_summary(skills: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_kind: Dict[str, int] = {}
+    for item in skills:
+        kind = str(item.get("kind") or "unknown")
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    return {
+        "auto_learned_created_total": len(skills),
+        "auto_learned_active_total": sum(1 for item in skills if item.get("active")),
+        "auto_learned_reused_total": sum(
+            1 for item in skills if int((item.get("runtime_health") or {}).get("reuse_count") or 0) > 0
+        ),
+        "auto_learned_never_reused_total": sum(
+            1 for item in skills if int((item.get("runtime_health") or {}).get("reuse_count") or 0) == 0
+        ),
+        "auto_learned_failed_total": sum(
+            1 for item in skills if int((item.get("runtime_health") or {}).get("failure_count") or 0) > 0
+        ),
+        "auto_learned_auto_blocked_total": sum(
+            1 for item in skills if bool((item.get("runtime_health") or {}).get("auto_blocked"))
+        ),
+        "auto_learned_by_kind": by_kind,
+    }
 
 
 def metadata_dependency_contract(spec: Dict[str, Any], *, query: str) -> List[Dict[str, Any]]:

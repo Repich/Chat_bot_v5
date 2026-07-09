@@ -34,6 +34,10 @@ class Settings:
     failure_solver_model: str = "gpt-5.4"
     failure_solver_timeout_seconds: float = 120.0
     failure_solver_codex_command: str = ""
+    auto_learned_skills_enabled: bool = True
+    auto_learned_skills_activate: bool = True
+    auto_learned_skills_scope: str = "bot"
+    auto_learned_skills_failure_threshold: int = 3
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None, root: Optional[Path] = None) -> "Settings":
@@ -93,6 +97,23 @@ class Settings:
                 first_value(values, "WIICON5_FAILURE_SOLVER_TIMEOUT_SECONDS", default="120")
             ),
             failure_solver_codex_command=first_value(values, "WIICON5_FAILURE_SOLVER_CODEX_COMMAND"),
+            auto_learned_skills_enabled=bool_from_env(
+                values.get("WIICON5_AUTO_LEARNED_SKILLS_ENABLED"),
+                default=True,
+            ),
+            auto_learned_skills_activate=bool_from_env(
+                values.get("WIICON5_AUTO_LEARNED_SKILLS_ACTIVATE"),
+                default=True,
+            ),
+            auto_learned_skills_scope=first_value(
+                values,
+                "WIICON5_AUTO_LEARNED_SKILLS_SCOPE",
+                default="bot",
+            ).strip().lower()
+            or "bot",
+            auto_learned_skills_failure_threshold=int(
+                first_value(values, "WIICON5_AUTO_LEARNED_SKILLS_FAILURE_THRESHOLD", default="3")
+            ),
         )
 
     def validate_for_llm(self) -> None:

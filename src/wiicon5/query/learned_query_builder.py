@@ -14,11 +14,17 @@ class LearnedQueryBuilder(QueryBuilder):
         spec = skill.implementation
         expected_fingerprint = str(spec.get("config_fingerprint") or "")
         actual_fingerprint = context.config_fingerprint or ""
-        if expected_fingerprint and actual_fingerprint and expected_fingerprint != actual_fingerprint:
-            raise QueryBuildError(
-                f"Learned skill {skill.skill_id} was created for config {expected_fingerprint}, "
-                f"current config is {actual_fingerprint}."
-            )
+        if expected_fingerprint:
+            if not actual_fingerprint:
+                raise QueryBuildError(
+                    f"Learned skill {skill.skill_id} requires config fingerprint {expected_fingerprint}, "
+                    "but current config fingerprint is unknown."
+                )
+            if expected_fingerprint != actual_fingerprint:
+                raise QueryBuildError(
+                    f"Learned skill {skill.skill_id} was created for config {expected_fingerprint}, "
+                    f"current config is {actual_fingerprint}."
+                )
         kind = str(spec.get("kind") or "")
         if kind == "period_metric_aggregate":
             return build_period_metric_aggregate(skill, inputs)

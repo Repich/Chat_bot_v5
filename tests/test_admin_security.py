@@ -105,6 +105,23 @@ class AdminSecurityTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["draft"]["calculation"]["kind"], "trace_query")
 
+    def test_learning_report_endpoint_reads_bot_specific_learned_skills(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            bot_root = Path(temp_dir) / "bot"
+            active_dir = bot_root / "skills" / "learned" / "active"
+            active_dir.mkdir(parents=True)
+            (active_dir / "learned_test.json").write_text(
+                json.dumps(minimal_learned_skill_payload(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            with running_server(admin_security=AdminSecurityConfig(), bot_root=bot_root) as base_url:
+                status, payload = request_json(f"{base_url}/api/admin/learning/report")
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["summary"]["auto_learned_created_total"], 1)
+        self.assertEqual(payload["skills"][0]["skill_id"], "learned_test")
+
 
 class running_server:
     def __init__(self, *, admin_security: AdminSecurityConfig, bot_root: Path | None = None) -> None:
@@ -181,6 +198,41 @@ def raw_query_draft_payload() -> Dict[str, Any]:
         "calculation": {
             "kind": "trace_query",
             "raw": {"query": "ВЫБРАТЬ 1 КАК Значение", "params": {}, "limit": 1},
+        },
+    }
+
+
+def minimal_learned_skill_payload() -> Dict[str, Any]:
+    return {
+        "skill_id": "learned_test",
+        "version": "0.1.0",
+        "kind": "data_acquisition",
+        "status": "verified",
+        "description": "Learned test skill.",
+        "capabilities": ["learned_query", "produce:TestTable"],
+        "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": False}],
+        "outputs": [{"name": "table", "type": "TestTable"}],
+        "implementation_strategy": "learned_query",
+        "implementation": {
+            "kind": "parameterized_lookup_query",
+            "query": "ВЫБРАТЬ 1 КАК Значение",
+            "params": {},
+            "activation_mode": "auto_active",
+            "created_by": "agent",
+            "runtime_health": {
+                "reuse_count": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "consecutive_failures": 0,
+                "last_used_at": "",
+                "last_error": "",
+                "auto_blocked": False,
+            },
+            "evidence": {
+                "question": "Тестовый вопрос",
+                "created_by": "agent",
+                "human_confirmed": False,
+            },
         },
     }
 

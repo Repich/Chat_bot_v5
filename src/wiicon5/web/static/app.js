@@ -26,6 +26,9 @@
       lastError: null,
       busy: false,
     },
+    learning: {
+      loaded: false,
+    },
   };
 
   window.WiiconState = state;
@@ -170,6 +173,9 @@
     });
     if (view === "docs" && state.docs.items.length === 0) {
       loadDocumentationIndex();
+    }
+    if (view === "learning" && !state.learning.loaded) {
+      loadLearningReport();
     }
   }
 
@@ -450,6 +456,78 @@
     });
   }
 
+  async function loadLearningReport(button) {
+    return runAction(button, "Отчет обучения", () => api.fetchAdmin("/api/admin/learning/report"), (data) => {
+      state.learning.loaded = true;
+      renderLearningReport(data);
+      return data;
+    }).catch((error) => {
+      renderLearningReportError(error);
+      return null;
+    });
+  }
+
+  function renderLearningReport(data) {
+    const summary = data.summary || {};
+    const skills = Array.isArray(data.skills) ? data.skills : [];
+    const root = optionalElement("learningRoot");
+    if (root) {
+      root.textContent = data.bot_instance_root || "";
+    }
+    requiredElement("learningSummary").innerHTML = [
+      learningKpi("Создано", summary.auto_learned_created_total || 0),
+      learningKpi("Активно", summary.auto_learned_active_total || 0),
+      learningKpi("Переиспользовалось", summary.auto_learned_reused_total || 0),
+      learningKpi("Ни разу не использовано", summary.auto_learned_never_reused_total || 0),
+      learningKpi("С ошибками", summary.auto_learned_failed_total || 0),
+      learningKpi("Автоблокировано", summary.auto_learned_auto_blocked_total || 0, "danger"),
+    ].join("");
+    requiredElement("learningSkills").innerHTML = skills.length
+      ? skills.map(renderLearningSkill).join("")
+      : "<div class=\"empty-state\"><h3>Автоматических навыков пока нет</h3><p>Они появятся после успешных ответов агента, которые удалось обобщить.</p></div>";
+    requiredElement("learningOutput").innerHTML = renderers.renderJsonDetails("Технический отчет", data);
+  }
+
+  function renderLearningReportError(error) {
+    const message = error && error.message ? error.message : String(error || "");
+    requiredElement("learningSummary").innerHTML = `<p class="message error">${renderers.escapeHtml(message)}</p>`;
+    requiredElement("learningSkills").innerHTML = "";
+    requiredElement("learningOutput").innerHTML = renderers.renderJsonDetails("Ошибка", error && error.details ? error.details : { message });
+  }
+
+  function learningKpi(label, value, tone) {
+    const className = tone === "danger" && Number(value) > 0 ? "learning-kpi danger" : "learning-kpi";
+    return `<div class="${className}"><span>${renderers.escapeHtml(label)}</span><strong>${renderers.escapeHtml(value)}</strong></div>`;
+  }
+
+  function renderLearningSkill(skill) {
+    const health = skill.runtime_health || {};
+    const blocked = Boolean(health.auto_blocked);
+    const reusedFor = Array.isArray(skill.reused_for) ? skill.reused_for : [];
+    return `<article class="entity-card learning-skill-card${blocked ? " blocked" : ""}" data-skill-id="${renderers.escapeHtml(skill.skill_id || "")}">
+      <div class="entity-card-header">
+        <div>
+          <div class="entity-kind">${blocked ? "Автоматически заблокирован" : "Активный auto-learned навык"}</div>
+          <h3>${renderers.escapeHtml(skill.skill_id || "Навык")}</h3>
+        </div>
+        <span class="status-pill">${blocked ? "заблокирован" : "активен"}</span>
+      </div>
+      <p class="entity-summary">${renderers.escapeHtml(skill.created_from_question || "Вопрос создания не зафиксирован.")}</p>
+      <dl class="entity-facts">
+        <div><dt>Создан</dt><dd>${renderers.escapeHtml(skill.created_by || "")}</dd></div>
+        <div><dt>Тип</dt><dd>${renderers.escapeHtml(skill.kind || "")}</dd></div>
+        <div><dt>Переиспользований</dt><dd>${renderers.escapeHtml(health.reuse_count || 0)}</dd></div>
+        <div><dt>Успешно</dt><dd>${renderers.escapeHtml(health.success_count || 0)}</dd></div>
+        <div><dt>Ошибок</dt><dd>${renderers.escapeHtml(health.failure_count || 0)}</dd></div>
+        <div><dt>Последняя ошибка</dt><dd>${renderers.escapeHtml(health.last_error || "")}</dd></div>
+      </dl>
+      ${reusedFor.length ? `<section class="entity-section"><h4>Последние вопросы</h4><ul class="compact-list">${reusedFor.slice(-5).map((item) => `<li>${renderers.escapeHtml(item)}</li>`).join("")}</ul></section>` : ""}
+      <div class="entity-actions">
+        <button class="primary-button" type="button" data-action="open-skill" data-skill-id="${renderers.escapeHtml(skill.skill_id || "")}">Открыть навык</button>
+      </div>
+    </article>`;
+  }
+
   function saveAdminToken() {
     state.admin.token = requiredElement("adminTokenInput").value.trim();
     state.storage.setItem(api.ADMIN_TOKEN_STORAGE_KEY, state.admin.token);
@@ -467,7 +545,8 @@
 
   function handleWorkbenchActionClick(event) {
     const actionButton = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
-    if (!actionButton || !actionButton.closest("#view-workbench")) {
+    const actionArea = actionButton && (actionButton.closest("#view-workbench") || actionButton.closest("#view-learning"));
+    if (!actionButton || !actionArea) {
       return;
     }
     event.preventDefault();
@@ -480,6 +559,7 @@
       return;
     }
     if (action === "open-skill") {
+      setView("workbench");
       window.WiiconWorkbench.loadSkillDetailsById(skillId, actionButton);
       return;
     }
@@ -558,6 +638,7 @@
     optionalBind("backendHistoryButton", "click", (event) => loadHistory("backend", event.currentTarget));
     optionalBind("frontendHistoryButton", "click", (event) => loadHistory("frontend", event.currentTarget));
     optionalBind("startOnboardingButton", "click", (event) => startOnboarding(event.currentTarget));
+    optionalBind("learningReportButton", "click", (event) => loadLearningReport(event.currentTarget));
     optionalBind("saveAdminTokenButton", "click", saveAdminToken);
     optionalBind("clearAdminTokenButton", "click", clearAdminToken);
   }
@@ -598,6 +679,7 @@
     loadDocumentationIndex,
     openSelectedDocumentation,
     startTitleBlink,
+    loadLearningReport,
   };
 
   try {

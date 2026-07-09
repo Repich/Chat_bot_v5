@@ -1,3 +1,11 @@
+5.0.0-alpha.82
+- Auto-learned skills теперь по умолчанию сохраняются в bot-specific каталог bot_instances/<bot_id>/skills/learned/active, а global scope требует явной настройки.
+- Добавлены настройки WIICON5_AUTO_LEARNED_SKILLS_ENABLED, WIICON5_AUTO_LEARNED_SKILLS_ACTIVATE, WIICON5_AUTO_LEARNED_SKILLS_SCOPE и WIICON5_AUTO_LEARNED_SKILLS_FAILURE_THRESHOLD.
+- Learned query reuse теперь пишет runtime_health и evidence reuse_runs.jsonl; после порога последовательных ошибок навык получает auto_blocked=true и исключается из активного планирования.
+- LearnedQueryBuilder теперь fail-closed: если навык создан для fingerprint конфигурации, а текущий fingerprint отсутствует или отличается, запрос не строится.
+- Добавлен endpoint /api/admin/learning/report для отчета по auto-learned навыкам текущего bot instance.
+- Добавлен bot profile bot_instances/universal_empty только с domain pack one_c_standard для проверки неизвестной конфигурации без WIICON/торговых подсказок.
+
 5.0.0-alpha.81
 - Generic entity lookup больше не строит строгое сравнение `ПРЕДСТАВЛЕНИЕ(...) = &строка` для поисковых фраз. `equals` по сущности теперь компилируется в текстовый `ПОДОБНО`, чтобы не падать на ссылочных/перечислимых полях 1С.
 - Для generic lookup добавлена нормализация поисковой фразы: служебные слова роли вроде "склад" не превращаются в обязательную часть значения, поэтому "розничный склад" ищется как бизнес-признак "розничный".

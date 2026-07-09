@@ -41,9 +41,10 @@ class SkillRunner(ABC):
 
 
 class SkillPlanExecutor:
-    def __init__(self, registry: SkillRegistry, runners: Mapping[str, SkillRunner]) -> None:
+    def __init__(self, registry: SkillRegistry, runners: Mapping[str, SkillRunner], learned_health_tracker: Any = None) -> None:
         self.registry = registry
         self.runners = dict(runners)
+        self.learned_health_tracker = learned_health_tracker
 
     def execute(self, plan: SkillPlan, context: ConversationContext) -> SkillPlanExecutionResult:
         frame: Dict[str, Artifact] = {}
@@ -67,6 +68,14 @@ class SkillPlanExecutor:
                 )
             inputs = resolve_invocation_inputs(invocation, frame)
             result = runner.run(skill, inputs, context)
+            if self.learned_health_tracker is not None:
+                self.learned_health_tracker.record(
+                    skill,
+                    result,
+                    context,
+                    invocation_id=invocation.invocation_id,
+                    inputs=inputs,
+                )
             invocation_traces.append(
                 {
                     "invocation_id": invocation.invocation_id,

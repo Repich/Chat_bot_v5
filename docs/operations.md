@@ -214,9 +214,10 @@ python3 scripts/import_skill_pack.py \
   --actor consultant
 ```
 
-Импортированные skills не становятся `verified` автоматически. Они проходят тот
-же Workbench lifecycle: review, validation, smoke, approval, regression replay и
-promotion.
+Импортированные skills не становятся доверенными автоматически. В текущей
+упрощенной модели их нужно открыть в каталоге навыков, проверить контракт и
+запрос, затем оставить, исправить или удалить. Старые lifecycle endpoint-ы могут
+оставаться для совместимости и диагностики, но не являются основным workflow.
 
 ## Тесты
 
@@ -274,6 +275,22 @@ runs/agent_*
 - `src/wiicon5/__init__.py`;
 - `README.md`;
 - `docs/backend/history.txt` или `docs/frontend/history.txt`.
+
+## Auto-Learned Skill Settings
+
+Для экспериментального режима автосоздания навыков используются настройки:
+
+```text
+WIICON5_AUTO_LEARNED_SKILLS_ENABLED=true
+WIICON5_AUTO_LEARNED_SKILLS_ACTIVATE=true
+WIICON5_AUTO_LEARNED_SKILLS_SCOPE=bot
+WIICON5_AUTO_LEARNED_SKILLS_FAILURE_THRESHOLD=3
+```
+
+`scope=bot` хранит навыки в `bot_instances/<bot_id>/skills/learned`, поэтому
+разные базы и профили не загрязняют общий каталог. `scope=global` допустим
+только для осознанного общего эксперимента. Сводка доступна через
+`GET /api/admin/learning/report` и вкладку `Обучение`.
 
 Релизные архивы складываются во внешний общий каталог:
 

@@ -1756,6 +1756,44 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("cfg_a", str(exc.exception))
         self.assertIn("cfg_b", str(exc.exception))
 
+    def test_learned_query_rejects_missing_current_config_fingerprint(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_financial_metrics",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Financial metrics",
+                "capabilities": ["learned_query", "retrieve_metrics"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": False}],
+                "outputs": [{"name": "table", "type": "FinancialMetricsTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "kind": "period_metric_aggregate",
+                    "source": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+                    "alias": "ВыручкаИСебестоимостьПродаж",
+                    "period_field": "Период",
+                    "metrics": [
+                        {
+                            "label": "Выручка",
+                            "expression": "СУММА(ВыручкаИСебестоимостьПродаж.СуммаВыручкиБезНДС)",
+                        }
+                    ],
+                    "config_fingerprint": "cfg_a",
+                },
+            }
+        )
+
+        with self.assertRaises(QueryBuildError) as exc:
+            LearnedQueryBuilder().build(
+                skill,
+                inputs={},
+                context=ConversationContext(session_id="s1"),
+            )
+
+        self.assertIn("cfg_a", str(exc.exception))
+        self.assertIn("unknown", str(exc.exception))
+
     def test_postprocess_removes_redundant_reference_join_and_empty_balance_args(self) -> None:
         query = (
             "ВЫБРАТЬ Касса.Наименование КАК Касса, Остатки.СуммаОстаток КАК Остаток "

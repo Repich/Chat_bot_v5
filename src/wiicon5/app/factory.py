@@ -30,7 +30,7 @@ from wiicon5.query_synthesis.failure_solver import (
 )
 from wiicon5.query_synthesis.sufficiency import ResultSufficiencyReviewer
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
-from wiicon5.skills.learned import LearnedSkillStore
+from wiicon5.skills.learned import LearnedSkillRuntimeHealthStore, LearnedSkillStore
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 
@@ -42,7 +42,7 @@ def build_agent(
     mcp_client: Optional[McpClient] = None,
     memory: Optional[ConversationMemory] = None,
 ) -> AgentOrchestrator:
-    registry = SkillRegistry.load_from_dirs([settings.skills_dir, settings.bot_context.root / "skills"])
+    registry = SkillRegistry.load_from_dirs(skill_registry_roots(settings))
     effective_llm = llm_client or build_llm_client(settings)
     effective_mcp = mcp_client or HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds)
     domain_policy = DomainPolicy(settings.bot_instance)
@@ -74,7 +74,21 @@ def build_agent(
         metadata_provider=metadata_provider,
     )
     effective_memory = memory or ConversationMemory(default_config_fingerprint=config_profile.fingerprint)
-    learned_skill_store = LearnedSkillStore(skills_dir=settings.skills_dir, registry=registry)
+    learned_skills_dir = learned_skill_root(settings)
+    learned_health_store = LearnedSkillRuntimeHealthStore(
+        skills_dir=learned_skills_dir,
+        registry=registry,
+        failure_threshold=settings.auto_learned_skills_failure_threshold,
+    )
+    learned_skill_store = (
+        LearnedSkillStore(
+            skills_dir=learned_skills_dir,
+            registry=registry,
+            auto_activate=settings.auto_learned_skills_activate,
+        )
+        if settings.auto_learned_skills_enabled
+        else None
+    )
     synthesis_candidate_store = SynthesisCandidateStore(bot_instance_root=settings.bot_context.root)
     return AgentOrchestrator(
         registry=registry,
@@ -82,7 +96,7 @@ def build_agent(
         memory=effective_memory,
         baseline_intent_policy=BaselineIntentPolicy(domain_policy),
         domain_policy=domain_policy,
-        plan_executor=SkillPlanExecutor(registry, runners),
+        plan_executor=SkillPlanExecutor(registry, runners, learned_health_tracker=learned_health_store),
         query_synthesizer=QuerySynthesisEngine(
             llm_client=effective_llm,
             metadata_provider=metadata_provider,
@@ -98,6 +112,20 @@ def build_agent(
         synthesis_candidate_store=synthesis_candidate_store,
         trace_root=settings.runs_dir,
     )
+
+
+def skill_registry_roots(settings: Settings):
+    seed_root = settings.skills_dir / "atomic" if (settings.skills_dir / "atomic").exists() else settings.skills_dir
+    roots = [seed_root, settings.bot_context.root / "skills"]
+    if settings.auto_learned_skills_scope == "global":
+        roots.append(settings.skills_dir / "learned")
+    return roots
+
+
+def learned_skill_root(settings: Settings):
+    if settings.auto_learned_skills_scope == "global":
+        return settings.skills_dir
+    return settings.bot_context.root / "skills"
 
 
 def build_llm_client(settings: Settings) -> LLMClient:

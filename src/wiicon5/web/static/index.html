@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WIICON ChatBot 5</title>
-  <link rel="stylesheet" href="/static/styles.css?v=5.0.0-alpha.81">
+  <link rel="stylesheet" href="/static/styles.css?v=5.0.0-alpha.82">
 </head>
 <body>
   <div id="app" class="app">
@@ -16,6 +16,7 @@
       <nav id="topNav" class="top-nav" aria-label="Разделы">
         <button class="nav-button active" type="button" data-view="chat">Чат</button>
         <button class="nav-button" type="button" data-view="workbench">Мастерская навыков</button>
+        <button class="nav-button" type="button" data-view="learning">Обучение</button>
         <button class="nav-button" type="button" data-view="metadata">Метаданные</button>
         <button class="nav-button" type="button" data-view="docs">Документация</button>
         <button class="nav-button" type="button" data-view="admin">Администрирование</button>
@@ -84,6 +85,30 @@
               <div id="workbenchSummary" class="summary-content">Мастерская навыков не загружена.</div>
               <div id="workbenchOutput" class="technical-output"></div>
             </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-learning" class="app-view" data-view-panel="learning">
+        <div class="two-column-page">
+          <aside class="workspace-sidebar">
+            <h2>Обучение</h2>
+            <p class="muted">Отчет по навыкам, которые агент создал автоматически. Навык сразу активен, но может быть автоматически заблокирован после повторных ошибок.</p>
+            <button id="learningReportButton" class="primary-button" type="button">Обновить отчет</button>
+          </aside>
+          <section class="workspace-main">
+            <div class="card">
+              <div class="card-header">
+                <h2>Сводка</h2>
+                <span id="learningRoot" class="muted"></span>
+              </div>
+              <div id="learningSummary" class="learning-kpi-grid">Отчет обучения не загружен.</div>
+            </div>
+            <div class="card">
+              <h2>Навыки агента</h2>
+              <div id="learningSkills" class="card-list">Нет данных.</div>
+            </div>
+            <div id="learningOutput" class="technical-output"></div>
           </section>
         </div>
       </section>
@@ -158,9 +183,9 @@
     </main>
   </div>
 
-  <script src="/static/api.js?v=5.0.0-alpha.81"></script>
-  <script src="/static/renderers.js?v=5.0.0-alpha.81"></script>
-  <script src="/static/workbench.js?v=5.0.0-alpha.81"></script>
-  <script src="/static/app.js?v=5.0.0-alpha.81"></script>
+  <script src="/static/api.js?v=5.0.0-alpha.82"></script>
+  <script src="/static/renderers.js?v=5.0.0-alpha.82"></script>
+  <script src="/static/workbench.js?v=5.0.0-alpha.82"></script>
+  <script src="/static/app.js?v=5.0.0-alpha.82"></script>
 </body>
 </html>

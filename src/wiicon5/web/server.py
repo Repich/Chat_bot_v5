@@ -13,6 +13,7 @@ from wiicon5.execution.artifacts import Artifact
 from wiicon5.models import SkillContract, SkillStatus, ValidationIssue
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.regression import load_cases, run_regression_replay, save_replay_result
+from wiicon5.skills.learned import auto_learning_report
 from wiicon5.workbench.audit import utc_now
 from wiicon5.workbench.approval import ApprovalStore
 from wiicon5.workbench.fingerprints import draft_hash, preview_fingerprint_payload
@@ -158,6 +159,16 @@ def make_handler(
                 return
             if path == "/api/admin/onboarding/status":
                 self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
+                return
+            if path == "/api/admin/learning/report":
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "bot_instance_root": str(effective_onboarding_manager.bot_instance_root),
+                        **auto_learning_report(effective_onboarding_manager.bot_instance_root / "skills"),
+                    },
+                )
                 return
             if path == "/api/admin/workbench/onboarding/candidates":
                 limit = int_or_default(first_query_value(query, "limit"), 200)
@@ -1438,7 +1449,7 @@ def learned_skill_candidate_to_response(item) -> Dict[str, Any]:
         "question": str(evidence.get("question") or skill.description or skill.skill_id),
         "answer": (
             "Обобщенный кандидат навыка, созданный агентом. "
-            "Откройте навык, проверьте запрос, параметры и переведите его по жизненному циклу."
+            "Откройте навык, проверьте запрос и параметры; если навык неверный, исправьте или удалите его."
         ),
         "status": skill.status.value,
         "trace_path": trace_path,
