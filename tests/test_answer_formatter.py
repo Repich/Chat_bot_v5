@@ -51,6 +51,24 @@ class AnswerFormatterTests(unittest.TestCase):
 
         self.assertEqual(answer, "Найден результат с наибольшим значением показателя: Телевизор Темп — 31.")
 
+    def test_formats_single_aggregate_metric_as_readable_sentence(self) -> None:
+        answer = format_user_answer(
+            question="Покажи суммы всех реализаций за 2024 год",
+            columns=["Сумма"],
+            rows=[{"Сумма": 1592608.73}],
+        )
+
+        self.assertEqual(answer, "Сумма реализаций: 1592608.73.")
+
+    def test_rounds_single_average_metric(self) -> None:
+        answer = format_user_answer(
+            question="Покажи среднюю стоимость реализаций за 2024 год",
+            columns=["СредняяСтоимость"],
+            rows=[{"СредняяСтоимость": 7547.908673}],
+        )
+
+        self.assertEqual(answer, "Средняя стоимость реализаций: 7547.91.")
+
     def test_llm_formatter_can_explain_query_metric_semantics(self) -> None:
         llm = ScriptedLLMClient(
             [

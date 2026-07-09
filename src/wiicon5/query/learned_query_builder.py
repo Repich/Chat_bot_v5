@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from wiicon5.conversation.context import ConversationContext
@@ -27,7 +28,7 @@ class LearnedQueryBuilder(QueryBuilder):
                 )
         kind = str(spec.get("kind") or "")
         if kind == "period_metric_aggregate":
-            return build_period_metric_aggregate(skill, inputs)
+            return build_period_metric_aggregate(skill, inputs, context)
         if kind == "parameterized_lookup_query":
             return build_parameterized_lookup_query(skill, inputs)
         if kind == "fixed_query":
@@ -38,6 +39,7 @@ class LearnedQueryBuilder(QueryBuilder):
             for key in list(params.keys()):
                 if key in inputs:
                     params[key] = inputs[key]
+            params = apply_semantic_period_params(params, inputs)
             return QueryDraft(
                 query=query,
                 params=params,
@@ -68,7 +70,7 @@ def build_parameterized_lookup_query(skill: SkillContract, inputs: Dict[str, Any
     )
 
 
-def build_period_metric_aggregate(skill: SkillContract, inputs: Dict[str, Any]) -> QueryDraft:
+def build_period_metric_aggregate(skill: SkillContract, inputs: Dict[str, Any], context: ConversationContext) -> QueryDraft:
     spec = skill.implementation
     source = required_spec(spec, "source")
     alias = str(spec.get("alias") or "Источник")
@@ -76,6 +78,14 @@ def build_period_metric_aggregate(skill: SkillContract, inputs: Dict[str, Any]) 
     metrics = spec.get("metrics")
     if not isinstance(metrics, list) or not metrics:
         raise QueryBuildError(f"Learned skill {skill.skill_id} must define metrics.")
+    compatibility_error = learned_period_metric_compatibility_error(
+        skill=skill,
+        source=source,
+        metrics=metrics,
+        context=context,
+    )
+    if compatibility_error:
+        raise QueryBuildError(compatibility_error)
 
     filters = semantic_filters_from_inputs(inputs)
     year = year_from_filters(filters)
@@ -142,6 +152,60 @@ def semantic_filters_from_inputs(inputs: Dict[str, Any]) -> List[SemanticFilter]
     return result
 
 
+def learned_period_metric_compatibility_error(
+    *,
+    skill: SkillContract,
+    source: str,
+    metrics: List[Any],
+    context: ConversationContext,
+) -> str:
+    question = latest_user_question(context).lower()
+    metric_text = " ".join(
+        str(metric.get("label", "")) + " " + str(metric.get("expression", ""))
+        for metric in metrics
+        if isinstance(metric, dict)
+    ).lower()
+    terms_text = " ".join(str(item) for item in skill.implementation.get("metric_terms", []) or []).lower()
+    combined = " ".join([question, terms_text])
+    if re.search(r"\bпервые\s+\d+\b", metric_text):
+        return (
+            f"Learned skill {skill.skill_id} is not a safe period_metric_aggregate: "
+            "metric expression contains ПЕРВЫЕ. Rebuild it from the full query."
+        )
+    if "средн" in combined and any(marker in combined for marker in ["реализац", "заказ", "поступлен", "документ"]):
+        if source.startswith("РегистрНакопления.") and "среднее(" in metric_text:
+            if not any(marker in metric_text for marker in ["регистратор", ".документ", ".ссылка"]):
+                return (
+                    f"Learned skill {skill.skill_id} averages raw register rows for a document-level question. "
+                    "Rebuild the query at document grain."
+                )
+    if top_sold_product_text(combined):
+        explicit_money = any(marker in combined for marker in ["по выруч", "по сумм", "по стоимости", "деньг", "руб"])
+        quantity_metric = any(marker in metric_text for marker in ["количество", "quantity", "count("])
+        money_metric = any(marker in metric_text for marker in ["выруч", "суммапродаж", "суммавыруч", "сумма"])
+        if money_metric and not quantity_metric and not explicit_money:
+            return (
+                f"Learned skill {skill.skill_id} ranks sold products by money, but the question implies quantity. "
+                "Rebuild the query or ask for clarification."
+            )
+    return ""
+
+
+def latest_user_question(context: ConversationContext) -> str:
+    for message in reversed(context.messages):
+        if message.role == "user":
+            return message.content
+    return ""
+
+
+def top_sold_product_text(text: str) -> bool:
+    return (
+        any(marker in text for marker in ["сам", "больше всего", "наибольш", "топ", "top"])
+        and any(marker in text for marker in ["продаваем", "продаж", "купил", "брали"])
+        and any(marker in text for marker in ["товар", "номенклатур", "product"])
+    )
+
+
 def year_from_filters(filters: List[SemanticFilter]) -> Optional[int]:
     for item in filters:
         if item.semantic_field in {"year", "год"}:
@@ -161,6 +225,21 @@ def period_granularity_from_filters(filters: List[SemanticFilter]) -> str:
     if any("по год" in item.raw_user_text.lower() for item in filters):
         return "year"
     return ""
+
+
+def apply_semantic_period_params(params: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
+    filters = semantic_filters_from_inputs(inputs)
+    year = year_from_filters(filters)
+    if year is None:
+        return params
+    result = dict(params)
+    start_keys = [key for key in result if key.lower() in {"начпериода", "начало", "датаначала", "начальнаядата"}]
+    end_keys = [key for key in result if key.lower() in {"конпериода", "конец", "датаконца", "конечнаядата"}]
+    for key in start_keys:
+        result[key] = f"{year}-01-01T00:00:00"
+    for key in end_keys:
+        result[key] = f"{year}-12-31T23:59:59"
+    return result
 
 
 def required_spec(spec: Dict[str, Any], key: str) -> str:

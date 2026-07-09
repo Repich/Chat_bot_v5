@@ -29,6 +29,10 @@ def single_row_summary(*, question: str, row: Dict[str, Any], columns: List[str]
     if count_summary:
         return count_summary
 
+    metric_summary = single_metric_summary(question=question, row=row, columns=columns)
+    if metric_summary:
+        return metric_summary
+
     top_summary = top_metric_row_summary(question=question, row=row, columns=columns)
     if top_summary:
         return top_summary
@@ -45,6 +49,37 @@ def count_row_summary(*, question: str, row: Dict[str, Any], columns: List[str])
     if value in (None, ""):
         return ""
     return f"{column}: {format_cell(value)}."
+
+
+def single_metric_summary(*, question: str, row: Dict[str, Any], columns: List[str]) -> str:
+    if len(columns) != 1:
+        return ""
+    column = columns[0]
+    value = row.get(column)
+    if value in (None, ""):
+        return ""
+    label = human_metric_label(question=question, column=column)
+    return f"{label}: {format_metric_value(value)}."
+
+
+def human_metric_label(*, question: str, column: str) -> str:
+    lowered = question.lower()
+    if "средн" in lowered and "реализац" in lowered:
+        return "Средняя стоимость реализаций"
+    if "сумм" in lowered and "реализац" in lowered:
+        return "Сумма реализаций"
+    return split_camel_words(column)
+
+
+def split_camel_words(value: str) -> str:
+    text = re.sub(r"(?<=[а-яёa-z])(?=[А-ЯЁA-Z])", " ", str(value)).strip()
+    return text or str(value)
+
+
+def format_metric_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return format_cell(value)
 
 
 def document_row_summary(*, question: str, row: Dict[str, Any]) -> str:

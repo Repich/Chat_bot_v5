@@ -68,6 +68,8 @@ class LearnedSkillStore:
                 goal=goal,
                 trace=synthesis_result.trace,
             )
+        if spec is None and fixed_query_can_be_reused(query):
+            spec = fixed_query_spec(final_query=dict(final_query), trace=synthesis_result.trace)
         if spec is None:
             return None
         spec = enrich_spec_with_lifecycle(
@@ -128,6 +130,8 @@ def learned_period_metric_spec(*, query: str, intent: IntentResult, trace: Dict[
         return None
     period_field = first_period_field(query, alias)
     if not period_field:
+        return None
+    if not period_metric_shape_can_be_generalized(query, alias=alias, period_field=period_field):
         return None
     metrics = select_metrics(query, alias)
     if not metrics:
@@ -498,12 +502,37 @@ def fixed_query_spec(*, final_query: Dict[str, Any], trace: Dict[str, Any]) -> D
         "query": str(final_query.get("query") or ""),
         "params": dict(final_query.get("params") or {}),
         "limit": int(final_query.get("limit") or 100),
-        "metadata_dependencies": [
-            item.get("full_name")
-            for item in trace.get("metadata_objects", [])
-            if isinstance(item, dict) and item.get("full_name")
-        ][:5],
+        "metadata_dependencies": metadata_dependencies_from_trace(trace) or query_sources_from_query(str(final_query.get("query") or ""))[:5],
     }
+
+
+def fixed_query_can_be_reused(query: str) -> bool:
+    normalized = " ".join(query.lower().split())
+    if not normalized.startswith("выбрать"):
+        return False
+    return " из " in f" {normalized} " and any(marker in normalized for marker in ["как ", "где", "сгруппировать по", "упорядочить по"])
+
+
+def period_metric_shape_can_be_generalized(query: str, *, alias: str, period_field: str) -> bool:
+    normalized = " ".join(query.lower().split())
+    if "первые" in normalized:
+        return False
+    group_fields = group_by_expressions(query)
+    if not group_fields:
+        return True
+    allowed_year = f"год({alias}.{period_field})".lower()
+    return all("".join(field.lower().split()) == "".join(allowed_year.split()) for field in group_fields)
+
+
+def group_by_expressions(query: str) -> List[str]:
+    match = re.search(
+        r"\bСГРУППИРОВАТЬ\s+ПО\s+(?P<group>.*?)(?:\bУПОРЯДОЧИТЬ\s+ПО\b|\bИМЕЮЩИЕ\b|$)",
+        query,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match is None:
+        return []
+    return split_select_expressions(match.group("group"))
 
 
 def metadata_dependencies_from_trace(trace: Dict[str, Any]) -> List[str]:
@@ -745,6 +774,7 @@ def select_metrics(query: str, alias: str) -> List[Dict[str, str]]:
             continue
         label = alias_match.group("label")
         expr = alias_match.group("expr").strip()
+        expr = re.sub(r"^\s*ПЕРВЫЕ\s+\d+\s+", "", expr, flags=re.IGNORECASE).strip()
         if label.lower() in {"год", "period", "период"}:
             continue
         if alias + "." not in expr:

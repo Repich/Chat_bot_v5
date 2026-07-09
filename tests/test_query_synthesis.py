@@ -27,6 +27,7 @@ from wiicon5.query_synthesis import FailureSolver, FailureSolverDecision, QueryS
 from wiicon5.query_synthesis.synthesizer import (
     collect_metadata_objects,
     expand_metadata_search_terms,
+    goal_semantic_review_issues,
     postprocess_1c_query,
     rank_metadata_objects,
     search_terms_from_discovery,
@@ -1610,6 +1611,180 @@ class QuerySynthesisTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertFalse(learned_dir_exists)
+
+    def test_learned_store_preserves_complex_ranked_query_as_fixed_query(self) -> None:
+        query = (
+            "ВЫБРАТЬ ПЕРВЫЕ 1 "
+            "Продажи.АналитикаУчетаНоменклатуры.Номенклатура.Наименование КАК Товар, "
+            "СУММА(Продажи.СуммаВыручки) КАК СуммаПродаж "
+            "ИЗ РегистрНакопления.ВыручкаИСебестоимостьПродаж КАК Продажи "
+            "ГДЕ Продажи.Период МЕЖДУ &НачПериода И &КонПериода И Продажи.Активность "
+            "СГРУППИРОВАТЬ ПО Продажи.АналитикаУчетаНоменклатуры.Номенклатура.Наименование "
+            "УПОРЯДОЧИТЬ ПО СуммаПродаж УБЫВ"
+        )
+        registry = SkillRegistry([])
+        with TemporaryDirectory() as temp_dir:
+            store = LearnedSkillStore(skills_dir=Path(temp_dir), registry=registry)
+
+            result = store.learn_from_synthesis(
+                intent=data_intent("Получить самый продаваемый товар за 2024 год"),
+                goal=None,
+                synthesis_result=QuerySynthesisResult(
+                    ok=True,
+                    trace={
+                        "final_query": {
+                            "query": query,
+                            "params": {"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"},
+                            "limit": 1,
+                        },
+                        "metadata_objects": [{"full_name": "РегистрНакопления.ВыручкаИСебестоимостьПродаж"}],
+                    },
+                ),
+            )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.skill.implementation["kind"], "fixed_query")
+        self.assertEqual(result.skill.implementation["query"], query)
+        self.assertNotIn("metrics", result.skill.implementation)
+
+    def test_fixed_query_builder_reuses_year_filter_for_period_params(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_query_fixed",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Fixed query with period params.",
+                "capabilities": ["learned_query"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList"}],
+                "outputs": [{"name": "table", "type": "LearnedMetricsTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "kind": "fixed_query",
+                    "query": "ВЫБРАТЬ 1 КАК Значение ИЗ РегистрНакопления.Продажи КАК Продажи",
+                    "params": {"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"},
+                },
+            }
+        )
+
+        draft = LearnedQueryBuilder().build(
+            skill,
+            inputs={"filters": [{"semantic_field": "year", "operator": "equals", "value": "2025"}]},
+            context=ConversationContext(session_id="s1"),
+        )
+
+        self.assertEqual(draft.params["НачПериода"], "2025-01-01T00:00:00")
+        self.assertEqual(draft.params["КонПериода"], "2025-12-31T23:59:59")
+
+    def test_learned_period_metric_rejects_legacy_top_expression_with_first_keyword(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_query_legacy_top",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Legacy malformed top skill.",
+                "capabilities": ["learned_query"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList"}],
+                "outputs": [{"name": "table", "type": "LearnedMetricsTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "kind": "period_metric_aggregate",
+                    "source": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+                    "alias": "Продажи",
+                    "period_field": "Период",
+                    "metrics": [
+                        {"label": "Товар", "expression": "ПЕРВЫЕ 1 Продажи.АналитикаУчетаНоменклатуры.Номенклатура"}
+                    ],
+                },
+            }
+        )
+
+        with self.assertRaises(QueryBuildError) as exc:
+            LearnedQueryBuilder().build(skill, inputs={}, context=ConversationContext(session_id="s1"))
+
+        self.assertIn("contains ПЕРВЫЕ", str(exc.exception))
+
+    def test_learned_period_metric_rejects_legacy_average_raw_register_rows_for_document_question(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_query_average_rows",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Legacy average skill.",
+                "capabilities": ["learned_query"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList"}],
+                "outputs": [{"name": "table", "type": "LearnedMetricsTable"}],
+                "implementation_strategy": "learned_query",
+                "implementation": {
+                    "kind": "period_metric_aggregate",
+                    "source": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+                    "alias": "Продажи",
+                    "period_field": "Период",
+                    "metrics": [{"label": "СредняяСтоимость", "expression": "СРЕДНЕЕ(Продажи.СуммаВыручки)"}],
+                    "metric_terms": ["среднюю", "стоимость", "реализаций"],
+                },
+            }
+        )
+        context = ConversationContext(session_id="s1")
+        context.append_message("user", "Покажи среднюю стоимость реализаций за 2024 год")
+
+        with self.assertRaises(QueryBuildError) as exc:
+            LearnedQueryBuilder().build(skill, inputs={}, context=context)
+
+        self.assertIn("document-level question", str(exc.exception))
+
+    def test_semantic_review_rejects_top_sold_product_by_revenue_when_quantity_was_implied(self) -> None:
+        issues = goal_semantic_review_issues(
+            query=(
+                "ВЫБРАТЬ ПЕРВЫЕ 1 Продажи.Номенклатура КАК Товар, "
+                "СУММА(Продажи.СуммаВыручки) КАК СуммаПродаж "
+                "ИЗ РегистрНакопления.ВыручкаИСебестоимостьПродаж КАК Продажи "
+                "УПОРЯДОЧИТЬ ПО СуммаПродаж УБЫВ"
+            ),
+            params={},
+            goal=None,
+            message="Какой самый продаваемый товар за 2024 год?",
+            intent=data_intent("Получить самый продаваемый товар за 2024 год"),
+            metadata_objects=[],
+        )
+
+        self.assertIn("top_sold_product_metric_ambiguous", {item["code"] for item in issues})
+
+    def test_semantic_review_allows_explicit_top_product_by_revenue(self) -> None:
+        issues = goal_semantic_review_issues(
+            query=(
+                "ВЫБРАТЬ ПЕРВЫЕ 1 Продажи.Номенклатура КАК Товар, "
+                "СУММА(Продажи.СуммаВыручки) КАК СуммаПродаж "
+                "ИЗ РегистрНакопления.ВыручкаИСебестоимостьПродаж КАК Продажи "
+                "УПОРЯДОЧИТЬ ПО СуммаПродаж УБЫВ"
+            ),
+            params={},
+            goal=None,
+            message="Какой товар самый продаваемый по выручке за 2024 год?",
+            intent=data_intent("Получить самый продаваемый по выручке товар за 2024 год"),
+            metadata_objects=[],
+        )
+
+        self.assertNotIn("top_sold_product_metric_ambiguous", {item["code"] for item in issues})
+
+    def test_semantic_review_rejects_average_document_metric_over_raw_register_rows(self) -> None:
+        issues = goal_semantic_review_issues(
+            query=(
+                "ВЫБРАТЬ СРЕДНЕЕ(Продажи.СуммаВыручки) КАК СредняяСтоимость "
+                "ИЗ РегистрНакопления.ВыручкаИСебестоимостьПродаж КАК Продажи "
+                "ГДЕ Продажи.Период МЕЖДУ &НачПериода И &КонПериода"
+            ),
+            params={"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"},
+            goal=None,
+            message="Покажи среднюю стоимость реализаций за 2024 год",
+            intent=data_intent("Получить среднюю стоимость реализаций за 2024 год"),
+            metadata_objects=[],
+        )
+
+        self.assertIn("average_document_metric_needs_document_grain", {item["code"] for item in issues})
 
     def test_learned_store_persists_active_parameterized_lookup(self) -> None:
         query = price_lookup_query()
