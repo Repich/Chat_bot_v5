@@ -293,6 +293,10 @@ class AgentOrchestrator:
                     run_trace=run_trace,
                     gaps=[],
                     source="skill_execution_failed",
+                    source_diagnostic={
+                        "skill_plan": compose_result.plan.to_dict(),
+                        "skill_execution": execution_result_to_dict(execution_result),
+                    },
                 )
                 if synthesis_result is not None and synthesis_result.needs_clarification:
                     result = AgentRunResult(
@@ -457,6 +461,7 @@ class AgentOrchestrator:
         run_trace: RunTrace,
         gaps: List[Dict[str, object]],
         source: str,
+        source_diagnostic: Optional[Dict[str, object]] = None,
     ) -> Optional[QuerySynthesisResult]:
         if self.query_synthesizer is None:
             return None
@@ -481,6 +486,7 @@ class AgentOrchestrator:
                 context=context,
                 gaps=gaps,
                 synthesis_result=synthesis_result,
+                source_diagnostic=source_diagnostic,
             )
         return synthesis_result
 
@@ -495,6 +501,7 @@ class AgentOrchestrator:
         context: ConversationContext,
         gaps: List[Dict[str, object]],
         synthesis_result: QuerySynthesisResult,
+        source_diagnostic: Optional[Dict[str, object]] = None,
     ) -> Path:
         return run_trace.write_json(
             "diagnostics/query_synthesis_failure.json",
@@ -511,6 +518,7 @@ class AgentOrchestrator:
                 "goal": result_goal_to_dict(goal) if goal is not None else None,
                 "conversation_context": context.to_packet(),
                 "gaps": list(gaps),
+                "source_diagnostic": dict(source_diagnostic or {}),
                 "synthesis_result": synthesis_result.to_dict(),
             },
         )

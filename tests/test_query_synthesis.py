@@ -1061,6 +1061,76 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.message, "Данных не найдено.")
 
+    def test_synthesis_accepts_empty_stock_result_when_query_covers_requested_filter(self) -> None:
+        llm = ScriptedLLMClient(
+            [
+                discovery_response(["ТоварыНаСкладах", "Номенклатура", "курток"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        Остатки.Номенклатура КАК Номенклатура,
+                        Остатки.КоличествоОстаток КАК Остаток
+                    ИЗ
+                        РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки
+                    ГДЕ
+                        Остатки.Номенклатура.Наименование ПОДОБНО "%" + &product + "%"
+                    """,
+                    params={"product": "курт"},
+                ),
+            ]
+        )
+        mcp = DictMcpClient(
+            {
+                "success": True,
+                "data": [],
+                "schema": {
+                    "columns": [
+                        {"name": "Номенклатура", "types": ["СправочникСсылка.Номенклатура"]},
+                        {"name": "Остаток", "types": ["Число"]},
+                    ]
+                },
+            }
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=StockAndWarehouseMetadataProvider(),
+            mcp_client=mcp,
+        )
+
+        result = engine.run(
+            message="Покажи остатки курток",
+            intent=data_intent("Показать остатки курток"),
+            goal=GoalDecomposition(
+                business_goal="Показать остатки курток",
+                final_artifact_type="UserAnswer",
+                expected_answer_type="table",
+                required_artifacts=[
+                    ArtifactRequirement(
+                        name="stock_table",
+                        type="StockBalanceTable",
+                        constraints=[
+                            SemanticFilter(
+                                semantic_field="product",
+                                operator="contains",
+                                value="куртка",
+                                raw_user_text="курток",
+                            )
+                        ],
+                        required_columns=["Номенклатура", "Остаток"],
+                    )
+                ],
+            ),
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.message, "Остатков по заданному условию не найдено.")
+        self.assertEqual(len(mcp.query_calls), 1)
+        self.assertEqual(result.trace["attempts"][0]["columns"], ["Номенклатура", "Остаток"])
+        self.assertTrue(result.trace["attempts"][0]["result_sufficiency"]["sufficient"])
+        self.assertTrue(result.trace["attempts"][0]["result_sufficiency"]["trace"]["valid_empty_result"])
+
     def test_synthesis_repairs_query_after_query_review_error(self) -> None:
         llm = ScriptedLLMClient(
             [

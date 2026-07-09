@@ -73,7 +73,7 @@ def build_measure_table_query(*, skill: SkillContract, binding: SkillBinding, in
     )
     where_lines = []
     if input_has_value(inputs, "product"):
-        where_lines.append(f"{alias}.{product_field} = {render_1c_value(inputs['product'], params, 'product')}")
+        where_lines.append(compile_reference_input_filter(alias, product_field, inputs["product"], params, "product"))
     if input_has_value(inputs, "warehouses"):
         where_lines.append(f"{alias}.{warehouse_field} В {render_1c_value(inputs['warehouses'], params, 'warehouses')}")
     filters = semantic_filters_from_inputs(inputs)
@@ -228,6 +228,10 @@ def compile_semantic_filter(alias: str, binding: SkillBinding, item: SemanticFil
         field = required_field(binding, item.semantic_field)
     left = f"{alias}.{field}"
     operator = item.operator.lower()
+    if item.semantic_field == "product" and operator in {"equals", "eq", "=", "равно", "contains", "substring"}:
+        text_value = reference_text_search_value(item.value)
+        if text_value:
+            return compile_reference_text_search(alias, field, item.semantic_field, text_value, params)
     if operator in {"equals", "eq", "=", "равно"}:
         return f"{left} = {render_1c_value(item.value, params, item.semantic_field)}"
     if operator in {"contains", "substring"}:
@@ -237,6 +241,104 @@ def compile_semantic_filter(alias: str, binding: SkillBinding, item: SemanticFil
     if operator in {"in", "in_list"}:
         return f"{left} В {render_1c_value(item.value, params, item.semantic_field)}"
     raise QueryBuildError(f"Unsupported semantic filter operator: {item.operator}")
+
+
+def compile_reference_input_filter(
+    alias: str,
+    field: str,
+    value: Any,
+    params: Dict[str, Any],
+    param_base: str,
+) -> str:
+    text_value = reference_text_search_value(value)
+    if text_value:
+        return compile_reference_text_search(alias, field, param_base, text_value, params)
+    if isinstance(value, list):
+        return f"{alias}.{field} В {render_1c_value(value, params, param_base)}"
+    return f"{alias}.{field} = {render_1c_value(value, params, param_base)}"
+
+
+def compile_reference_text_search(
+    alias: str,
+    field: str,
+    param_base: str,
+    value: str,
+    params: Dict[str, Any],
+) -> str:
+    left = f"{alias}.{field}" if generic_field_is_text(field) else f"{alias}.{field}.Наименование"
+    parameter_name = add_param(params, param_base, build_text_search_value(value))
+    return f"{left} ПОДОБНО \"%\" + &{parameter_name} + \"%\""
+
+
+def reference_text_search_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        if value.get("_objectRef") or value.get("Ссылка") or value.get("ref") or value.get("reference"):
+            return ""
+        presentation = value.get("Представление") or value.get("name") or value.get("Наименование")
+        if isinstance(presentation, str):
+            return presentation.strip()
+    return ""
+
+
+def build_text_search_value(value: str) -> str:
+    normalized = " ".join(value.split()).strip()
+    if not normalized:
+        return value
+    tokens = [token for token in re.split(r"[^0-9A-Za-zА-Яа-яЁё]+", normalized.lower()) if token]
+    if not tokens:
+        return normalized
+    result = [stem_ru_search_token(token) for token in tokens]
+    return " ".join(token for token in result if token) or normalized
+
+
+def stem_ru_search_token(token: str) -> str:
+    if not re.search(r"[А-Яа-яЁё]", token):
+        return token
+    endings = [
+        "иями",
+        "ями",
+        "ами",
+        "ого",
+        "ему",
+        "ыми",
+        "ими",
+        "ая",
+        "яя",
+        "ое",
+        "ее",
+        "ые",
+        "ие",
+        "ый",
+        "ий",
+        "ой",
+        "ую",
+        "юю",
+        "ом",
+        "ем",
+        "ам",
+        "ям",
+        "ах",
+        "ях",
+        "ов",
+        "ев",
+        "ок",
+        "ки",
+        "ка",
+        "ку",
+        "а",
+        "я",
+        "ы",
+        "и",
+        "у",
+        "ю",
+        "е",
+    ]
+    for ending in endings:
+        if token.endswith(ending) and len(token) - len(ending) >= 4:
+            return token[: -len(ending)]
+    return token
 
 
 def compile_generic_entity_filter(alias: str, binding: SkillBinding, item: SemanticFilter, params: Dict[str, Any]) -> str:

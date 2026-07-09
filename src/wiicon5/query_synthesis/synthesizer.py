@@ -47,6 +47,7 @@ from wiicon5.query_synthesis.sufficiency import (
     ResultSufficiencyReview,
     ResultSufficiencyReviewer,
     deterministic_partial_review,
+    deterministic_valid_empty_review,
 )
 from wiicon5.query_synthesis.term_expansion import (
     CompositeMetadataTermExpansionPolicy,
@@ -427,7 +428,8 @@ class QuerySynthesisEngine:
                     trace["onboarding_evidence"] = onboarding_evidence
                 continue
 
-            columns = columns_from_rows(rows)
+            columns = columns_from_response(rows, response.schema)
+            attempt_trace["columns"] = columns
             sufficiency = self._review_sufficiency(
                 message=message,
                 intent=intent,
@@ -530,7 +532,7 @@ class QuerySynthesisEngine:
                     )
                 continue
 
-            answer = "Данных не найдено." if rows_effectively_empty(rows) else format_user_answer(
+            answer = empty_result_answer(message, goal, columns) if rows_effectively_empty(rows) else format_user_answer(
                 question=message,
                 columns=columns,
                 rows=rows,
@@ -825,7 +827,8 @@ class QuerySynthesisEngine:
             attempt_trace["error"] = error
             return QuerySynthesisResult(ok=False, error=error, trace=trace)
 
-        columns = columns_from_rows(rows)
+        columns = columns_from_response(rows, response.schema)
+        attempt_trace["columns"] = columns
         sufficiency = self._review_sufficiency(
             message=message,
             intent=intent,
@@ -961,7 +964,17 @@ class QuerySynthesisEngine:
             rows=rows,
             query_reasoning=query_reasoning,
         )
-        return deterministic or ResultSufficiencyReview(sufficient=True)
+        if deterministic is not None:
+            return deterministic
+        empty_result = deterministic_valid_empty_review(
+            question=message,
+            columns=columns,
+            rows=rows,
+            query=query,
+            params=params,
+            goal=goal,
+        )
+        return empty_result or ResultSufficiencyReview(sufficient=True)
 
     def _metadata_repair_terms(
         self,
@@ -1375,6 +1388,32 @@ def columns_from_rows(rows: List[Dict[str, Any]]) -> List[str]:
             if key not in columns:
                 columns.append(key)
     return columns
+
+
+def columns_from_response(rows: List[Dict[str, Any]], schema: Dict[str, Any]) -> List[str]:
+    columns = columns_from_rows(rows)
+    if columns:
+        return columns
+    schema_columns = schema.get("columns") if isinstance(schema, dict) else None
+    if not isinstance(schema_columns, list):
+        return []
+    result: List[str] = []
+    for item in schema_columns:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if name and name not in result:
+            result.append(name)
+    return result
+
+
+def empty_result_answer(question: str, goal: Optional[GoalDecomposition], columns: List[str]) -> str:
+    lowered = " ".join([question, " ".join(columns), goal.business_goal if goal is not None else ""]).lower()
+    if any(marker in lowered for marker in ["остат", "в наличии", "наличии"]):
+        return "Остатков по заданному условию не найдено."
+    if any(marker in lowered for marker in ["цена", "стоимость"]):
+        return "Цен по заданному условию не найдено."
+    return "Данных не найдено."
 
 
 def successful_step_payload(

@@ -102,6 +102,43 @@ class DataSkillRunnerTests(unittest.TestCase):
         self.assertEqual(result.artifacts[0].value["columns"], ["Склад", "Остаток"])
         self.assertEqual(result.artifacts[0].value["rows"][0]["Остаток"], 42)
 
+    def test_data_runner_keeps_schema_columns_for_empty_table_output(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        skill = registry.get("get_stock_balances")
+        assert skill is not None
+        mcp = DictMcpClient(
+            {
+                "success": True,
+                "data": [],
+                "schema": {
+                    "columns": [
+                        {"name": "Номенклатура", "types": ["СправочникСсылка.Номенклатура"]},
+                        {"name": "Остаток", "types": ["Число"]},
+                    ]
+                },
+            }
+        )
+        runner = DataSkillRunner(
+            query_builder=StaticQueryBuilder(
+                QueryDraft(
+                    query=(
+                        "ВЫБРАТЬ\n"
+                        "    Остатки.Номенклатура КАК Номенклатура,\n"
+                        "    Остатки.ВНаличииОстаток КАК Остаток\n"
+                        "ИЗ\n"
+                        "    РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки"
+                    )
+                )
+            ),
+            mcp_client=mcp,
+        )
+
+        result = runner.run(skill, {"product": "курток"}, ConversationContext(session_id="s1"))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.artifacts[0].value["columns"], ["Номенклатура", "Остаток"])
+        self.assertEqual(result.artifacts[0].value["rows"], [])
+
     def test_data_runner_expands_list_param_before_mcp(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         skill = registry.get("get_stock_balances")

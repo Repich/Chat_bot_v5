@@ -149,6 +149,27 @@ class BindingSemanticQueryBuilderTests(unittest.TestCase):
         self.assertIn("Остатки.Товар КАК Номенклатура", draft.query)
         self.assertIn("Остатки.Товар = &product", draft.query)
 
+    def test_stock_query_uses_name_search_when_product_input_is_text(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        skill = registry.get("get_stock_balances")
+        assert skill is not None
+        store = InMemoryBindingStore([custom_stock_binding()])
+        builder = SemanticQueryBuilder(BindingResolver(store))
+
+        draft = builder.build(
+            skill,
+            {
+                "product": "курток",
+                "required_columns": ["Номенклатура", "Остаток"],
+                "limit": 10,
+            },
+            ConversationContext(session_id="s1", config_fingerprint="cfg_custom"),
+        )
+
+        self.assertIn("Остатки.Товар.Наименование ПОДОБНО", draft.query)
+        self.assertNotIn("Остатки.Товар = &product", draft.query)
+        self.assertEqual(draft.params["product"], "курт")
+
     def test_entity_query_can_search_by_generic_entity_role(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         skill = registry.get("get_warehouses")

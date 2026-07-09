@@ -1,3 +1,9 @@
+5.0.0-alpha.83
+- get_stock_balances больше не сравнивает строковый product-фильтр со ссылочным полем регистра: текстовые значения товара компилируются в поиск по Наименование со стабильной поисковой основой.
+- Query synthesis теперь сохраняет columns из MCP schema при пустом data=[], чтобы слой достаточности видел структуру результата.
+- Добавлено deterministic valid_empty_result правило: корректный пустой результат с покрытыми фильтрами и обязательными колонками считается валидным отрицательным ответом, а не partial loop.
+- Sufficiency review больше не получает старые query artifacts из диалога как текущий результат; в диагностику query_synthesis_failure добавлен source_diagnostic с исходным skill plan и skill execution error.
+
 5.0.0-alpha.82
 - Auto-learned skills теперь по умолчанию сохраняются в bot-specific каталог bot_instances/<bot_id>/skills/learned/active, а global scope требует явной настройки.
 - Добавлены настройки WIICON5_AUTO_LEARNED_SKILLS_ENABLED, WIICON5_AUTO_LEARNED_SKILLS_ACTIVATE, WIICON5_AUTO_LEARNED_SKILLS_SCOPE и WIICON5_AUTO_LEARNED_SKILLS_FAILURE_THRESHOLD.

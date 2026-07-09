@@ -181,7 +181,7 @@ class DataSkillRunner(SkillRunner):
         return SkillRunResult(
             ok=True,
             skill_id=skill.skill_id,
-            artifacts=_artifacts_from_rows(skill, rows, draft.metadata_dependencies),
+            artifacts=_artifacts_from_rows(skill, rows, draft.metadata_dependencies, schema_columns=schema_columns(response.schema)),
             trace={
                 "query_draft": draft.to_dict(),
                 "reference_value_resolution": reference_resolution_payload,
@@ -202,11 +202,17 @@ class DataSkillRunner(SkillRunner):
         return result
 
 
-def _artifacts_from_rows(skill: SkillContract, rows: List[Dict[str, Any]], provenance: List[str]) -> List[Artifact]:
+def _artifacts_from_rows(
+    skill: SkillContract,
+    rows: List[Dict[str, Any]],
+    provenance: List[str],
+    *,
+    schema_columns: Optional[List[str]] = None,
+) -> List[Artifact]:
     if not skill.outputs:
         return []
     output = skill.outputs[0]
-    columns = _columns_from_rows(rows)
+    columns = _columns_from_rows(rows) or list(schema_columns or [])
     if output.type.endswith("Table"):
         value: Any = {"columns": columns, "rows": rows}
     else:
@@ -228,6 +234,20 @@ def _columns_from_rows(rows: List[Dict[str, Any]]) -> List[str]:
             if key not in columns:
                 columns.append(key)
     return columns
+
+
+def schema_columns(schema: Dict[str, Any]) -> List[str]:
+    raw_columns = schema.get("columns") if isinstance(schema, dict) else None
+    if not isinstance(raw_columns, list):
+        return []
+    result: List[str] = []
+    for item in raw_columns:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if name and name not in result:
+            result.append(name)
+    return result
 
 
 def metadata_dependency_contract_error(skill: SkillContract, metadata_objects) -> str:

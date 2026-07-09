@@ -87,12 +87,22 @@ class ResultSufficiencyReviewer:
         )
         if deterministic is not None:
             return deterministic
+        empty_result = deterministic_valid_empty_review(
+            question=question,
+            columns=columns,
+            rows=rows,
+            query=query,
+            params=params,
+            goal=goal,
+        )
+        if empty_result is not None:
+            return empty_result
 
         payload = {
             "user_question": question,
             "intent": intent.to_dict(),
             "goal": goal_to_payload(goal),
-            "conversation_context": context.to_packet(),
+            "conversation_context": sufficiency_context_packet(context),
             "current_query": query,
             "current_params": dict(params),
             "current_query_reasoning": query_reasoning,
@@ -266,6 +276,151 @@ def deterministic_partial_review(
     return None
 
 
+def deterministic_valid_empty_review(
+    *,
+    question: str,
+    columns: List[str],
+    rows: List[Dict[str, Any]],
+    query: str,
+    params: Mapping[str, Any],
+    goal: Optional[GoalDecomposition],
+) -> Optional[ResultSufficiencyReview]:
+    if goal is None or rows or not columns:
+        return None
+    required_columns = required_columns_from_goal(goal)
+    missing_columns = [column for column in required_columns if not column_present(column, columns)]
+    if missing_columns:
+        return None
+    if goal is not None and not goal_constraints_reflected(goal=goal, query=query, params=params):
+        return None
+    return ResultSufficiencyReview(
+        sufficient=True,
+        partial=False,
+        reasoning=(
+            "Запрос выполнен успешно, схема результата содержит требуемые колонки, а обязательные фильтры "
+            "отражены в query/params. Пустой набор строк является валидным отрицательным результатом, "
+            "а не промежуточным шагом."
+        ),
+        trace={
+            "valid_empty_result": True,
+            "columns": list(columns),
+            "required_columns": required_columns,
+        },
+    )
+
+
+def required_columns_from_goal(goal: Optional[GoalDecomposition]) -> List[str]:
+    if goal is None:
+        return []
+    result: List[str] = []
+    for requirement in goal.required_artifacts:
+        for column in requirement.required_columns:
+            if column not in result:
+                result.append(column)
+    return result
+
+
+def column_present(required: str, columns: List[str]) -> bool:
+    normalized_required = normalize_match_text(required)
+    return any(normalized_required == normalize_match_text(column) for column in columns)
+
+
+def goal_constraints_reflected(*, goal: GoalDecomposition, query: str, params: Mapping[str, Any]) -> bool:
+    haystack = normalize_match_text(" ".join([query, params_text(params)]))
+    for requirement in goal.required_artifacts:
+        for constraint in requirement.constraints:
+            raw_value = str(constraint.raw_user_text or constraint.value or "").strip()
+            if not raw_value:
+                continue
+            variants = text_constraint_variants(raw_value)
+            if not any(variant and variant in haystack for variant in variants):
+                return False
+    return True
+
+
+def text_constraint_variants(value: str) -> List[str]:
+    normalized = normalize_match_text(value)
+    variants = [normalized]
+    for token in normalized.split():
+        stem = stem_ru_constraint_token(token)
+        if stem and stem not in variants:
+            variants.append(stem)
+    return variants
+
+
+def stem_ru_constraint_token(token: str) -> str:
+    endings = [
+        "иями",
+        "ями",
+        "ами",
+        "ого",
+        "ему",
+        "ыми",
+        "ими",
+        "ая",
+        "яя",
+        "ое",
+        "ее",
+        "ые",
+        "ие",
+        "ый",
+        "ий",
+        "ой",
+        "ую",
+        "юю",
+        "ом",
+        "ем",
+        "ам",
+        "ям",
+        "ах",
+        "ях",
+        "ов",
+        "ев",
+        "ок",
+        "ки",
+        "ка",
+        "ку",
+        "а",
+        "я",
+        "ы",
+        "и",
+        "у",
+        "ю",
+        "е",
+    ]
+    for ending in endings:
+        if token.endswith(ending) and len(token) - len(ending) >= 4:
+            return token[: -len(ending)]
+    return token
+
+
+def normalize_match_text(value: str) -> str:
+    return " ".join(str(value or "").lower().replace("ё", "е").split())
+
+
+def params_text(params: Mapping[str, Any]) -> str:
+    parts: List[str] = []
+    for key, value in params.items():
+        parts.append(str(key))
+        parts.extend(value_text_parts(value))
+    return " ".join(parts)
+
+
+def value_text_parts(value: Any) -> List[str]:
+    if isinstance(value, Mapping):
+        parts: List[str] = []
+        for key, item in value.items():
+            parts.append(str(key))
+            parts.extend(value_text_parts(item))
+        return parts
+    if isinstance(value, list):
+        result: List[str] = []
+        for item in value:
+            result.extend(value_text_parts(item))
+        return result
+    return [str(value)]
+
+
 def asks_subject_and_amount(question: str) -> bool:
     subject_markers = ["кому", "кто", "контрагент", "поставщик", "клиент", "партнер", "партнёр"]
     amount_markers = ["сколько", "сумма", "долг", "долж", "задолж"]
@@ -437,6 +592,22 @@ def needs_amount_vs_debt_clarification(question: str) -> bool:
     if any(marker in question for marker in explicit_debt_markers):
         return False
     return "долж" in question
+
+
+def sufficiency_context_packet(context: ConversationContext) -> Dict[str, Any]:
+    packet = context.to_packet()
+    return {
+        "session_id": packet.get("session_id"),
+        "config_fingerprint": packet.get("config_fingerprint"),
+        "user_permissions": packet.get("user_permissions", []),
+        "messages": list(packet.get("messages") or [])[-6:],
+        "artifacts": [],
+        "resolved_entities": list(packet.get("resolved_entities") or [])[-5:],
+        "context_note": (
+            "Previous artifacts are intentionally omitted for result sufficiency review. "
+            "Evaluate only current_query/current_rows as the current result."
+        ),
+    }
 
 
 def normalize_rows_for_review(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
