@@ -279,7 +279,10 @@ class SemanticQueryTemplateTests(unittest.TestCase):
                 ArtifactRequirement(
                     name="prices",
                     type="PriceTable",
-                    constraints=[SemanticFilter("product", "contains", "пальто", "пальто")],
+                    constraints=[
+                        SemanticFilter("product", "contains", "пальто", "пальто"),
+                        SemanticFilter("price_type", "equals", "розничная", "розничные"),
+                    ],
                     required_columns=["Номенклатура", "Цена"],
                 )
             ],
@@ -287,8 +290,8 @@ class SemanticQueryTemplateTests(unittest.TestCase):
                 subject_terms=["розничные цены", "пальто"],
                 operation="lookup",
                 measures=[SemanticMeasure(role="цена", result_column="Цена")],
-                required_filter_roles=["product"],
-                fixed_filter_values={"product": "пальто"},
+                required_filter_roles=["product", "price_type"],
+                fixed_filter_values={"product": "пальто", "price_type": "розничная"},
                 result_columns=["Номенклатура", "Цена"],
             ).to_dict(),
         )
@@ -322,6 +325,17 @@ class SemanticQueryTemplateTests(unittest.TestCase):
         assert spec is not None
         self.assertEqual(spec["semantic_contract"]["operation"], "list")
         self.assertEqual(spec["semantic_contract"]["match_mode"], "generalized")
+        self.assertEqual(spec["semantic_contract"]["required_filter_roles"], ["product"])
+        self.assertEqual(spec["semantic_contract"]["fixed_filter_values"], {"price_type": "розничная"})
+        bindings = {item["semantic_field"]: item for item in spec["parameter_bindings"]}
+        self.assertTrue(bindings["product"]["required"])
+        self.assertFalse(bindings["price_type"]["required"])
+        rebound = build_parameterized_lookup_params(
+            spec,
+            {"filters": [{"semantic_field": "product", "operator": "contains", "value": "куртки"}]},
+        )
+        self.assertEqual(rebound["ВидЦены"], params["ВидЦены"])
+        self.assertEqual(rebound["Товар"], "%куртки%")
 
     def test_ranked_query_passes_learning_gate(self) -> None:
         question = "Покажи топ 10 товаров по количеству продаж за 2024 год"

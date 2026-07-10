@@ -144,6 +144,52 @@ class SemanticSkillContractTests(unittest.TestCase):
         self.assertFalse(compatibility.compatible)
         self.assertIn("unexpected_subject_qualifier:розничные цены", compatibility.rejection_reasons)
 
+    def test_fixed_filter_can_be_confirmed_by_matching_subject_qualifier(self) -> None:
+        requested = SemanticSkillContract(
+            subject_terms=["розничные цены"],
+            operation="list",
+            measures=[SemanticMeasure(role="цена")],
+            required_filter_roles=["product"],
+            result_columns=["Номенклатура", "Цена"],
+        )
+        available = SemanticSkillContract(
+            subject_terms=["розничные цены"],
+            operation="list",
+            measures=[SemanticMeasure(role="цена")],
+            required_filter_roles=["product"],
+            optional_filter_roles=["product", "price_type"],
+            fixed_filter_values={"price_type": "розничная"},
+            result_columns=["Номенклатура", "Цена"],
+        )
+
+        compatibility = semantic_contract_compatibility(requested, available)
+
+        self.assertTrue(compatibility.compatible, compatibility.rejection_reasons)
+        self.assertIn("fixed_filter_implied_by_subject:price_type", compatibility.reasons)
+
+    def test_fixed_filter_rejects_different_subject_qualifier(self) -> None:
+        requested = SemanticSkillContract(
+            subject_terms=["оптовые цены"],
+            operation="list",
+            measures=[SemanticMeasure(role="цена")],
+            required_filter_roles=["product"],
+            result_columns=["Номенклатура", "Цена"],
+        )
+        retail = SemanticSkillContract(
+            subject_terms=["розничные цены"],
+            operation="list",
+            measures=[SemanticMeasure(role="цена")],
+            required_filter_roles=["product"],
+            optional_filter_roles=["product", "price_type"],
+            fixed_filter_values={"price_type": "розничная"},
+            result_columns=["Номенклатура", "Цена"],
+        )
+
+        compatibility = semantic_contract_compatibility(requested, retail)
+
+        self.assertFalse(compatibility.compatible)
+        self.assertIn("fixed_filter_missing:price_type", compatibility.rejection_reasons)
+
     def test_outdated_contract_is_never_compatible(self) -> None:
         requested = SemanticSkillContract(subject_terms=["остатки"], operation="balance")
         outdated = SemanticSkillContract.from_dict(

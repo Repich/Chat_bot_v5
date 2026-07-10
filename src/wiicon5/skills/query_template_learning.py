@@ -46,19 +46,33 @@ def semantic_query_template_spec(
     if not sources:
         return None
     constraints = constraints_from_goal_payload(goal)
-    parameter_bindings = infer_parameter_bindings(dict(params), constraints)
-    bound_roles = unique(str(item.get("semantic_field") or "") for item in parameter_bindings)
-    output_columns = output_columns_from_trace(trace) or output_columns_from_query(normalized_query)
     requested_contract = contract_from_goal(intent, goal)
+    parameter_bindings = classify_parameter_bindings(
+        infer_parameter_bindings(dict(params), constraints),
+        contract=requested_contract,
+        source_objects=sources,
+    )
+    bound_roles = unique(str(item.get("semantic_field") or "") for item in parameter_bindings)
+    variable_bound_roles = unique(
+        str(item.get("semantic_field") or "")
+        for item in parameter_bindings
+        if item.get("required", True)
+    )
+    fixed_binding_roles = set(bound_roles) - set(variable_bound_roles)
+    output_columns = output_columns_from_trace(trace) or output_columns_from_query(normalized_query)
     fixed_values = {
         role: value
         for role, value in requested_contract.fixed_filter_values.items()
-        if role not in bound_roles
+        if role not in variable_bound_roles
     }
     contract = replace(
         requested_contract,
         schema_version=SEMANTIC_CONTRACT_SCHEMA_VERSION,
-        required_filter_roles=unique([*requested_contract.required_filter_roles, *bound_roles]),
+        required_filter_roles=unique(
+            role
+            for role in [*requested_contract.required_filter_roles, *variable_bound_roles]
+            if role not in fixed_binding_roles
+        ),
         optional_filter_roles=unique([*requested_contract.optional_filter_roles, *bound_roles]),
         fixed_filter_values=fixed_values,
         result_columns=unique([*requested_contract.result_columns, *output_columns]),
@@ -324,6 +338,28 @@ def safe_fixed_object_ref_params(values: Sequence[Any], contract: SemanticSkillC
         isinstance(value, Mapping) and bool(value.get("_objectRef"))
         for value in values
     )
+
+
+def classify_parameter_bindings(
+    bindings: Sequence[Mapping[str, Any]],
+    *,
+    contract: SemanticSkillContract,
+    source_objects: Sequence[str],
+) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    for raw_binding in bindings:
+        binding = dict(raw_binding)
+        role = str(binding.get("semantic_field") or "")
+        fixed_value = contract.fixed_filter_values.get(role, "")
+        if fixed_value and fixed_filter_semantically_bound(
+            fixed_value,
+            contract=contract,
+            source_objects=source_objects,
+        ):
+            binding["required"] = False
+            binding["source"] = "fixed_semantic_qualifier"
+        result.append(binding)
+    return result
 
 
 def fixed_filter_semantically_bound(

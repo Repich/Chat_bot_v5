@@ -345,7 +345,14 @@ def semantic_contract_compatibility(
     for role, expected_value in available.fixed_filter_values.items():
         requested_value = requested.fixed_filter_values.get(role, "")
         if not requested_value:
-            rejected.append(f"fixed_filter_missing:{role}")
+            if any(
+                semantic_terms_match(expected_value, qualifier)
+                for qualifier in semantic_subject_qualifiers(requested)
+            ):
+                reasons.append(f"fixed_filter_implied_by_subject:{role}")
+                score += 5
+            else:
+                rejected.append(f"fixed_filter_missing:{role}")
             continue
         if not fixed_filter_values_match(requested_value, expected_value):
             rejected.append(f"fixed_filter_mismatch:{role}")
