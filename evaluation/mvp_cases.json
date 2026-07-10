@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "sales_sum_by_year_reuse",
+      "description": "Одинаковая метрика и зерно, меняется год.",
+      "cold_question": "Покажи сумму всех реализаций за 2024 год",
+      "warm_question": "Покажи сумму всех реализаций за 2023 год",
+      "warm_expectation": "reuse_new_skill"
+    },
+    {
+      "case_id": "retail_price_product_reuse",
+      "description": "Меняется товар, тип цены сохраняется.",
+      "cold_question": "Покажи розничные цены на пальто",
+      "warm_question": "Покажи розничные цены на куртки",
+      "warm_expectation": "reuse_new_skill"
+    },
+    {
+      "case_id": "stock_product_reuse",
+      "description": "Меняется товар при неизменном складском срезе.",
+      "cold_question": "Покажи остатки курток на розничном складе",
+      "warm_question": "Покажи остатки ботинок на розничном складе",
+      "warm_expectation": "reuse_new_skill"
+    },
+    {
+      "case_id": "document_list_year_reuse",
+      "description": "Одинаковый тип документа, меняется период.",
+      "cold_question": "Покажи все приходные кассовые ордера за 2023 год",
+      "warm_question": "Покажи все приходные кассовые ордера за 2024 год",
+      "warm_expectation": "reuse_new_skill"
+    },
+    {
+      "case_id": "top_sales_year_reuse",
+      "description": "Одинаковый рейтинг, меняется период.",
+      "cold_question": "Какой самый продаваемый товар за 2024 год? Считай по количеству",
+      "warm_question": "Какой самый продаваемый товар за 2023 год? Считай по количеству",
+      "warm_expectation": "reuse_new_skill"
+    },
+    {
+      "case_id": "sum_must_not_answer_average",
+      "description": "Сумма не должна переиспользоваться для среднего.",
+      "cold_question": "Покажи сумму реализаций за 2024 год",
+      "warm_question": "Покажи среднюю стоимость реализаций за 2024 год",
+      "warm_expectation": "do_not_reuse_new_skill"
+    },
+    {
+      "case_id": "max_must_not_answer_min",
+      "description": "Рейтинг по убыванию не должен отвечать на минимум.",
+      "cold_question": "Покажи клиента с самой большой дебиторской задолженностью",
+      "warm_question": "Покажи клиента с самой маленькой дебиторской задолженностью",
+      "warm_expectation": "do_not_reuse_new_skill"
+    },
+    {
+      "case_id": "detail_must_not_be_lost",
+      "description": "Навык без детализации не должен отвечать на запрос с новой размерностью.",
+      "cold_question": "Покажи остатки ботинок на розничном складе",
+      "warm_question": "Покажи остатки ботинок на розничном складе с детализацией по номенклатуре",
+      "warm_expectation": "do_not_reuse_new_skill"
+    },
+    {
+      "case_id": "document_amount_must_not_answer_debt",
+      "description": "Сумма документа не равна фактической задолженности.",
+      "cold_question": "Кто контрагент в последней отгрузке и какова сумма документа?",
+      "warm_question": "Кто нам должен за последнюю отгрузку и сколько? Покажи фактическую задолженность",
+      "warm_expectation": "do_not_reuse_new_skill"
+    },
+    {
+      "case_id": "list_must_not_answer_count",
+      "description": "Список документов не должен подменять агрегат количества.",
+      "cold_question": "Покажи реализации за 2024 год",
+      "warm_question": "Сколько реализаций было в 2024 году?",
+      "warm_expectation": "do_not_reuse_new_skill"
+    }
+  ]
+}
