@@ -39,6 +39,24 @@ class SemanticQueryTemplateTests(unittest.TestCase):
         self.assertEqual(rebound["НачПериода"], "2025-01-01T00:00:00")
         self.assertEqual(rebound["КонПериода"], "2025-12-31T23:59:59")
 
+    def test_period_filter_with_year_value_binds_both_period_boundaries(self) -> None:
+        constraints = [SemanticFilter("period", "equals", "2024", "2024 год")]
+        params = {
+            "НачПериода": "2024-01-01T00:00:00",
+            "КонПериода": "2024-12-31T23:59:59",
+        }
+
+        bindings = infer_parameter_bindings(params, constraints)
+        spec = {"params": params, "parameter_bindings": bindings}
+        rebound = build_parameterized_lookup_params(
+            spec,
+            {"filters": [{"semantic_field": "period", "operator": "equals", "value": "2023"}]},
+        )
+
+        self.assertEqual({item["semantic_field"] for item in bindings}, {"period"})
+        self.assertEqual(rebound["НачПериода"], "2023-01-01T00:00:00")
+        self.assertEqual(rebound["КонПериода"], "2023-12-31T23:59:59")
+
     def test_learning_preserves_full_join_filter_grouping_and_order(self) -> None:
         query = (
             "ВЫБРАТЬ ПЕРВЫЕ 10 Продажи.Номенклатура КАК Номенклатура, "

@@ -196,7 +196,7 @@ def infer_period_parameter_binding(
         return None
     for constraint in constraints:
         role = normalize_role(constraint.semantic_field)
-        if role != "year":
+        if role not in {"year", "period"}:
             continue
         year = str(constraint.value or constraint.raw_user_text or "").strip()
         match = re.search(r"(?:19|20)\d{2}", year)
@@ -206,7 +206,7 @@ def infer_period_parameter_binding(
         if match.group(0) not in parameter_text:
             continue
         return {
-            "semantic_field": "year",
+            "semantic_field": role,
             "parameter": str(parameter),
             "operator": normalize_operator(constraint.operator),
             "transform": transform,
