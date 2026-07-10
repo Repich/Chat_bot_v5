@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from wiicon5.agent.orchestrator import AgentOrchestrator
+from wiicon5.agent.orchestrator import AgentOrchestrator, column_present as execution_column_present
 from wiicon5.conversation.memory import ConversationMemory
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.execution.runtime import SkillPlanExecutor, StaticSkillRunner, default_runners
@@ -26,6 +26,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class AgentOrchestratorTests(unittest.TestCase):
+    def test_required_result_column_accepts_semantic_metric_alias(self) -> None:
+        self.assertTrue(execution_column_present("Количество", ["Номенклатура", "КоличествоПродано"]))
+        self.assertFalse(execution_column_present("Выручка", ["Номенклатура", "КоличествоПродано"]))
+
     def test_agent_builds_skill_plan_and_writes_trace(self) -> None:
         question = "Покажи остатки товара на оптовых складах"
         with TemporaryDirectory() as temp_dir:

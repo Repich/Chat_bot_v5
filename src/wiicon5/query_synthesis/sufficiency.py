@@ -11,6 +11,7 @@ from wiicon5.llm.client import LLMClient, LLMProviderError
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.presentation.answer_formatter import format_cell
 from wiicon5.presentation.llm_answer_formatter import metric_hints_from_query
+from wiicon5.skills.semantic_contract import column_names_match
 
 
 RESULT_SUFFICIENCY_PROMPT = (
@@ -419,8 +420,7 @@ def declared_goal_result_coverage(
 
 
 def column_present(required: str, columns: List[str]) -> bool:
-    normalized_required = normalize_match_text(required)
-    return any(normalized_required == normalize_match_text(column) for column in columns)
+    return any(column_names_match(required, column) for column in columns)
 
 
 def goal_constraints_reflected(*, goal: GoalDecomposition, query: str, params: Mapping[str, Any]) -> bool:

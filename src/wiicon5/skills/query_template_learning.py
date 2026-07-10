@@ -16,6 +16,7 @@ from wiicon5.skills.semantic_contract import (
     SemanticMeasure,
     SemanticRanking,
     SemanticSkillContract,
+    column_names_match,
     contract_from_goal,
     normalize_subject_term,
     semantic_contract_compatibility,
@@ -399,7 +400,7 @@ def query_contract_consistency_issues(spec: Mapping[str, Any]) -> List[str]:
     missing_result_columns = [
         column
         for column in requested.result_columns
-        if not any(semantic_terms_match(column, observed_column) for observed_column in observed.result_columns)
+        if not any(column_names_match(column, observed_column) for observed_column in observed.result_columns)
     ]
     if missing_result_columns:
         issues.append("query_result_columns_do_not_match_goal")

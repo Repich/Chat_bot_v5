@@ -22,6 +22,7 @@ from wiicon5.skills.composer import SkillComposer
 from wiicon5.skills.learned import LearnedSkillRuntimeHealthStore, LearnedSkillStore, LearnedSkillWriteResult
 from wiicon5.skills.lifecycle import SkillEvolutionDecision, SkillEvolutionPolicy
 from wiicon5.skills.registry import SkillRegistry
+from wiicon5.skills.semantic_contract import column_names_match
 from wiicon5.types import TypeSystem
 from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 
@@ -803,6 +804,8 @@ def column_present(required: str, columns: List[str]) -> bool:
     required_key = normalize_column_name(required)
     column_keys = {normalize_column_name(column) for column in columns}
     if required_key in column_keys:
+        return True
+    if any(column_names_match(required, column) for column in columns):
         return True
     aliases = {
         "номенклатура": {"товар", "продукт", "наименованиеноменклатуры", "номенклатура"},

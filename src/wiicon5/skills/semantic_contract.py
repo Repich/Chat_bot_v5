@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from wiicon5.intent.models import IntentResult
 from wiicon5.models import SemanticFilter
 from wiicon5.planner.goal import GoalDecomposition
-from wiicon5.semantic_roles import canonical_role
+from wiicon5.semantic_roles import canonical_role, roles_match
 
 
 SEMANTIC_CONTRACT_SCHEMA_VERSION = 2
@@ -756,7 +756,7 @@ def fixed_filter_values_match(left: Any, right: Any) -> bool:
 
 
 def column_names_match(left: str, right: str) -> bool:
-    return semantic_terms_match(left, right)
+    return semantic_terms_match(left, right) or roles_match(left, right)
 
 
 def normalize_question(value: str) -> str:

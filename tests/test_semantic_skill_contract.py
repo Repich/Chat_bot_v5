@@ -10,6 +10,7 @@ from wiicon5.skills.semantic_contract import (
     SemanticMeasure,
     SemanticRanking,
     SemanticSkillContract,
+    column_names_match,
     contract_from_goal,
     semantic_contract_compatibility,
     semantic_ranking_measures_match,
@@ -98,6 +99,11 @@ class SemanticSkillContractTests(unittest.TestCase):
 
         self.assertTrue(semantic_ranking_measures_match(requested, observed))
         self.assertFalse(semantic_ranking_measures_match(requested, wrong_measure))
+
+    def test_result_column_matches_qualified_metric_alias(self) -> None:
+        self.assertTrue(column_names_match("Количество", "КоличествоПродано"))
+        self.assertTrue(column_names_match("Номенклатура", "Товар"))
+        self.assertFalse(column_names_match("Количество", "Выручка"))
 
     def test_lookup_can_use_list_but_list_cannot_use_single_lookup(self) -> None:
         lookup = SemanticSkillContract(operation="lookup")
