@@ -10,6 +10,7 @@ from wiicon5.query.parameterized_lookup import build_parameterized_lookup_params
 from wiicon5.query_synthesis import QuerySynthesisResult
 from wiicon5.skills.learning_gate import evaluate_learning_gate
 from wiicon5.skills.query_template_learning import semantic_query_template_spec, skill_from_semantic_template
+from wiicon5.skills.semantic_contract import SemanticMeasure, SemanticSkillContract
 
 
 class SemanticQueryTemplateTests(unittest.TestCase):
@@ -211,6 +212,60 @@ class SemanticQueryTemplateTests(unittest.TestCase):
 
         assert spec is not None
         self.assertEqual(spec["semantic_contract"]["match_mode"], "exact")
+
+    def test_fixed_object_ref_parameter_with_subject_qualifier_remains_generalized(self) -> None:
+        question = "Покажи розничные цены на пальто"
+        intent = data_intent(question)
+        goal = GoalDecomposition(
+            business_goal=question,
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="prices",
+                    type="PriceTable",
+                    constraints=[SemanticFilter("product", "contains", "пальто", "пальто")],
+                    required_columns=["Номенклатура", "Цена"],
+                )
+            ],
+            semantic_contract=SemanticSkillContract(
+                subject_terms=["розничные цены", "пальто"],
+                operation="lookup",
+                measures=[SemanticMeasure(role="цена", result_column="Цена")],
+                required_filter_roles=["product"],
+                fixed_filter_values={"product": "пальто"},
+                result_columns=["Номенклатура", "Цена"],
+            ).to_dict(),
+        )
+        query = (
+            "ВЫБРАТЬ РАЗЛИЧНЫЕ Цены.Номенклатура КАК Номенклатура, Цены.Цена КАК Цена "
+            "ИЗ РегистрСведений.ЦеныНоменклатуры КАК Цены "
+            "ГДЕ Цены.Номенклатура.Наименование ПОДОБНО &Товар "
+            "И Цены.ВидЦены = &ВидЦены"
+        )
+        params = {
+            "Товар": "%пальто%",
+            "ВидЦены": {
+                "_objectRef": True,
+                "ТипОбъекта": "СправочникСсылка.ВидыЦен",
+                "Представление": "Розничная",
+            },
+        }
+        trace = successful_trace(query, ["Номенклатура", "Цена"], [{"Номенклатура": "Пальто", "Цена": 100}])
+        trace["final_query"]["params"] = params
+        trace["successful_steps"][0]["params"] = params
+
+        spec = semantic_query_template_spec(
+            query=query,
+            params=params,
+            limit=100,
+            intent=intent,
+            goal=goal,
+            trace=trace,
+        )
+
+        assert spec is not None
+        self.assertEqual(spec["semantic_contract"]["operation"], "list")
+        self.assertEqual(spec["semantic_contract"]["match_mode"], "generalized")
 
     def test_ranked_query_passes_learning_gate(self) -> None:
         question = "Покажи топ 10 товаров по количеству продаж за 2024 год"

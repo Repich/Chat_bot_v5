@@ -78,6 +78,17 @@ class SemanticSkillContractTests(unittest.TestCase):
         self.assertFalse(compatibility.compatible)
         self.assertIn("operation_mismatch:aggregate!=rank", compatibility.rejection_reasons)
 
+    def test_lookup_can_use_list_but_list_cannot_use_single_lookup(self) -> None:
+        lookup = SemanticSkillContract(operation="lookup")
+        listing = SemanticSkillContract(operation="list")
+
+        lookup_from_list = semantic_contract_compatibility(lookup, listing)
+        list_from_lookup = semantic_contract_compatibility(listing, lookup)
+
+        self.assertTrue(lookup_from_list.compatible, lookup_from_list.rejection_reasons)
+        self.assertFalse(list_from_lookup.compatible)
+        self.assertIn("operation_mismatch:list!=lookup", list_from_lookup.rejection_reasons)
+
     def test_document_amount_does_not_match_debt_measure(self) -> None:
         requested = SemanticSkillContract(
             subject_terms=["отгрузка", "задолженность"],
@@ -113,6 +124,25 @@ class SemanticSkillContractTests(unittest.TestCase):
 
         self.assertFalse(compatibility.compatible)
         self.assertIn("subject_mismatch:задолженность", compatibility.rejection_reasons)
+
+    def test_fixed_subject_qualifier_cannot_be_silently_added(self) -> None:
+        requested = SemanticSkillContract(
+            subject_terms=["цены"],
+            operation="list",
+            measures=[SemanticMeasure(role="цена")],
+            result_columns=["Цена"],
+        )
+        retail = SemanticSkillContract(
+            subject_terms=["розничные цены"],
+            operation="list",
+            measures=[SemanticMeasure(role="цена")],
+            result_columns=["Цена"],
+        )
+
+        compatibility = semantic_contract_compatibility(requested, retail)
+
+        self.assertFalse(compatibility.compatible)
+        self.assertIn("unexpected_subject_qualifier:розничные цены", compatibility.rejection_reasons)
 
     def test_outdated_contract_is_never_compatible(self) -> None:
         requested = SemanticSkillContract(subject_terms=["остатки"], operation="balance")
@@ -289,6 +319,7 @@ class SemanticSkillContractTests(unittest.TestCase):
             measures=[SemanticMeasure(role="остаток", aggregation="sum", unit="currency")],
             required_filter_roles=["organization"],
             result_columns=["Касса", "Остаток"],
+            original_question="Показать остатки наличных",
             confidence=0.95,
         )
         goal = GoalDecomposition(
@@ -301,6 +332,19 @@ class SemanticSkillContractTests(unittest.TestCase):
         parsed = contract_from_goal(data_intent(goal.business_goal), goal)
 
         self.assertEqual(parsed, explicit)
+
+    def test_explicit_contract_gets_original_question_when_llm_omits_it(self) -> None:
+        explicit = SemanticSkillContract(subject_terms=["цены"], operation="lookup").to_dict()
+        goal = GoalDecomposition(
+            business_goal="Показать розничные цены",
+            final_artifact_type="UserAnswer",
+            semantic_contract=explicit,
+        )
+
+        parsed = contract_from_goal(data_intent(goal.business_goal), goal)
+
+        self.assertEqual(parsed.original_question, goal.business_goal)
+        self.assertGreater(parsed.confidence, 0)
 
     def test_composer_selects_sum_skill_and_rejects_average_with_same_output_type(self) -> None:
         requested_goal = aggregate_goal(

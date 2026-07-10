@@ -19,6 +19,7 @@ from wiicon5.skills.semantic_contract import (
     contract_from_goal,
     normalize_subject_term,
     semantic_contract_compatibility,
+    semantic_subject_qualifiers,
     semantic_terms_match,
     subject_terms,
     unique,
@@ -72,6 +73,8 @@ def semantic_query_template_spec(
         source_objects=sources,
         requested_contract=contract,
     )
+    if contract.operation in {"lookup", "list"} and observed.operation in {"lookup", "list"}:
+        contract = replace(contract, operation=observed.operation)
     metadata_contract = metadata_dependency_contract_from_query(normalized_query)
     return {
         "schema_version": LEARNED_QUERY_SCHEMA_VERSION,
@@ -242,7 +245,17 @@ def observed_query_contract(
             )
         )
     ranking = ranking_from_query(query, expressions)
-    operation = "rank" if ranking.enabled else "aggregate" if measures else "balance" if ".остатки(" in query.lower() else "list"
+    operation = (
+        "rank"
+        if ranking.enabled
+        else "aggregate"
+        if measures
+        else "balance"
+        if ".остатки(" in query.lower()
+        else "lookup"
+        if select_limit(query) == 1
+        else "list"
+    )
     return SemanticSkillContract(
         subject_terms=list(requested_contract.subject_terms),
         operation=operation,
@@ -269,6 +282,11 @@ def output_type_from_goal(goal: Optional[GoalDecomposition]) -> str:
     return "LearnedQueryTable"
 
 
+def select_limit(query: str) -> int:
+    match = re.search(r"\bВЫБРАТЬ\s+(?:РАЗЛИЧНЫЕ\s+)?ПЕРВЫЕ\s+(\d+)", query, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else 0
+
+
 def template_match_mode(
     contract: SemanticSkillContract,
     parameter_bindings: Sequence[Mapping[str, Any]],
@@ -283,12 +301,20 @@ def template_match_mode(
         return "exact"
     bound_roles = {str(item.get("semantic_field") or "") for item in parameter_bindings}
     bound_parameters = {str(item.get("parameter") or "") for item in parameter_bindings}
-    if any(str(parameter) not in bound_parameters for parameter in params):
+    unbound_values = [value for parameter, value in params.items() if str(parameter) not in bound_parameters]
+    if unbound_values and not safe_fixed_object_ref_params(unbound_values, contract):
         return "exact"
     variable_roles = set(contract.required_filter_roles) - set(contract.fixed_filter_values)
     if variable_roles - bound_roles:
         return "exact"
     return "generalized"
+
+
+def safe_fixed_object_ref_params(values: Sequence[Any], contract: SemanticSkillContract) -> bool:
+    return bool(semantic_subject_qualifiers(contract)) and all(
+        isinstance(value, Mapping) and bool(value.get("_objectRef"))
+        for value in values
+    )
 
 
 def query_contract_consistency_issues(spec: Mapping[str, Any]) -> List[str]:

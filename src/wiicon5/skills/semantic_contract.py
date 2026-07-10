@@ -218,15 +218,20 @@ class SemanticCompatibility:
 
 
 def contract_from_goal(intent: Optional[IntentResult], goal: Optional[GoalDecomposition]) -> SemanticSkillContract:
+    intent_business_goal = intent.business_goal if intent is not None else ""
+    question = (goal.business_goal if goal is not None else "") or intent_business_goal
     explicit = getattr(goal, "semantic_contract", {}) if goal is not None else {}
     if isinstance(explicit, Mapping) and explicit:
         parsed = SemanticSkillContract.from_dict(explicit)
         if parsed.current:
-            return sanitize_explicit_subject_terms(parsed, explicit, goal_constraints(goal))
+            parsed = sanitize_explicit_subject_terms(parsed, explicit, goal_constraints(goal))
+            return replace(
+                parsed,
+                original_question=parsed.original_question or question,
+                confidence=parsed.confidence or (0.7 if question else 0.0),
+            )
 
-    intent_business_goal = intent.business_goal if intent is not None else ""
     intent_domain_terms = intent.domain_terms if intent is not None else []
-    question = (goal.business_goal if goal is not None else "") or intent_business_goal
     constraints = goal_constraints(goal)
     text_parts = [question, intent_business_goal, *intent_domain_terms]
     text_parts.extend(str(item.value or item.raw_user_text or "") for item in constraints)
@@ -277,7 +282,11 @@ def semantic_contract_compatibility(
 
     if requested.operation and available.operation:
         if requested.operation != available.operation:
-            rejected.append(f"operation_mismatch:{requested.operation}!={available.operation}")
+            if requested.operation == "lookup" and available.operation == "list":
+                reasons.append("lookup_satisfied_by_list")
+                score += 15
+            else:
+                rejected.append(f"operation_mismatch:{requested.operation}!={available.operation}")
         else:
             reasons.append("operation_match")
             score += 20
@@ -356,6 +365,7 @@ def semantic_contract_compatibility(
         score += 10
 
     requested_qualifiers = semantic_subject_qualifiers(requested)
+    available_qualifiers = semantic_subject_qualifiers(available)
     if requested_qualifiers:
         unmatched_subjects = [
             term
@@ -367,6 +377,13 @@ def semantic_contract_compatibility(
         else:
             reasons.append("subject_match")
             score += min(20, len(requested_qualifiers) * 5)
+    unmatched_available_qualifiers = [
+        term
+        for term in available_qualifiers
+        if not any(semantic_terms_match(term, candidate) for candidate in requested_qualifiers)
+    ]
+    if unmatched_available_qualifiers:
+        rejected.append("unexpected_subject_qualifier:" + ",".join(unmatched_available_qualifiers))
 
     return SemanticCompatibility(
         compatible=not rejected,
@@ -671,10 +688,16 @@ def semantic_subject_qualifiers(contract: SemanticSkillContract) -> List[str]:
             *contract.dimensions,
         ]
     )
+    filter_roles = {
+        canonical_role(item)
+        for item in [*contract.required_filter_roles, *contract.optional_filter_roles]
+        if canonical_role(item)
+    }
     return [
         term
         for term in contract.subject_terms
-        if not any(semantic_terms_match(term, structural) for structural in structural_terms)
+        if canonical_role(term) not in filter_roles
+        and not any(semantic_terms_match(term, structural) for structural in structural_terms)
     ]
 
 
