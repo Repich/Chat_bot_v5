@@ -430,6 +430,11 @@ def expected_fields_for_source(source: QuerySourceRef, metadata: MetadataObject)
 def metadata_for_source(source: QuerySourceRef, metadata_by_name: Mapping[str, MetadataObject]) -> Optional[MetadataObject]:
     if source.table_part:
         table_part_metadata = metadata_by_name.get(source.source)
+        parent_metadata = metadata_by_name.get(source.object_full_name)
+        if table_part_metadata is not None and is_metadata_object_verified(table_part_metadata):
+            return table_part_metadata
+        if parent_metadata is not None and fields_for_document_table_part(parent_metadata, source.table_part):
+            return parent_metadata
         if table_part_metadata is not None:
             return table_part_metadata
     return metadata_by_name.get(source.object_full_name)

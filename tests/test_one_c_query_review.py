@@ -385,6 +385,39 @@ class OneCQueryReviewerTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("document_table_part_without_document_ref", [issue.code for issue in result.issues])
 
+    def test_verified_parent_table_part_schema_wins_over_heuristic_direct_hint(self) -> None:
+        reviewer = OneCQueryReviewer()
+        direct_hint = MetadataObject(
+            full_name="Документ.РеализацияТоваровУслуг.Товары",
+            fields=["Номенклатура", "Количество", "Ссылка"],
+            field_details={
+                "Номенклатура": {"_source": "bsl_regex", "_trust": "hint"},
+                "Количество": {"_source": "bsl_regex", "_trust": "hint"},
+                "Ссылка": {"_source": "bsl_regex", "_trust": "hint"},
+            },
+            raw={"_source": "source_path", "_trust": "hint"},
+        )
+
+        result = reviewer.review(
+            query="""
+            ВЫБРАТЬ
+                Товары.Номенклатура КАК Номенклатура,
+                СУММА(Товары.Количество) КАК Количество
+            ИЗ
+                Документ.РеализацияТоваровУслуг.Товары КАК Товары
+                ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.РеализацияТоваровУслуг КАК Реализация
+                ПО Товары.Ссылка = Реализация.Ссылка
+            ГДЕ
+                Реализация.Проведен
+            СГРУППИРОВАТЬ ПО
+                Товары.Номенклатура
+            """,
+            params={},
+            metadata_objects=[direct_hint, sales_document_metadata()],
+        )
+
+        self.assertTrue(result.ok, result.error_text())
+
     def test_rejects_unconfirmed_enum_literal(self) -> None:
         reviewer = OneCQueryReviewer()
 

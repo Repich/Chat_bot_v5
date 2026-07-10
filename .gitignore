@@ -21,7 +21,7 @@ bot_instances/*/skills/candidates/
 bot_instances/*/skills/evidence/
 bot_instances/*/skills/learned/
 bot_instances/*/regression/results/
-bot_instances/*/evaluation/results/
+bot_instances/*/evaluation/
 diagnostic_bundles/
 skills/bindings/
 skills/learned/

@@ -19,6 +19,7 @@
 - Итоговый флаг MVP evaluation рассчитывается по опубликованным порогам cold/warm/reuse при нулевом false reuse и отсутствии исключений; отрицательный сценарий может безопасно завершиться без ответа, но не неверным навыком.
 - Query postprocessor автоматически устраняет общую коллизию, когда LLM одинаково назвала alias источника и выходную колонку: переименовывается только источник и все его dereference, выходной контракт сохраняется.
 - Subject matching проверяет все смысловые квалификаторы, не представленные measure/result/grain: слово «задолженность» больше нельзя проигнорировать только потому, что остальные слова совпали с навыком суммы документа.
+- Для табличной части verified nested schema родительского документа имеет приоритет над отдельной heuristic/hint записью onboarding; это сохраняет fail-closed trust policy без ложного отказа корректного learned query.
 - Локальные evidence, quarantined skills, evaluation results и diagnostic bundles исключены из Git.
 - Полный regression suite расширен тестами semantic compatibility, full query preservation, learning gate, quarantine, fail-closed sufficiency, post-reuse health и MVP evaluation.
 
