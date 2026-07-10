@@ -252,6 +252,41 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(review.trace["indistinguishable_duplicate_rows"], 1)
         self.assertIn("зерно", review.missing_facts[0])
 
+    def test_sufficiency_does_not_treat_stale_query_reasoning_as_result_evidence(self) -> None:
+        goal = GoalDecomposition(
+            business_goal="Получить розничные цены на пальто",
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="prices",
+                    type="PriceTable",
+                    constraints=[
+                        SemanticFilter("product", "equals", "пальто", "пальто"),
+                        SemanticFilter("price_type", "equals", "розничная", "розничные"),
+                    ],
+                    required_columns=["Номенклатура", "Цена"],
+                )
+            ],
+        )
+        review = deterministic_partial_review(
+            question="Покажи розничные цены на пальто",
+            columns=["Номенклатура", "Цена"],
+            rows=[{"Номенклатура": "Пальто демисезонное", "Цена": 62000}],
+            query_reasoning="Сначала нужно найти ссылку на номенклатуру.",
+            goal=goal,
+            query=(
+                "ВЫБРАТЬ Цены.Номенклатура КАК Номенклатура, Цены.Цена КАК Цена "
+                "ИЗ РегистрСведений.ЦеныНоменклатуры КАК Цены "
+                "ГДЕ Цены.Номенклатура = &Номенклатура И Цены.ВидЦены = &ВидЦены"
+            ),
+            params={
+                "Номенклатура": {"_objectRef": True, "Представление": "Пальто демисезонное"},
+                "ВидЦены": {"_objectRef": True, "Представление": "Розничная"},
+            },
+        )
+
+        self.assertIsNone(review)
+
     def test_sufficiency_accepts_counterparty_ref_and_requisites_with_debt_metric(self) -> None:
         review = deterministic_partial_review(
             question="Покажи реквизиты клиента задолженность которого самая высокая",

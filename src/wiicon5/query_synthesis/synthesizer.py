@@ -1016,6 +1016,9 @@ class QuerySynthesisEngine:
             rows=rows,
             query_reasoning=query_reasoning,
             domain_hint_packs=self.bot_config.domain_hint_packs,
+            goal=goal,
+            query=query,
+            params=params,
         )
         if deterministic is not None:
             return deterministic

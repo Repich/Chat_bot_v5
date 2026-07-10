@@ -16,10 +16,13 @@ from wiicon5.presentation.llm_answer_formatter import metric_hints_from_query
 RESULT_SUFFICIENCY_PROMPT = (
     "Ты проверяешь, достаточно ли результата read-only запроса 1С для ответа на исходный вопрос пользователя. "
     "Не придумывай данные и не исправляй запрос. Нужно сравнить user_question/business_goal с columns/rows/current_query. "
+    "current_query_reasoning создается до выполнения запроса и может устареть после автоматического разрешения ссылочных "
+    "параметров. Фактически выполненные current_query/current_params/columns/rows и declared_result_coverage имеют приоритет. "
     "Если результат содержит только промежуточный объект, ссылку, дату, список кандидатов или технический идентификатор, "
     "а в вопросе требуются другие факты, верни sufficient=false. "
     "Если reasoning текущего запроса говорит, что это только первый шаг, что дальше нужен другой запрос, или используются слова "
-    "'сначала', 'далее потребуется', 'пока возвращаем', считай результат промежуточным. "
+    "'сначала', 'далее потребуется', 'пока возвращаем', считай результат промежуточным только когда фактический результат "
+    "не покрывает объявленные обязательные колонки и фильтры. "
     "Если в вопросе спрашивают 'кому/кто' и 'сколько/какая сумма', ответ достаточен только когда результат содержит и субъект, "
     "и числовую сумму/количество/остаток, либо явно объясняет отсутствие данных. "
     "Если вопрос пользователя допускает два бизнес-смысла, а текущий результат покрывает только один из них, "
@@ -101,6 +104,9 @@ class ResultSufficiencyReviewer:
             rows=rows,
             query_reasoning=query_reasoning,
             domain_hint_packs=self.domain_hint_packs,
+            goal=goal,
+            query=query,
+            params=params,
         )
         if deterministic is not None:
             return deterministic
@@ -115,6 +121,12 @@ class ResultSufficiencyReviewer:
         if empty_result is not None:
             return empty_result
 
+        declared_coverage = declared_goal_result_coverage(
+            goal=goal,
+            columns=columns,
+            query=query,
+            params=params,
+        )
         payload = {
             "user_question": question,
             "intent": intent.to_dict(),
@@ -123,6 +135,7 @@ class ResultSufficiencyReviewer:
             "current_query": query,
             "current_params": dict(params),
             "current_query_reasoning": query_reasoning,
+            "declared_result_coverage": declared_coverage,
             "columns": list(columns),
             "metric_hints": metric_hints_from_query(query, columns),
             "rows": normalize_rows_for_review(rows[: self.max_rows]),
@@ -183,6 +196,9 @@ def deterministic_partial_review(
     rows: List[Dict[str, Any]],
     query_reasoning: str,
     domain_hint_packs: Optional[List[str]] = None,
+    goal: Optional[GoalDecomposition] = None,
+    query: str = "",
+    params: Optional[Mapping[str, Any]] = None,
 ) -> Optional[ResultSufficiencyReview]:
     reasoning = query_reasoning.lower()
     partial_markers = [
@@ -194,7 +210,14 @@ def deterministic_partial_review(
         "только находим",
         "сначала нужно",
     ]
-    if any(marker in reasoning for marker in partial_markers):
+    reasoning_marks_partial = any(marker in reasoning for marker in partial_markers)
+    declared_coverage = declared_goal_result_coverage(
+        goal=goal,
+        columns=columns,
+        query=query,
+        params=params or {},
+    )
+    if reasoning_marks_partial and not declared_coverage["complete"]:
         return ResultSufficiencyReview(
             sufficient=False,
             partial=True,
@@ -375,6 +398,24 @@ def required_columns_from_goal(goal: Optional[GoalDecomposition]) -> List[str]:
             if column not in result:
                 result.append(column)
     return result
+
+
+def declared_goal_result_coverage(
+    *,
+    goal: Optional[GoalDecomposition],
+    columns: List[str],
+    query: str,
+    params: Mapping[str, Any],
+) -> Dict[str, Any]:
+    required_columns = required_columns_from_goal(goal)
+    missing_columns = [column for column in required_columns if not column_present(column, columns)]
+    constraints_reflected = bool(goal) and goal_constraints_reflected(goal=goal, query=query, params=params)
+    return {
+        "complete": bool(required_columns) and not missing_columns and constraints_reflected,
+        "required_columns": required_columns,
+        "missing_columns": missing_columns,
+        "constraints_reflected": constraints_reflected,
+    }
 
 
 def column_present(required: str, columns: List[str]) -> bool:

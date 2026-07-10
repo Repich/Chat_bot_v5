@@ -22,6 +22,7 @@
 - Для табличной части verified nested schema родительского документа имеет приоритет над отдельной heuristic/hint записью onboarding; это сохраняет fail-closed trust policy без ложного отказа корректного learned query.
 - Если decomposition не заполнила original_question, агент восстанавливает его из business goal. Фактическая операция learned query берется из формы SELECT; list может удовлетворить lookup, но одиночный lookup не подменяет list.
 - Непараметризованный objectRef допускается как безопасная фиксированная константа generalized skill только при явном двусторонне совпавшем subject qualifier; навык «розничные цены» не подходит вопросу без вида цены или с другим видом.
+- Проверка достаточности отдает приоритет фактически выполненному запросу, разрешенным ссылочным параметрам и покрытию goal contract: предварительное reasoning модели больше не превращает уже полученный финальный результат в ложный промежуточный шаг.
 - Локальные evidence, quarantined skills, evaluation results и diagnostic bundles исключены из Git.
 - Полный regression suite расширен тестами semantic compatibility, full query preservation, learning gate, quarantine, fail-closed sufficiency, post-reuse health и MVP evaluation.
 
