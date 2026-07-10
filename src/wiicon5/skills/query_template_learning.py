@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from wiicon5.intent.models import IntentResult
 from wiicon5.models import SkillContract, SkillKind, SkillStatus
 from wiicon5.planner.goal import GoalDecomposition
-from wiicon5.query.one_c_query_review import parse_sources
+from wiicon5.query.one_c_query_review import QuerySourceRef, parse_sources
 from wiicon5.query.parameterized_lookup import constraints_from_goal_payload, infer_parameter_bindings
 from wiicon5.skills.semantic_contract import (
     SEMANTIC_CONTRACT_SCHEMA_VERSION,
@@ -322,7 +322,13 @@ def reusable_read_query(query: str) -> bool:
 
 
 def query_source_objects(query: str) -> List[str]:
-    return unique(source.object_full_name for source in parse_sources(query) if source.object_full_name)
+    return unique(source_dependency_name(source) for source in parse_sources(query) if source.object_full_name)
+
+
+def source_dependency_name(source: QuerySourceRef) -> str:
+    if source.table_part:
+        return source.source
+    return source.object_full_name
 
 
 def metadata_dependency_contract_from_query(query: str) -> List[Dict[str, Any]]:
@@ -340,9 +346,13 @@ def metadata_dependency_contract_from_query(query: str) -> List[Dict[str, Any]]:
         )
         result.append(
             {
-                "object": source.object_full_name,
+                "object": source_dependency_name(source),
+                "parent_object": source.object_full_name,
+                "source": source.source,
+                "object_type": source.object_type,
                 "required_fields": {field: "unknown" for field in fields},
                 "virtual_table": source.virtual_table or None,
+                "table_part": source.table_part or None,
                 "field_roles": {},
             }
         )

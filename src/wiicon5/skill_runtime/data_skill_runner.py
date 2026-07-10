@@ -11,7 +11,7 @@ from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpQueryRequest, normalize_mcp_rows
 from wiicon5.models import SkillContract
 from wiicon5.query.list_params import expand_in_list_parameters
-from wiicon5.query.one_c_query_review import OneCQueryReviewer
+from wiicon5.query.one_c_query_review import OneCQueryReviewer, QuerySourceRef, expected_fields_for_source
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.query_builder import QueryBuildError, QueryBuilder
 from wiicon5.query.query_draft import QueryDraft
@@ -262,12 +262,24 @@ def metadata_dependency_contract_error(skill: SkillContract, metadata_objects) -
         if not object_name:
             continue
         metadata_object = by_name.get(object_name)
+        parent_object = str(dependency.get("parent_object") or "")
+        if (metadata_object is None or not metadata_object.fields) and parent_object:
+            metadata_object = by_name.get(parent_object)
         if metadata_object is None:
             return f"Learned skill {skill.skill_id} metadata dependency is not available: {object_name}."
         required_fields = dependency.get("required_fields")
         if not isinstance(required_fields, dict):
             continue
-        missing = [field for field in required_fields if field not in metadata_object.fields]
+        source_ref = QuerySourceRef(
+            source=str(dependency.get("source") or object_name),
+            alias="Источник",
+            object_full_name=parent_object or object_name,
+            object_type=str(dependency.get("object_type") or (parent_object or object_name).split(".", 1)[0]),
+            virtual_table=str(dependency.get("virtual_table") or ""),
+            table_part=str(dependency.get("table_part") or ""),
+        )
+        available_fields = expected_fields_for_source(source_ref, metadata_object)
+        missing = [field for field in required_fields if field not in available_fields]
         if missing:
             return (
                 f"Learned skill {skill.skill_id} metadata dependency changed for {object_name}; "

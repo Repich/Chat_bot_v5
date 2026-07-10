@@ -217,6 +217,23 @@ class QuerySynthesisTests(unittest.TestCase):
         assert review is not None
         self.assertTrue(review.sufficient)
 
+    def test_sufficiency_rejects_indistinguishable_duplicate_rows(self) -> None:
+        review = deterministic_partial_review(
+            question="Покажи цены на куртки",
+            columns=["Номенклатура", "Цена"],
+            rows=[
+                {"Номенклатура": "Куртка", "Цена": 34000},
+                {"Номенклатура": "Куртка", "Цена": 34000},
+            ],
+            query_reasoning="",
+        )
+
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertFalse(review.sufficient)
+        self.assertEqual(review.trace["indistinguishable_duplicate_rows"], 1)
+        self.assertIn("зерно", review.missing_facts[0])
+
     def test_sufficiency_accepts_counterparty_ref_and_requisites_with_debt_metric(self) -> None:
         review = deterministic_partial_review(
             question="Покажи реквизиты клиента задолженность которого самая высокая",

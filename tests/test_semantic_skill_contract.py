@@ -78,6 +78,23 @@ class SemanticSkillContractTests(unittest.TestCase):
         self.assertFalse(compatibility.compatible)
         self.assertIn("operation_mismatch:aggregate!=rank", compatibility.rejection_reasons)
 
+    def test_document_amount_does_not_match_debt_measure(self) -> None:
+        requested = SemanticSkillContract(
+            subject_terms=["отгрузка", "задолженность"],
+            operation="lookup",
+            measures=[SemanticMeasure(role="сумма задолженности", unit="currency")],
+        )
+        available = SemanticSkillContract(
+            subject_terms=["отгрузка", "сумма документа"],
+            operation="lookup",
+            measures=[SemanticMeasure(role="сумма документа", unit="currency")],
+        )
+
+        compatibility = semantic_contract_compatibility(requested, available)
+
+        self.assertFalse(compatibility.compatible)
+        self.assertIn("measure_mismatch:сумма задолженности", compatibility.rejection_reasons)
+
     def test_outdated_contract_is_never_compatible(self) -> None:
         requested = SemanticSkillContract(subject_terms=["остатки"], operation="balance")
         outdated = SemanticSkillContract.from_dict(

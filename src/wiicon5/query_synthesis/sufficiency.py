@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -202,6 +203,25 @@ def deterministic_partial_review(
             reasoning="Reasoning запроса явно описывает промежуточный шаг, а не финальный ответ.",
         )
 
+    duplicate_count = indistinguishable_duplicate_count(rows)
+    if duplicate_count:
+        return ResultSufficiencyReview(
+            sufficient=False,
+            partial=True,
+            missing_facts=[
+                "Результат содержит неразличимые повторяющиеся строки; зерно результата или агрегация не подтверждены."
+            ],
+            next_query_goal=(
+                "Вернуть различающие размерности либо агрегировать данные на требуемом зерне так, "
+                "чтобы одинаковые строки не скрывали разные исходные записи."
+            ),
+            reasoning=(
+                f"Обнаружено повторяющихся строк: {duplicate_count}. Нельзя понять, являются ли это дублями "
+                "или разными фактами с потерянной размерностью."
+            ),
+            trace={"indistinguishable_duplicate_rows": duplicate_count},
+        )
+
     packs = domain_hint_packs if domain_hint_packs is not None else BotInstanceConfig.default().domain_hint_packs
     if "trade_ru" not in packs:
         return None
@@ -299,6 +319,18 @@ def deterministic_partial_review(
                 reasoning="Вопрос требует субъект и сумму, но текущие колонки не покрывают оба факта.",
             )
     return None
+
+
+def indistinguishable_duplicate_count(rows: List[Dict[str, Any]]) -> int:
+    seen: set[str] = set()
+    duplicates = 0
+    for row in rows:
+        key = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+        if key in seen:
+            duplicates += 1
+        else:
+            seen.add(key)
+    return duplicates
 
 
 def deterministic_valid_empty_review(

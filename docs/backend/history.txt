@@ -13,6 +13,10 @@
 - MVP evaluation различает переиспользование нового learned skill и корректное переиспользование уже существующего seed/learned skill, не требуя бессмысленного повторного обучения.
 - Семантические роли сущностей нормализуют структурные суффиксы *_name, *_ref и *_reference без объектных классификаторов; warehouse_name и warehouse теперь совместимы так же, как любые другие entity-роли.
 - Каждый cold/warm evaluation case запускается с отдельным bot root; исключение одного сценария записывается в отчет и не прерывает весь прогон. Ranked learning gate покрыт регрессионным тестом.
+- Metadata dependency contract различает шапку документа, табличную часть и виртуальную таблицу регистра; поля проверяются по фактической форме источника, а не только по базовому объекту.
+- Measure matching сравнивает содержательные токены: сумма документа не совместима с суммой задолженности только из-за общего слова «сумма».
+- Sufficiency review fail-closed отклоняет неразличимые одинаковые строки как признак потерянного зерна или агрегации; stock balance без детализации агрегируется по выводимому складскому зерну.
+- Итоговый флаг MVP evaluation рассчитывается по опубликованным порогам cold/warm/reuse при нулевом false reuse и отсутствии исключений; отрицательный сценарий может безопасно завершиться без ответа, но не неверным навыком.
 - Локальные evidence, quarantined skills, evaluation results и diagnostic bundles исключены из Git.
 - Полный regression suite расширен тестами semantic compatibility, full query preservation, learning gate, quarantine, fail-closed sufficiency, post-reuse health и MVP evaluation.
 

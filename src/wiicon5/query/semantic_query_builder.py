@@ -62,13 +62,24 @@ def build_measure_table_query(*, skill: SkillContract, binding: SkillBinding, in
     warehouse_field = required_field(binding, "warehouse")
     quantity_field = required_field(binding, "quantity")
     warehouse_name_expr = binding.fields.get("warehouse_name", f"{warehouse_field}.Наименование")
+    include_product = not input_has_value(inputs, "product") or column_required(
+        inputs,
+        "product",
+        "номенклатура",
+        "товар",
+    )
+    aggregate_by_warehouse = input_has_value(inputs, "product") and not include_product
     select_lines = []
-    if not input_has_value(inputs, "product") or column_required(inputs, "product", "номенклатура", "товар"):
+    if include_product:
         select_lines.append(f"    {alias}.{product_field} КАК Номенклатура")
     select_lines.extend(
         [
             f"    {alias}.{warehouse_name_expr} КАК Склад",
-            f"    {alias}.{quantity_field} КАК Остаток",
+            (
+                f"    СУММА({alias}.{quantity_field}) КАК Остаток"
+                if aggregate_by_warehouse
+                else f"    {alias}.{quantity_field} КАК Остаток"
+            ),
         ]
     )
     where_lines = []
@@ -82,6 +93,8 @@ def build_measure_table_query(*, skill: SkillContract, binding: SkillBinding, in
     if where_lines:
         query_lines.append("ГДЕ")
         query_lines.extend(prefixed_conditions(where_lines))
+    if aggregate_by_warehouse:
+        query_lines.extend(["СГРУППИРОВАТЬ ПО", f"    {alias}.{warehouse_name_expr}"])
     return QueryDraft(
         query="\n".join(query_lines),
         limit=limit_from_inputs(inputs),

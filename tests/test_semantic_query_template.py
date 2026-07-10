@@ -81,11 +81,48 @@ class SemanticQueryTemplateTests(unittest.TestCase):
         self.assertEqual(spec["query"], query)
         self.assertIn("ЛЕВОЕ СОЕДИНЕНИЕ", spec["query"])
         self.assertIn("НЕ Номенклатура.ПометкаУдаления", spec["query"])
+        self.assertIn("РегистрНакопления.Продажи", spec["metadata_dependencies"])
         self.assertEqual({item["semantic_field"] for item in spec["parameter_bindings"]}, {"year"})
         skill = skill_from_semantic_template(spec, intent=intent, goal=goal)
         self.assertEqual(skill.outputs[0].type, "TopNMetricTable")
         self.assertEqual(skill.implementation["kind"], "semantic_query_template")
         self.assertEqual(skill.semantic_contract["operation"], "rank")
+
+    def test_table_part_is_recorded_as_its_own_metadata_dependency(self) -> None:
+        query = (
+            "ВЫБРАТЬ Товары.Номенклатура КАК Номенклатура, "
+            "Товары.Количество КАК Количество "
+            "ИЗ Документ.РеализацияТоваровУслуг.Товары КАК Товары "
+            "ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.РеализацияТоваровУслуг КАК Реализация "
+            "ПО Товары.Ссылка = Реализация.Ссылка"
+        )
+        intent = data_intent("Показать товары последней реализации")
+        goal = GoalDecomposition(
+            business_goal=intent.business_goal,
+            final_artifact_type="UserAnswer",
+            required_artifacts=[ArtifactRequirement(name="items", type="LearnedQueryTable")],
+        )
+        trace = successful_trace(query, ["Номенклатура", "Количество"], [{"Номенклатура": "Товар", "Количество": 1}])
+
+        spec = semantic_query_template_spec(
+            query=query,
+            params={},
+            limit=100,
+            intent=intent,
+            goal=goal,
+            trace=trace,
+        )
+
+        assert spec is not None
+        self.assertIn("Документ.РеализацияТоваровУслуг.Товары", spec["metadata_dependencies"])
+        table_part = next(
+            item
+            for item in spec["metadata_dependency_contract"]
+            if item["object"] == "Документ.РеализацияТоваровУслуг.Товары"
+        )
+        self.assertEqual(table_part["parent_object"], "Документ.РеализацияТоваровУслуг")
+        self.assertEqual(table_part["table_part"], "Товары")
+        self.assertEqual(set(table_part["required_fields"]), {"Номенклатура", "Количество", "Ссылка"})
 
     def test_learning_gate_requires_sufficient_exact_success_evidence(self) -> None:
         query = "ВЫБРАТЬ СУММА(Продажи.Сумма) КАК Сумма ИЗ РегистрНакопления.Продажи КАК Продажи"

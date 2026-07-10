@@ -67,6 +67,19 @@ GENERIC_SUBJECT_PREFIXES = {
     "тип",
 }
 
+GENERIC_MEASURE_TOKENS = {
+    "amount",
+    "count",
+    "metric",
+    "quantity",
+    "value",
+    "значен",
+    "количеств",
+    "метрик",
+    "показател",
+    "сумм",
+}
+
 
 @dataclass(frozen=True)
 class SemanticMeasure:
@@ -278,13 +291,13 @@ def semantic_contract_compatibility(
             reasons.append("aggregation_match")
             score += 30
 
-    requested_measure_roles = {normalize_subject_term(item.role) for item in requested.measures if item.role}
-    available_measure_roles = {normalize_subject_term(item.role) for item in available.measures if item.role}
+    requested_measure_roles = {normalize_semantic_text(item.role) for item in requested.measures if item.role}
+    available_measure_roles = {normalize_semantic_text(item.role) for item in available.measures if item.role}
     if requested_measure_roles and available_measure_roles:
         unmatched = [
             role
             for role in requested_measure_roles
-            if not any(semantic_terms_match(role, candidate) for candidate in available_measure_roles)
+            if not any(semantic_measure_roles_match(role, candidate) for candidate in available_measure_roles)
         ]
         if unmatched:
             rejected.append("measure_mismatch:" + ",".join(sorted(unmatched)))
@@ -623,6 +636,28 @@ def semantic_terms_match(left: str, right: str) -> bool:
         return True
     return min(len(left_norm), len(right_norm)) >= 5 and (
         left_norm in right_norm or right_norm in left_norm or left_norm[:5] == right_norm[:5]
+    )
+
+
+def semantic_measure_roles_match(left: str, right: str) -> bool:
+    left_tokens = tokenized_subject_terms(left)
+    right_tokens = tokenized_subject_terms(right)
+    if not left_tokens or not right_tokens:
+        return False
+    if left_tokens == right_tokens:
+        return True
+    left_specific = [item for item in left_tokens if item not in GENERIC_MEASURE_TOKENS]
+    right_specific = [item for item in right_tokens if item not in GENERIC_MEASURE_TOKENS]
+    if bool(left_specific) != bool(right_specific):
+        return False
+    if not left_specific:
+        return semantic_terms_match(left, right)
+    return all(
+        any(semantic_terms_match(term, candidate) for candidate in right_specific)
+        for term in left_specific
+    ) and all(
+        any(semantic_terms_match(term, candidate) for candidate in left_specific)
+        for term in right_specific
     )
 
 

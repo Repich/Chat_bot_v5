@@ -212,6 +212,88 @@ class DataSkillRunnerTests(unittest.TestCase):
         self.assertIn("metadata dependency changed", result.error)
         self.assertEqual(len(mcp.query_calls), 0)
 
+    def test_learned_table_part_fields_are_validated_against_table_part_metadata(self) -> None:
+        skill = learned_skill_with_dependency(
+            {
+                "object": "Документ.РеализацияТоваровУслуг.Товары",
+                "parent_object": "Документ.РеализацияТоваровУслуг",
+                "source": "Документ.РеализацияТоваровУслуг.Товары",
+                "object_type": "Документ",
+                "table_part": "Товары",
+                "required_fields": {"Ссылка": "unknown", "Номенклатура": "unknown", "Количество": "unknown"},
+            }
+        )
+        query = (
+            "ВЫБРАТЬ Товары.Номенклатура КАК Номенклатура, Товары.Количество КАК Количество "
+            "ИЗ Документ.РеализацияТоваровУслуг.Товары КАК Товары"
+        )
+        mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Товар", "Количество": 1}]})
+        provider = MappingMetadataProvider(
+            {
+                "Документ.РеализацияТоваровУслуг.Товары": {
+                    "ПолноеИмя": "Документ.РеализацияТоваровУслуг.Товары",
+                    "Реквизиты": [
+                        {"Имя": "Номенклатура", "Тип": "СправочникСсылка.Номенклатура"},
+                        {"Имя": "Количество", "Тип": "Число"},
+                    ],
+                    "СтандартныеРеквизиты": [{"Имя": "Ссылка", "Тип": "ДокументСсылка.РеализацияТоваровУслуг"}],
+                }
+            }
+        )
+        runner = DataSkillRunner(
+            query_builder=StaticQueryBuilder(
+                QueryDraft(
+                    query=query,
+                    metadata_dependencies=["Документ.РеализацияТоваровУслуг.Товары"],
+                )
+            ),
+            mcp_client=mcp,
+            metadata_provider=provider,
+        )
+
+        result = runner.run(skill, {}, ConversationContext(session_id="s1"))
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(len(mcp.query_calls), 1)
+
+    def test_learned_virtual_table_fields_are_derived_from_dimensions_and_resources(self) -> None:
+        skill = learned_skill_with_dependency(
+            {
+                "object": "РегистрНакопления.ТоварыНаСкладах",
+                "parent_object": "РегистрНакопления.ТоварыНаСкладах",
+                "source": "РегистрНакопления.ТоварыНаСкладах.Остатки()",
+                "object_type": "РегистрНакопления",
+                "virtual_table": "Остатки",
+                "required_fields": {"Номенклатура": "unknown", "КоличествоОстаток": "unknown"},
+            }
+        )
+        query = (
+            "ВЫБРАТЬ Остатки.Номенклатура КАК Номенклатура, Остатки.КоличествоОстаток КАК Остаток "
+            "ИЗ РегистрНакопления.ТоварыНаСкладах.Остатки() КАК Остатки"
+        )
+        mcp = DictMcpClient({"success": True, "data": [{"Номенклатура": "Товар", "Остаток": 1}]})
+        provider = MappingMetadataProvider(
+            {
+                "РегистрНакопления.ТоварыНаСкладах": {
+                    "ПолноеИмя": "РегистрНакопления.ТоварыНаСкладах",
+                    "Измерения": [{"Имя": "Номенклатура"}],
+                    "Ресурсы": [{"Имя": "Количество"}],
+                }
+            }
+        )
+        runner = DataSkillRunner(
+            query_builder=StaticQueryBuilder(
+                QueryDraft(query=query, metadata_dependencies=["РегистрНакопления.ТоварыНаСкладах"])
+            ),
+            mcp_client=mcp,
+            metadata_provider=provider,
+        )
+
+        result = runner.run(skill, {}, ConversationContext(session_id="s1"))
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(len(mcp.query_calls), 1)
+
 
 class StaticQueryBuilder(QueryBuilder):
     def __init__(self, draft: QueryDraft) -> None:
@@ -232,6 +314,30 @@ class SingleObjectMetadataProvider(MetadataProvider):
 
     def get_object(self, full_name: str):
         return self.object
+
+
+class MappingMetadataProvider(MetadataProvider):
+    def __init__(self, payloads: Dict[str, Dict[str, Any]]) -> None:
+        self.objects = {key: metadata_object_from_payload(value) for key, value in payloads.items()}
+
+    def search_objects(self, term: str):
+        return list(self.objects.values())
+
+    def get_object(self, full_name: str):
+        return self.objects.get(full_name, metadata_object_from_payload({"ПолноеИмя": full_name}))
+
+
+def learned_skill_with_dependency(dependency: Dict[str, Any]) -> SkillContract:
+    return SkillContract.from_dict(
+        {
+            "skill_id": "learned_dependency_test",
+            "kind": "data_acquisition",
+            "status": "verified",
+            "outputs": [{"name": "table", "type": "LearnedQueryTable"}],
+            "implementation_strategy": "learned_query",
+            "implementation": {"metadata_dependency_contract": [dependency]},
+        }
+    )
 
 
 if __name__ == "__main__":

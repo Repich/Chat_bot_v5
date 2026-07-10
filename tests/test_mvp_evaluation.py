@@ -89,6 +89,20 @@ class MvpEvaluationTests(unittest.TestCase):
         self.assertIn("cold_exception:RuntimeError:boom", result.case_results[0].issues)
         self.assertTrue(result.case_results[1].ok)
 
+    def test_negative_case_accepts_fail_closed_warm_result_without_false_reuse(self) -> None:
+        agent = ScriptedNegativeAgent()
+        case = MvpEvaluationCase(
+            case_id="safe_negative",
+            cold_question="document amount",
+            warm_question="actual debt",
+            warm_expectation="do_not_reuse_new_skill",
+        )
+
+        result = run_mvp_evaluation([case], agent)
+
+        self.assertTrue(result.case_results[0].ok, result.to_dict())
+        self.assertNotIn("warm_answer_failed:query_synthesis_failed", result.case_results[0].issues)
+
 
 class ScriptedLearningAgent:
     def __init__(self, *, reuse: bool) -> None:
@@ -156,6 +170,25 @@ class RaisingAgent:
 
     def handle(self, question: str, *, session_id: str) -> AgentRunResult:
         raise RuntimeError("boom")
+
+
+class ScriptedNegativeAgent:
+    def __init__(self) -> None:
+        self.registry = SkillRegistry()
+        self.calls = 0
+
+    def handle(self, question: str, *, session_id: str) -> AgentRunResult:
+        self.calls += 1
+        intent = IntentResult(
+            intent_type=IntentType.DATA_QUESTION,
+            business_goal=question,
+            requires_1c_data=True,
+            relevant=True,
+        )
+        if self.calls == 1:
+            self.registry.add(learned_skill())
+            return AgentRunResult(source="query_synthesis_ok", message="ok", intent=intent)
+        return AgentRunResult(source="query_synthesis_failed", message="failed closed", intent=intent)
 
 
 def learned_skill() -> SkillContract:

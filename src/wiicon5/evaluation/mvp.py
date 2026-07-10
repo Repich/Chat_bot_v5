@@ -9,6 +9,9 @@ from uuid import uuid4
 
 
 SUCCESS_SOURCES = {"query_synthesis_ok", "skill_execution_ok"}
+MIN_COLD_ANSWER_RATE = 0.8
+MIN_WARM_ANSWER_RATE = 0.9
+MIN_CREATED_SKILL_REUSE_RATE = 0.7
 
 
 @dataclass(frozen=True)
@@ -87,6 +90,28 @@ class MvpEvaluationResult:
             for item in self.case_results
             if item.warm_expectation in {"reuse_new_skill", "reuse_any_skill"}
         ]
+        cold_answer_rate = ratio(
+            sum(1 for item in self.case_results if item.cold_source in SUCCESS_SOURCES),
+            len(self.case_results),
+        )
+        warm_answer_rate = ratio(
+            sum(1 for item in self.case_results if item.warm_source in SUCCESS_SOURCES),
+            len(self.case_results),
+        )
+        created_skill_reuse_rate = (
+            ratio(sum(1 for item in positive if item.reused_created_skill_ids), len(positive))
+            if positive
+            else 1.0
+        )
+        false_reuse_count = sum(
+            1 for item in self.case_results if "false_reuse_of_cold_skill" in item.issues
+        )
+        exception_count = sum(
+            1
+            for item in self.case_results
+            for issue in item.issues
+            if "_exception:" in issue
+        )
         return {
             "run_id": self.run_id,
             "ok": self.ok,
@@ -96,22 +121,22 @@ class MvpEvaluationResult:
                 "cases": len(self.case_results),
                 "passed": sum(1 for item in self.case_results if item.ok),
                 "failed": sum(1 for item in self.case_results if not item.ok),
-                "cold_answer_rate": ratio(
-                    sum(1 for item in self.case_results if item.cold_source in SUCCESS_SOURCES),
-                    len(self.case_results),
-                ),
-                "warm_answer_rate": ratio(
-                    sum(1 for item in self.case_results if item.warm_source in SUCCESS_SOURCES),
-                    len(self.case_results),
-                ),
-                "created_skill_reuse_rate": ratio(
-                    sum(1 for item in positive if item.reused_created_skill_ids),
-                    len(positive),
-                ),
+                "cold_answer_rate": cold_answer_rate,
+                "warm_answer_rate": warm_answer_rate,
+                "created_skill_reuse_rate": created_skill_reuse_rate,
                 "warm_skill_plan_rate": ratio(
                     sum(1 for item in reusable if item.warm_source == "skill_execution_ok" and item.warm_plan_skill_ids),
                     len(reusable),
                 ),
+                "false_reuse_count": false_reuse_count,
+                "exception_count": exception_count,
+                "acceptance_thresholds": {
+                    "cold_answer_rate": MIN_COLD_ANSWER_RATE,
+                    "warm_answer_rate": MIN_WARM_ANSWER_RATE,
+                    "created_skill_reuse_rate": MIN_CREATED_SKILL_REUSE_RATE,
+                    "false_reuse_count": 0,
+                    "exception_count": 0,
+                },
             },
             "cases": [item.to_dict() for item in self.case_results],
         }
@@ -181,7 +206,7 @@ def run_mvp_evaluation(
         issues: List[str] = []
         if cold.source not in SUCCESS_SOURCES:
             issues.append(f"cold_answer_failed:{cold.source}")
-        if warm.source not in SUCCESS_SOURCES:
+        if warm.source not in SUCCESS_SOURCES and case.warm_expectation != "do_not_reuse_new_skill":
             issues.append(f"warm_answer_failed:{warm.source}")
         if case.warm_expectation == "reuse_new_skill":
             if not created:
@@ -212,7 +237,7 @@ def run_mvp_evaluation(
         )
     return MvpEvaluationResult(
         run_id=run_id,
-        ok=all(item.ok for item in results),
+        ok=acceptance_thresholds_met(results),
         started_at=started_at,
         finished_at=utc_iso(),
         case_results=results,
@@ -235,6 +260,26 @@ def exception_case_result(
 def exception_issue(stage: str, exc: Exception) -> str:
     message = " ".join(str(exc).split())[:500]
     return f"{stage}_exception:{type(exc).__name__}:{message}"
+
+
+def acceptance_thresholds_met(results: List[MvpEvaluationCaseResult]) -> bool:
+    positive = [item for item in results if item.warm_expectation == "reuse_new_skill"]
+    cold_rate = ratio(sum(1 for item in results if item.cold_source in SUCCESS_SOURCES), len(results))
+    warm_rate = ratio(sum(1 for item in results if item.warm_source in SUCCESS_SOURCES), len(results))
+    reuse_rate = (
+        ratio(sum(1 for item in positive if item.reused_created_skill_ids), len(positive))
+        if positive
+        else 1.0
+    )
+    false_reuse = any("false_reuse_of_cold_skill" in item.issues for item in results)
+    exceptions = any("_exception:" in issue for item in results for issue in item.issues)
+    return (
+        cold_rate >= MIN_COLD_ANSWER_RATE
+        and warm_rate >= MIN_WARM_ANSWER_RATE
+        and reuse_rate >= MIN_CREATED_SKILL_REUSE_RATE
+        and not false_reuse
+        and not exceptions
+    )
 
 
 def learned_skill_ids(agent) -> set[str]:

@@ -121,7 +121,9 @@ class BindingSemanticQueryBuilderTests(unittest.TestCase):
 
         self.assertIn("РегистрНакопления.ОстаткиТоваров.Остатки() КАК Остатки", draft.query)
         self.assertIn("Остатки.МестоХранения.Наименование КАК Склад", draft.query)
-        self.assertIn("Остатки.ДоступноОстаток КАК Остаток", draft.query)
+        self.assertIn("СУММА(Остатки.ДоступноОстаток) КАК Остаток", draft.query)
+        self.assertIn("СГРУППИРОВАТЬ ПО", draft.query)
+        self.assertIn("Остатки.МестоХранения.Наименование", draft.query)
         self.assertIn("Остатки.Товар = &product", draft.query)
         self.assertIn("Остатки.МестоХранения В (&warehouses_1)", draft.query)
         self.assertEqual(draft.params["product"], "product-ref-1")
@@ -148,6 +150,7 @@ class BindingSemanticQueryBuilderTests(unittest.TestCase):
 
         self.assertIn("Остатки.Товар КАК Номенклатура", draft.query)
         self.assertIn("Остатки.Товар = &product", draft.query)
+        self.assertNotIn("СУММА(", draft.query)
 
     def test_stock_query_uses_name_search_when_product_input_is_text(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
