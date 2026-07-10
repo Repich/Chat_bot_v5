@@ -215,12 +215,17 @@ class QuerySynthesisEngine:
         previous_query = ""
         previous_review: Dict[str, Any] = {}
         previous_result_insufficiency: Dict[str, Any] = {}
+        forbidden_metadata_sources: List[str] = []
         successful_steps: List[Dict[str, Any]] = []
         query_review_guidance = self.query_reviewer.guidance()
         trace["query_review_guidance"] = query_review_guidance
         max_total_attempts = self.max_repair_attempts + self.max_successful_steps + 2
         trace["max_total_attempts"] = max_total_attempts
         for attempt in range(1, max_total_attempts + 1):
+            if forbidden_metadata_sources:
+                metadata_objects = [
+                    item for item in metadata_objects if item.full_name not in forbidden_metadata_sources
+                ]
             try:
                 query_response = self.llm_client.complete_json(
                     system_prompt=self.prompt_catalog.query_prompt(self.bot_config),
@@ -236,6 +241,7 @@ class QuerySynthesisEngine:
                         "previous_error": previous_error,
                         "previous_query": previous_query,
                         "previous_query_review": previous_review,
+                        "forbidden_metadata_sources": list(forbidden_metadata_sources),
                         "previous_successful_steps": compact_successful_steps(successful_steps),
                         "previous_result_insufficiency": previous_result_insufficiency,
                         "query_review_rules": query_review_guidance,
@@ -348,10 +354,35 @@ class QuerySynthesisEngine:
                 metadata_objects=metadata_objects,
             )
             attempt_trace["query_review"] = query_review.to_dict()
+            current_review = query_review.to_dict()
+            repeated_invalid_sources = repeated_invalid_field_sources(
+                query=query,
+                previous_query=previous_query,
+                current_review=current_review,
+                previous_review=previous_review,
+            )
+            previous_review = current_review
             if not query_review.ok:
+                remaining_metadata = [
+                    item for item in metadata_objects if item.full_name not in repeated_invalid_sources
+                ]
+                if repeated_invalid_sources and remaining_metadata:
+                    for source_name in repeated_invalid_sources:
+                        add_unique(forbidden_metadata_sources, source_name)
+                    metadata_objects = remaining_metadata
+                    previous_error = (
+                        "Repeated query uses a field rejected by verified metadata. "
+                        "Do not use the excluded source(s): "
+                        + ", ".join(repeated_invalid_sources)
+                        + ". Build a different query from the remaining verified metadata objects."
+                    )
+                    previous_query = query
+                    attempt_trace["error"] = previous_error
+                    attempt_trace["repeated_invalid_metadata_sources"] = repeated_invalid_sources
+                    trace["forbidden_metadata_sources"] = list(forbidden_metadata_sources)
+                    continue
                 previous_error = "Query review failed: " + query_review.error_text()
                 previous_query = query
-                previous_review = query_review.to_dict()
                 attempt_trace["error"] = previous_error
                 extra_terms = metadata_terms_from_query_review(query_review)
                 if extra_terms:
@@ -378,8 +409,6 @@ class QuerySynthesisEngine:
                     onboarding_evidence = self._onboarding_evidence(combined_terms, metadata_objects)
                     trace["onboarding_evidence"] = onboarding_evidence
                 continue
-            previous_review = query_review.to_dict()
-
             semantic_issues = goal_semantic_review_issues(
                 query=query,
                 params=params,
@@ -1666,6 +1695,42 @@ def goal_semantic_review_issues(
             metadata_objects=metadata_objects,
         ))
     return issues
+
+
+def repeated_invalid_field_sources(
+    *,
+    query: str,
+    previous_query: str,
+    current_review: Dict[str, Any],
+    previous_review: Dict[str, Any],
+) -> List[str]:
+    if normalized_query_for_comparison(query) != normalized_query_for_comparison(previous_query):
+        return []
+    current_issues = invalid_field_issue_signatures(current_review)
+    previous_issues = invalid_field_issue_signatures(previous_review)
+    if not current_issues or current_issues != previous_issues:
+        return []
+    result: List[str] = []
+    for issue in current_review.get("issues", []) or []:
+        if not isinstance(issue, dict) or issue.get("code") != "field_not_confirmed_by_metadata":
+            continue
+        message = str(issue.get("message") or "").lower()
+        for source in current_review.get("sources", []) or []:
+            if not isinstance(source, dict):
+                continue
+            alias = str(source.get("alias") or "").strip()
+            object_name = str(source.get("object_full_name") or "").strip()
+            if alias and object_name and f"{alias.lower()}." in message:
+                add_unique(result, object_name)
+    return result
+
+
+def invalid_field_issue_signatures(review: Dict[str, Any]) -> List[str]:
+    return sorted(
+        f"{item.get('code')}:{item.get('message')}"
+        for item in review.get("issues", []) or []
+        if isinstance(item, dict) and item.get("code") == "field_not_confirmed_by_metadata"
+    )
 
 
 def repeats_partial_query(query: str, successful_steps: List[Dict[str, Any]]) -> bool:

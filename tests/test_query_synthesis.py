@@ -28,6 +28,7 @@ from wiicon5.query_synthesis.synthesizer import (
     collect_metadata_objects,
     expand_metadata_search_terms,
     goal_semantic_review_issues,
+    repeated_invalid_field_sources,
     postprocess_1c_query,
     rank_metadata_objects,
     search_terms_from_discovery,
@@ -240,6 +241,39 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("ТоварыИсточник.Номенклатура КАК Номенклатура", result)
         self.assertIn("СУММА(ТоварыИсточник.Количество)", result)
         self.assertNotIn(" КАК Товары ПО Товары.Ссылка", result)
+
+    def test_repeated_invalid_field_source_is_excluded_only_after_same_review_repeats(self) -> None:
+        review = {
+            "ok": False,
+            "issues": [
+                {
+                    "code": "field_not_confirmed_by_metadata",
+                    "message": "Поле Продажи.Номенклатура не подтверждено метаданными.",
+                }
+            ],
+            "sources": [
+                {
+                    "alias": "Продажи",
+                    "object_full_name": "РегистрНакопления.ВыручкаИСебестоимостьПродаж",
+                }
+            ],
+        }
+
+        repeated = repeated_invalid_field_sources(
+            query="ВЫБРАТЬ Продажи.Номенклатура ИЗ РегистрНакопления.Продажи КАК Продажи",
+            previous_query="ВЫБРАТЬ Продажи.Номенклатура ИЗ РегистрНакопления.Продажи КАК Продажи",
+            current_review=review,
+            previous_review=review,
+        )
+        changed_query = repeated_invalid_field_sources(
+            query="ВЫБРАТЬ Продажи.Период ИЗ РегистрНакопления.Продажи КАК Продажи",
+            previous_query="ВЫБРАТЬ Продажи.Номенклатура ИЗ РегистрНакопления.Продажи КАК Продажи",
+            current_review=review,
+            previous_review=review,
+        )
+
+        self.assertEqual(repeated, ["РегистрНакопления.ВыручкаИСебестоимостьПродаж"])
+        self.assertEqual(changed_query, [])
 
     def test_sufficiency_accepts_empty_debt_metric_as_found_no_debt_result(self) -> None:
         review = deterministic_partial_review(
@@ -1489,6 +1523,7 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertTrue(result.trace["attempts"][1]["query_review"]["ok"])
         self.assertIn("Документ.РеализацияТоваровУслуг.Товары", result.trace["attempts"][0]["metadata_repair_terms"])
         self.assertIn("Документ.РеализацияТоваровУслуг.Товары", [req["full_name"] for req in provider.requested_objects])
+        self.assertFalse(llm.calls[2]["user_payload"]["previous_query_review"]["ok"])
 
     def test_synthesis_repairs_query_after_safety_validation_error(self) -> None:
         llm = ScriptedLLMClient(
