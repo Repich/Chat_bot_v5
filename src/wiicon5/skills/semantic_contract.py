@@ -320,8 +320,10 @@ def semantic_contract_compatibility(
         else:
             if requested.ranking.direction and available.ranking.direction != requested.ranking.direction:
                 rejected.append("ranking_direction_mismatch")
-            if requested.ranking.by_measure and available.ranking.by_measure and not semantic_terms_match(
-                requested.ranking.by_measure, available.ranking.by_measure
+            if (
+                requested.ranking.by_measure
+                and available.ranking.by_measure
+                and not semantic_ranking_measures_match(requested, available)
             ):
                 rejected.append("ranking_measure_mismatch")
             if not rejected:
@@ -683,6 +685,45 @@ def semantic_measure_roles_match(left: str, right: str) -> bool:
     ) and all(
         any(semantic_terms_match(term, candidate) for candidate in left_specific)
         for term in right_specific
+    )
+
+
+def semantic_ranking_measures_match(
+    left: SemanticSkillContract,
+    right: SemanticSkillContract,
+) -> bool:
+    if semantic_measure_roles_match(left.ranking.by_measure, right.ranking.by_measure):
+        return True
+    left_measures = ranking_measure_candidates(left)
+    right_measures = ranking_measure_candidates(right)
+    return any(
+        semantic_measure_pair_matches(left_measure, right_measure)
+        for left_measure in left_measures
+        for right_measure in right_measures
+    )
+
+
+def ranking_measure_candidates(contract: SemanticSkillContract) -> List[SemanticMeasure]:
+    key = contract.ranking.by_measure
+    candidates = [
+        measure
+        for measure in contract.measures
+        if semantic_measure_roles_match(key, measure.role)
+        or semantic_terms_match(key, measure.result_column)
+    ]
+    if candidates:
+        return candidates
+    return list(contract.measures) if len(contract.measures) == 1 else []
+
+
+def semantic_measure_pair_matches(left: SemanticMeasure, right: SemanticMeasure) -> bool:
+    if left.aggregation and right.aggregation and left.aggregation != right.aggregation:
+        return False
+    return (
+        semantic_measure_roles_match(left.role, right.role)
+        or semantic_terms_match(left.result_column, right.result_column)
+        or semantic_terms_match(left.role, right.result_column)
+        or semantic_terms_match(left.result_column, right.role)
     )
 
 

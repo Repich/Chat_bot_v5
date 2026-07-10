@@ -12,6 +12,7 @@ from wiicon5.skills.semantic_contract import (
     SemanticSkillContract,
     contract_from_goal,
     semantic_contract_compatibility,
+    semantic_ranking_measures_match,
 )
 from wiicon5.skills.composer import SkillComposer
 from wiicon5.skills.registry import SkillRegistry
@@ -77,6 +78,26 @@ class SemanticSkillContractTests(unittest.TestCase):
 
         self.assertFalse(compatibility.compatible)
         self.assertIn("operation_mismatch:aggregate!=rank", compatibility.rejection_reasons)
+
+    def test_ranking_measure_matches_through_measure_result_columns(self) -> None:
+        requested = SemanticSkillContract(
+            operation="rank",
+            measures=[SemanticMeasure(role="quantity_sold", aggregation="sum", result_column="Количество")],
+            ranking=SemanticRanking(enabled=True, direction="desc", limit=1, by_measure="quantity_sold"),
+        )
+        observed = SemanticSkillContract(
+            operation="rank",
+            measures=[SemanticMeasure(role="количествопродано", aggregation="sum", result_column="КоличествоПродано")],
+            ranking=SemanticRanking(enabled=True, direction="desc", limit=1, by_measure="количествопродано"),
+        )
+        wrong_measure = SemanticSkillContract(
+            operation="rank",
+            measures=[SemanticMeasure(role="выручка", aggregation="sum", result_column="Выручка")],
+            ranking=SemanticRanking(enabled=True, direction="desc", limit=1, by_measure="выручка"),
+        )
+
+        self.assertTrue(semantic_ranking_measures_match(requested, observed))
+        self.assertFalse(semantic_ranking_measures_match(requested, wrong_measure))
 
     def test_lookup_can_use_list_but_list_cannot_use_single_lookup(self) -> None:
         lookup = SemanticSkillContract(operation="lookup")

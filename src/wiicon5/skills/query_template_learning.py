@@ -19,6 +19,7 @@ from wiicon5.skills.semantic_contract import (
     contract_from_goal,
     normalize_subject_term,
     semantic_contract_compatibility,
+    semantic_ranking_measures_match,
     semantic_subject_qualifiers,
     semantic_terms_match,
     subject_terms,
@@ -389,11 +390,19 @@ def query_contract_consistency_issues(spec: Mapping[str, Any]) -> List[str]:
             issues.append("query_ranking_direction_does_not_match_goal")
         if requested.ranking.limit and requested.ranking.limit != observed.ranking.limit:
             issues.append("query_ranking_limit_does_not_match_goal")
-        if requested.ranking.by_measure and observed.ranking.by_measure and not semantic_terms_match(
-            requested.ranking.by_measure,
-            observed.ranking.by_measure,
+        if (
+            requested.ranking.by_measure
+            and observed.ranking.by_measure
+            and not semantic_ranking_measures_match(requested, observed)
         ):
             issues.append("query_ranking_measure_does_not_match_goal")
+    missing_result_columns = [
+        column
+        for column in requested.result_columns
+        if not any(semantic_terms_match(column, observed_column) for observed_column in observed.result_columns)
+    ]
+    if missing_result_columns:
+        issues.append("query_result_columns_do_not_match_goal")
     if requested.operation == "rank" and observed.operation != "rank":
         issues.append("query_operation_does_not_match_goal")
     return issues

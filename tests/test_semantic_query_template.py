@@ -10,7 +10,7 @@ from wiicon5.query.parameterized_lookup import build_parameterized_lookup_params
 from wiicon5.query_synthesis import QuerySynthesisResult
 from wiicon5.skills.learning_gate import evaluate_learning_gate
 from wiicon5.skills.query_template_learning import semantic_query_template_spec, skill_from_semantic_template
-from wiicon5.skills.semantic_contract import SemanticMeasure, SemanticSkillContract
+from wiicon5.skills.semantic_contract import SemanticMeasure, SemanticRanking, SemanticSkillContract
 
 
 class SemanticQueryTemplateTests(unittest.TestCase):
@@ -368,6 +368,65 @@ class SemanticQueryTemplateTests(unittest.TestCase):
             query=query,
             params=params,
             limit=10,
+            intent=intent,
+            goal=goal,
+            trace=trace,
+        )
+        assert spec is not None
+
+        gate = evaluate_learning_gate(
+            intent=intent,
+            goal=goal,
+            synthesis_result=QuerySynthesisResult(ok=True, trace=trace),
+            spec=spec,
+            config_fingerprint="cfg_test",
+        )
+
+        self.assertTrue(gate.ok, gate.errors)
+
+    def test_ranked_query_matches_goal_measure_through_output_column(self) -> None:
+        question = "Покажи самый продаваемый товар за 2024 год по количеству"
+        intent = data_intent(question)
+        goal = GoalDecomposition(
+            business_goal=question,
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="top_product",
+                    type="TopNMetricTable",
+                    constraints=[SemanticFilter("year", "equals", "2024", "2024 год")],
+                    required_columns=["Номенклатура", "Количество"],
+                )
+            ],
+            semantic_contract=SemanticSkillContract(
+                subject_terms=["товар", "продажи"],
+                operation="rank",
+                measures=[SemanticMeasure(role="quantity_sold", aggregation="sum", result_column="Количество")],
+                required_filter_roles=["year"],
+                result_columns=["Номенклатура", "Количество"],
+                ranking=SemanticRanking(enabled=True, direction="desc", limit=1, by_measure="quantity_sold"),
+            ).to_dict(),
+        )
+        query = (
+            "ВЫБРАТЬ ПЕРВЫЕ 1 Товары.Номенклатура КАК Номенклатура, "
+            "СУММА(Товары.Количество) КАК КоличествоПродано "
+            "ИЗ Документ.РеализацияТоваровУслуг.Товары КАК Товары "
+            "ГДЕ Товары.Ссылка.Дата МЕЖДУ &НачПериода И &КонПериода "
+            "СГРУППИРОВАТЬ ПО Товары.Номенклатура "
+            "УПОРЯДОЧИТЬ ПО КоличествоПродано УБЫВ"
+        )
+        params = {"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"}
+        trace = successful_trace(
+            query,
+            ["Номенклатура", "КоличествоПродано"],
+            [{"Номенклатура": "Товар", "КоличествоПродано": 10}],
+        )
+        trace["final_query"]["params"] = params
+        trace["successful_steps"][0]["params"] = params
+        spec = semantic_query_template_spec(
+            query=query,
+            params=params,
+            limit=1,
             intent=intent,
             goal=goal,
             trace=trace,
