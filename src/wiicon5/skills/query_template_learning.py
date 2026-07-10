@@ -63,7 +63,7 @@ def semantic_query_template_spec(
         fixed_filter_values=fixed_values,
         result_columns=unique([*requested_contract.result_columns, *output_columns]),
         source_objects=sources,
-        match_mode=template_match_mode(requested_contract, parameter_bindings, params),
+        match_mode=template_match_mode(requested_contract, parameter_bindings, params, sources),
         original_question=requested_contract.original_question or intent.business_goal,
         confidence=max(requested_contract.confidence, 0.75),
     )
@@ -291,6 +291,7 @@ def template_match_mode(
     contract: SemanticSkillContract,
     parameter_bindings: Sequence[Mapping[str, Any]],
     params: Mapping[str, Any],
+    source_objects: Sequence[str] = (),
 ) -> str:
     specific_measures = [
         item
@@ -307,6 +308,14 @@ def template_match_mode(
     variable_roles = set(contract.required_filter_roles) - set(contract.fixed_filter_values)
     if variable_roles - bound_roles:
         return "exact"
+    unsafe_fixed_roles = [
+        role
+        for role, value in contract.fixed_filter_values.items()
+        if role not in bound_roles
+        and not fixed_filter_semantically_bound(value, contract=contract, source_objects=source_objects)
+    ]
+    if unsafe_fixed_roles:
+        return "exact"
     return "generalized"
 
 
@@ -314,6 +323,18 @@ def safe_fixed_object_ref_params(values: Sequence[Any], contract: SemanticSkillC
     return bool(semantic_subject_qualifiers(contract)) and all(
         isinstance(value, Mapping) and bool(value.get("_objectRef"))
         for value in values
+    )
+
+
+def fixed_filter_semantically_bound(
+    value: str,
+    *,
+    contract: SemanticSkillContract,
+    source_objects: Sequence[str],
+) -> bool:
+    return any(
+        semantic_terms_match(value, candidate)
+        for candidate in [*semantic_subject_qualifiers(contract), *source_objects]
     )
 
 

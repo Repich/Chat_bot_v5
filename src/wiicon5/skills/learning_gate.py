@@ -7,6 +7,7 @@ from wiicon5.intent.models import IntentResult
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query_synthesis import QuerySynthesisResult
+from wiicon5.query_synthesis.goal_contract_review import goal_filter_contract_issues
 from wiicon5.skills.query_template_learning import (
     LEARNED_QUERY_SCHEMA_VERSION,
     query_contract_consistency_issues,
@@ -94,6 +95,20 @@ def evaluate_learning_gate(
         )
     )
 
+    goal_filter_issues = goal_filter_contract_issues(
+        query=query,
+        params=params,
+        original_params=original_query_params(synthesis_result.trace, query),
+        goal=goal,
+    )
+    checks.append(
+        LearningGateCheck(
+            "goal_filters_reflected_and_parameterized",
+            not goal_filter_issues,
+            {"issues": goal_filter_issues},
+        )
+    )
+
     sufficiency = final_sufficiency_review(synthesis_result.trace)
     sufficiency_ok = bool(sufficiency.get("sufficient")) and not bool(sufficiency.get("needs_clarification")) and not str(
         sufficiency.get("error") or ""
@@ -178,3 +193,20 @@ def compact_sufficiency(review: Mapping[str, Any]) -> Dict[str, Any]:
 
 def normalized_query(query: str) -> str:
     return " ".join(query.lower().split())
+
+
+def original_query_params(trace: Mapping[str, Any], final_query: str) -> Dict[str, Any]:
+    expected = normalized_query(final_query)
+    for collection_name in ["failure_solver_attempts", "attempts"]:
+        attempts = trace.get(collection_name)
+        if not isinstance(attempts, list):
+            continue
+        for attempt in reversed(attempts):
+            if not isinstance(attempt, Mapping):
+                continue
+            if normalized_query(str(attempt.get("query") or "")) != expected:
+                continue
+            response = attempt.get("query_response")
+            if isinstance(response, Mapping) and isinstance(response.get("params"), Mapping):
+                return dict(response["params"])
+    return {}

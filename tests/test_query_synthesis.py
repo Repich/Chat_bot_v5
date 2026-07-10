@@ -1830,6 +1830,114 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("по количеству", issue["clarification_options"])
         self.assertIn("по выручке", issue["clarification_options"])
 
+    def test_semantic_review_requires_user_year_literal_to_be_parameterized(self) -> None:
+        goal = GoalDecomposition(
+            business_goal="Получить документы за 2024 год",
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="documents",
+                    type="DocumentList",
+                    constraints=[SemanticFilter("year", "equals", "2024", "2024 год")],
+                    required_columns=["Ссылка"],
+                )
+            ],
+            semantic_contract={
+                "schema_version": 2,
+                "subject_terms": ["документы"],
+                "operation": "list",
+                "required_filter_roles": ["year"],
+                "fixed_filter_values": {"year": "2024"},
+            },
+        )
+
+        issues = goal_semantic_review_issues(
+            query=(
+                "ВЫБРАТЬ Документы.Ссылка КАК Ссылка ИЗ Документ.Заказ КАК Документы "
+                "ГДЕ Документы.Дата МЕЖДУ ДАТАВРЕМЯ(2024, 1, 1) И ДАТАВРЕМЯ(2024, 12, 31)"
+            ),
+            params={},
+            goal=goal,
+            message=goal.business_goal,
+            intent=data_intent(goal.business_goal),
+            metadata_objects=[],
+            domain_hint_packs=["one_c_standard"],
+        )
+
+        self.assertIn("goal_filter_literal_not_parameterized", {item["code"] for item in issues})
+
+    def test_semantic_review_accepts_user_year_in_period_parameters(self) -> None:
+        goal = GoalDecomposition(
+            business_goal="Получить документы за 2024 год",
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="documents",
+                    type="DocumentList",
+                    constraints=[SemanticFilter("year", "equals", "2024", "2024 год")],
+                    required_columns=["Ссылка"],
+                )
+            ],
+            semantic_contract={
+                "schema_version": 2,
+                "subject_terms": ["документы"],
+                "operation": "list",
+                "required_filter_roles": ["year"],
+                "fixed_filter_values": {"year": "2024"},
+            },
+        )
+
+        issues = goal_semantic_review_issues(
+            query=(
+                "ВЫБРАТЬ Документы.Ссылка КАК Ссылка ИЗ Документ.Заказ КАК Документы "
+                "ГДЕ Документы.Дата МЕЖДУ &НачалоПериода И &КонецПериода"
+            ),
+            params={
+                "НачалоПериода": "2024-01-01T00:00:00",
+                "КонецПериода": "2024-12-31T23:59:59",
+            },
+            goal=goal,
+            message=goal.business_goal,
+            intent=data_intent(goal.business_goal),
+            metadata_objects=[],
+            domain_hint_packs=["one_c_standard"],
+        )
+
+        self.assertNotIn("goal_filter_literal_not_parameterized", {item["code"] for item in issues})
+        self.assertNotIn("goal_filter_not_reflected", {item["code"] for item in issues})
+
+    def test_semantic_review_rejects_required_filter_missing_from_query(self) -> None:
+        goal = GoalDecomposition(
+            business_goal="Получить документы за 2024 год",
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="documents",
+                    type="DocumentList",
+                    constraints=[SemanticFilter("year", "equals", "2024", "2024 год")],
+                )
+            ],
+            semantic_contract={
+                "schema_version": 2,
+                "subject_terms": ["документы"],
+                "operation": "list",
+                "required_filter_roles": ["year"],
+                "fixed_filter_values": {"year": "2024"},
+            },
+        )
+
+        issues = goal_semantic_review_issues(
+            query="ВЫБРАТЬ Документы.Ссылка КАК Ссылка ИЗ Документ.Заказ КАК Документы",
+            params={},
+            goal=goal,
+            message=goal.business_goal,
+            intent=data_intent(goal.business_goal),
+            metadata_objects=[],
+            domain_hint_packs=["one_c_standard"],
+        )
+
+        self.assertIn("goal_filter_not_reflected", {item["code"] for item in issues})
+
     def test_synthesis_returns_clarification_for_ambiguous_top_sold_product_metric(self) -> None:
         llm = ScriptedLLMClient(
             [

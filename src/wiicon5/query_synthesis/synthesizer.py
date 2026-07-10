@@ -41,6 +41,7 @@ from wiicon5.query_synthesis.failure_solver import (
     FailureSolverDecision,
     failure_diagnostic_payload,
 )
+from wiicon5.query_synthesis.goal_contract_review import goal_filter_contract_issues
 from wiicon5.query_synthesis.metadata_ranking import CompositeMetadataRankingPolicy, MetadataRankingPolicy
 from wiicon5.query_synthesis.semantic_review import (
     clarification_issue,
@@ -90,7 +91,6 @@ NON_QUERY_SOURCE_PREFIXES = (
     "ОбщаяКартинка.",
     "ОпределяемыйТип.",
 )
-
 
 @dataclass(frozen=True)
 class QuerySynthesisResult:
@@ -260,6 +260,7 @@ class QuerySynthesisEngine:
             raw_query = str(query_response.get("query") or "").strip()
             query = postprocess_1c_query(raw_query)
             params = query_response.get("params") if isinstance(query_response.get("params"), dict) else {}
+            model_params = dict(params)
             limit = limit_from_value(query_response.get("limit"))
             attempt_trace = {
                 "attempt": attempt,
@@ -382,6 +383,7 @@ class QuerySynthesisEngine:
             semantic_issues = goal_semantic_review_issues(
                 query=query,
                 params=params,
+                original_params=model_params,
                 goal=goal,
                 message=message,
                 intent=intent,
@@ -749,6 +751,7 @@ class QuerySynthesisEngine:
         raw_query = decision.query.strip()
         query = postprocess_1c_query(raw_query)
         params = dict(decision.params)
+        model_params = dict(params)
         limit = limit_from_value(decision.limit)
         attempt_trace: Dict[str, Any] = {
             "source": "failure_solver",
@@ -836,6 +839,7 @@ class QuerySynthesisEngine:
         semantic_issues = goal_semantic_review_issues(
             query=query,
             params=params,
+            original_params=model_params,
             goal=goal,
             message=message,
             intent=intent,
@@ -1643,8 +1647,14 @@ def goal_semantic_review_issues(
     intent: Optional[IntentResult] = None,
     metadata_objects: List[MetadataObject],
     domain_hint_packs: Optional[List[str]] = None,
+    original_params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    issues: List[Dict[str, Any]] = []
+    issues = goal_filter_contract_issues(
+        query=query,
+        params=params,
+        original_params=original_params or params,
+        goal=goal,
+    )
     packs = domain_hint_packs if domain_hint_packs is not None else BotInstanceConfig.default().domain_hint_packs
     if "trade_ru" in packs:
         issues.extend(trade_ru_semantic_review_issues(

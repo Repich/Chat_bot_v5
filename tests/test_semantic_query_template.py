@@ -84,6 +84,7 @@ class SemanticQueryTemplateTests(unittest.TestCase):
         self.assertIn("НЕ Номенклатура.ПометкаУдаления", spec["query"])
         self.assertIn("РегистрНакопления.Продажи", spec["metadata_dependencies"])
         self.assertEqual({item["semantic_field"] for item in spec["parameter_bindings"]}, {"year"})
+        self.assertEqual(spec["semantic_contract"]["match_mode"], "generalized")
         skill = skill_from_semantic_template(spec, intent=intent, goal=goal)
         self.assertEqual(skill.outputs[0].type, "TopNMetricTable")
         self.assertEqual(skill.implementation["kind"], "semantic_query_template")
@@ -213,6 +214,61 @@ class SemanticQueryTemplateTests(unittest.TestCase):
         assert spec is not None
         self.assertEqual(spec["semantic_contract"]["match_mode"], "exact")
 
+    def test_hardcoded_user_year_forces_exact_match_mode(self) -> None:
+        question = "Покажи сумму реализаций за 2024 год"
+        intent = data_intent(question)
+        goal = GoalDecomposition(
+            business_goal=question,
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="sales",
+                    type="AggregateTable",
+                    constraints=[
+                        SemanticFilter("document_type", "equals", "реализация", "реализаций"),
+                        SemanticFilter("year", "equals", "2024", "2024 год"),
+                    ],
+                    required_columns=["Сумма"],
+                )
+            ],
+            semantic_contract=SemanticSkillContract(
+                subject_terms=["реализация", "сумма"],
+                operation="aggregate",
+                measures=[SemanticMeasure(role="сумма документа", aggregation="sum", result_column="Сумма")],
+                grain=["document"],
+                required_filter_roles=["document_type", "year"],
+                fixed_filter_values={"document_type": "реализация", "year": "2024"},
+                result_columns=["Сумма"],
+            ).to_dict(),
+        )
+        query = (
+            "ВЫБРАТЬ СУММА(Реализация.СуммаДокумента) КАК Сумма "
+            "ИЗ Документ.РеализацияТоваровУслуг КАК Реализация "
+            "ГДЕ Реализация.Дата МЕЖДУ ДАТАВРЕМЯ(2024, 1, 1) И ДАТАВРЕМЯ(2024, 12, 31)"
+        )
+        trace = successful_trace(query, ["Сумма"], [{"Сумма": 100}])
+
+        spec = semantic_query_template_spec(
+            query=query,
+            params={},
+            limit=1,
+            intent=intent,
+            goal=goal,
+            trace=trace,
+        )
+
+        assert spec is not None
+        self.assertEqual(spec["semantic_contract"]["match_mode"], "exact")
+        gate = evaluate_learning_gate(
+            intent=intent,
+            goal=goal,
+            synthesis_result=QuerySynthesisResult(ok=True, trace=trace),
+            spec=spec,
+            config_fingerprint="cfg_test",
+        )
+        self.assertFalse(gate.ok)
+        self.assertIn("goal_filters_reflected_and_parameterized", gate.errors)
+
     def test_fixed_object_ref_parameter_with_subject_qualifier_remains_generalized(self) -> None:
         question = "Покажи розничные цены на пальто"
         intent = data_intent(question)
@@ -286,13 +342,17 @@ class SemanticQueryTemplateTests(unittest.TestCase):
             "ВЫБРАТЬ ПЕРВЫЕ 10 Продажи.Номенклатура КАК Номенклатура, "
             "СУММА(Продажи.Количество) КАК Количество "
             "ИЗ РегистрНакопления.Продажи КАК Продажи "
+            "ГДЕ Продажи.Период МЕЖДУ &НачПериода И &КонПериода "
             "СГРУППИРОВАТЬ ПО Продажи.Номенклатура "
             "УПОРЯДОЧИТЬ ПО Количество УБЫВ"
         )
         trace = successful_trace(query, ["Номенклатура", "Количество"], [{"Номенклатура": "Товар", "Количество": 10}])
+        params = {"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"}
+        trace["final_query"]["params"] = params
+        trace["successful_steps"][0]["params"] = params
         spec = semantic_query_template_spec(
             query=query,
-            params={},
+            params=params,
             limit=10,
             intent=intent,
             goal=goal,
