@@ -55,6 +55,40 @@ class MvpEvaluationTests(unittest.TestCase):
         self.assertEqual(result.case_results[0].created_skill_ids, [])
         self.assertEqual(result.to_dict()["summary"]["warm_skill_plan_rate"], 1.0)
 
+    def test_agent_factory_isolates_each_case(self) -> None:
+        agents = []
+
+        def factory(case):
+            created = ScriptedLearningAgent(reuse=True)
+            agents.append(created)
+            return created
+
+        cases = [
+            MvpEvaluationCase("first", "cold one", "warm one"),
+            MvpEvaluationCase("second", "cold two", "warm two"),
+        ]
+
+        result = run_mvp_evaluation(cases, agent_factory=factory)
+
+        self.assertTrue(result.ok, result.to_dict())
+        self.assertEqual(len(agents), 2)
+        self.assertEqual([item.calls for item in agents], [2, 2])
+
+    def test_agent_exception_is_reported_without_aborting_suite(self) -> None:
+        cases = [
+            MvpEvaluationCase("broken", "cold", "warm"),
+            MvpEvaluationCase("healthy", "cold", "warm"),
+        ]
+
+        result = run_mvp_evaluation(
+            cases,
+            agent_factory=lambda case: RaisingAgent() if case.case_id == "broken" else ScriptedLearningAgent(reuse=True),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("cold_exception:RuntimeError:boom", result.case_results[0].issues)
+        self.assertTrue(result.case_results[1].ok)
+
 
 class ScriptedLearningAgent:
     def __init__(self, *, reuse: bool) -> None:
@@ -114,6 +148,14 @@ class ScriptedExistingSkillAgent:
             intent=intent,
             plan=plan,
         )
+
+
+class RaisingAgent:
+    def __init__(self) -> None:
+        self.registry = SkillRegistry()
+
+    def handle(self, question: str, *, session_id: str) -> AgentRunResult:
+        raise RuntimeError("boom")
 
 
 def learned_skill() -> SkillContract:

@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 from uuid import uuid4
 
 
@@ -125,7 +125,14 @@ def load_mvp_cases(path: Path) -> List[MvpEvaluationCase]:
     return [MvpEvaluationCase.from_dict(item) for item in items if isinstance(item, Mapping)]
 
 
-def run_mvp_evaluation(cases: Iterable[MvpEvaluationCase], agent) -> MvpEvaluationResult:
+def run_mvp_evaluation(
+    cases: Iterable[MvpEvaluationCase],
+    agent=None,
+    *,
+    agent_factory: Optional[Callable[[MvpEvaluationCase], Any]] = None,
+) -> MvpEvaluationResult:
+    if agent is None and agent_factory is None:
+        raise ValueError("agent_or_agent_factory_required")
     run_id = uuid4().hex
     started_at = utc_iso()
     results: List[MvpEvaluationCaseResult] = []
@@ -141,11 +148,34 @@ def run_mvp_evaluation(cases: Iterable[MvpEvaluationCase], agent) -> MvpEvaluati
                 )
             )
             continue
-        before = learned_skill_ids(agent)
-        cold = agent.handle(case.cold_question, session_id=f"mvp-{run_id}-{index}-cold")
-        after_cold = learned_skill_ids(agent)
+        try:
+            case_agent = agent_factory(case) if agent_factory is not None else agent
+        except Exception as exc:
+            results.append(exception_case_result(case, "agent_factory", exc))
+            continue
+        before = learned_skill_ids(case_agent)
+        try:
+            cold = case_agent.handle(case.cold_question, session_id=f"mvp-{run_id}-{index}-cold")
+        except Exception as exc:
+            results.append(exception_case_result(case, "cold", exc))
+            continue
+        after_cold = learned_skill_ids(case_agent)
         created = sorted(after_cold - before)
-        warm = agent.handle(case.warm_question, session_id=f"mvp-{run_id}-{index}-warm")
+        try:
+            warm = case_agent.handle(case.warm_question, session_id=f"mvp-{run_id}-{index}-warm")
+        except Exception as exc:
+            results.append(
+                MvpEvaluationCaseResult(
+                    case_id=case.case_id,
+                    ok=False,
+                    warm_expectation=case.warm_expectation,
+                    cold_source=cold.source,
+                    created_skill_ids=created,
+                    cold_trace_path=str(cold.trace_path or ""),
+                    issues=[exception_issue("warm", exc)],
+                )
+            )
+            continue
         warm_plan_ids = plan_skill_ids(warm)
         reused = sorted(set(warm_plan_ids) & set(created))
         issues: List[str] = []
@@ -187,6 +217,24 @@ def run_mvp_evaluation(cases: Iterable[MvpEvaluationCase], agent) -> MvpEvaluati
         finished_at=utc_iso(),
         case_results=results,
     )
+
+
+def exception_case_result(
+    case: MvpEvaluationCase,
+    stage: str,
+    exc: Exception,
+) -> MvpEvaluationCaseResult:
+    return MvpEvaluationCaseResult(
+        case_id=case.case_id,
+        ok=False,
+        warm_expectation=case.warm_expectation,
+        issues=[exception_issue(stage, exc)],
+    )
+
+
+def exception_issue(stage: str, exc: Exception) -> str:
+    message = " ".join(str(exc).split())[:500]
+    return f"{stage}_exception:{type(exc).__name__}:{message}"
 
 
 def learned_skill_ids(agent) -> set[str]:

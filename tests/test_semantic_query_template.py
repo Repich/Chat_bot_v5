@@ -175,6 +175,49 @@ class SemanticQueryTemplateTests(unittest.TestCase):
         assert spec is not None
         self.assertEqual(spec["semantic_contract"]["match_mode"], "exact")
 
+    def test_ranked_query_passes_learning_gate(self) -> None:
+        question = "Покажи топ 10 товаров по количеству продаж за 2024 год"
+        intent = data_intent(question)
+        goal = GoalDecomposition(
+            business_goal=question,
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="top_products",
+                    type="TopNMetricTable",
+                    constraints=[SemanticFilter("year", "equals", "2024", "2024 год")],
+                    required_columns=["Номенклатура", "Количество"],
+                )
+            ],
+        )
+        query = (
+            "ВЫБРАТЬ ПЕРВЫЕ 10 Продажи.Номенклатура КАК Номенклатура, "
+            "СУММА(Продажи.Количество) КАК Количество "
+            "ИЗ РегистрНакопления.Продажи КАК Продажи "
+            "СГРУППИРОВАТЬ ПО Продажи.Номенклатура "
+            "УПОРЯДОЧИТЬ ПО Количество УБЫВ"
+        )
+        trace = successful_trace(query, ["Номенклатура", "Количество"], [{"Номенклатура": "Товар", "Количество": 10}])
+        spec = semantic_query_template_spec(
+            query=query,
+            params={},
+            limit=10,
+            intent=intent,
+            goal=goal,
+            trace=trace,
+        )
+        assert spec is not None
+
+        gate = evaluate_learning_gate(
+            intent=intent,
+            goal=goal,
+            synthesis_result=QuerySynthesisResult(ok=True, trace=trace),
+            spec=spec,
+            config_fingerprint="cfg_test",
+        )
+
+        self.assertTrue(gate.ok, gate.errors)
+
 
 def data_intent(question: str) -> IntentResult:
     return IntentResult(

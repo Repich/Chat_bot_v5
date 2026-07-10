@@ -19,6 +19,7 @@ from wiicon5.skills.semantic_contract import (
     contract_from_goal,
     normalize_subject_term,
     semantic_contract_compatibility,
+    semantic_terms_match,
     subject_terms,
     unique,
 )

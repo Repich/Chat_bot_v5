@@ -28,10 +28,25 @@ ROLE_ALIASES = {
     "тип_цены": "price_type",
 }
 
+ENTITY_IDENTITY_SUFFIXES = (
+    "_name",
+    "_ref",
+    "_reference",
+    "_наименование",
+    "_ссылка",
+)
+
 
 def canonical_role(value: Any) -> str:
     role = str(value or "").strip().lower()
-    return ROLE_ALIASES.get(role, role)
+    aliased = ROLE_ALIASES.get(role)
+    if aliased:
+        return aliased
+    for suffix in ENTITY_IDENTITY_SUFFIXES:
+        if role.endswith(suffix) and len(role) > len(suffix):
+            base = role[: -len(suffix)]
+            return ROLE_ALIASES.get(base, base)
+    return role
 
 
 def roles_match(left: Any, right: Any) -> bool:
