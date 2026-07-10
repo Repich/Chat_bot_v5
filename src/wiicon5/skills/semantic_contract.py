@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from wiicon5.intent.models import IntentResult
@@ -209,7 +209,7 @@ def contract_from_goal(intent: Optional[IntentResult], goal: Optional[GoalDecomp
     if isinstance(explicit, Mapping) and explicit:
         parsed = SemanticSkillContract.from_dict(explicit)
         if parsed.current:
-            return parsed
+            return sanitize_explicit_subject_terms(parsed, explicit, goal_constraints(goal))
 
     intent_business_goal = intent.business_goal if intent is not None else ""
     intent_domain_terms = intent.domain_terms if intent is not None else []
@@ -325,7 +325,7 @@ def semantic_contract_compatibility(
         if not requested_value:
             rejected.append(f"fixed_filter_missing:{role}")
             continue
-        if not semantic_terms_match(requested_value, expected_value):
+        if not fixed_filter_values_match(requested_value, expected_value):
             rejected.append(f"fixed_filter_mismatch:{role}")
     if available.fixed_filter_values and not any(item.startswith("fixed_filter_") for item in rejected):
         reasons.append("fixed_filters_match")
@@ -526,6 +526,33 @@ def tokenized_subject_terms(value: Any) -> List[str]:
     )
 
 
+def sanitize_explicit_subject_terms(
+    contract: SemanticSkillContract,
+    payload: Mapping[str, Any],
+    constraints: Sequence[SemanticFilter],
+) -> SemanticSkillContract:
+    """Remove current parameter values that an LLM copied into the reusable subject."""
+
+    excluded: set[str] = set()
+    for constraint in constraints:
+        excluded.update(tokenized_subject_terms(constraint.value))
+        excluded.update(tokenized_subject_terms(constraint.raw_user_text))
+
+    raw_terms = payload.get("subject_terms")
+    if not excluded or not isinstance(raw_terms, list):
+        return contract
+
+    retained: List[str] = []
+    for raw_term in raw_terms:
+        tokens = tokenized_subject_terms(raw_term)
+        if tokens and all(token in excluded for token in tokens):
+            continue
+        normalized = normalize_subject_term(raw_term)
+        if normalized and not normalized.isdigit() and normalized not in GENERIC_SUBJECT_WORDS:
+            retained.append(normalized)
+    return replace(contract, subject_terms=unique(retained))
+
+
 def canonical_aggregation(value: Any) -> str:
     normalized = normalize_semantic_text(value)
     aliases = {
@@ -597,6 +624,12 @@ def semantic_terms_match(left: str, right: str) -> bool:
     return min(len(left_norm), len(right_norm)) >= 5 and (
         left_norm in right_norm or right_norm in left_norm or left_norm[:5] == right_norm[:5]
     )
+
+
+def fixed_filter_values_match(left: Any, right: Any) -> bool:
+    left_norm = re.sub(r"[^0-9a-zа-я]+", "", normalize_semantic_text(left))
+    right_norm = re.sub(r"[^0-9a-zа-я]+", "", normalize_semantic_text(right))
+    return bool(left_norm and right_norm and left_norm == right_norm)
 
 
 def column_names_match(left: str, right: str) -> bool:

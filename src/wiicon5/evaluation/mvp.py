@@ -37,7 +37,7 @@ class MvpEvaluationCase:
             errors.append("cold_question_missing")
         if not self.warm_question:
             errors.append("warm_question_missing")
-        if self.warm_expectation not in {"reuse_new_skill", "do_not_reuse_new_skill"}:
+        if self.warm_expectation not in {"reuse_new_skill", "reuse_any_skill", "do_not_reuse_new_skill"}:
             errors.append("warm_expectation_invalid")
         return errors
 
@@ -82,6 +82,11 @@ class MvpEvaluationResult:
 
     def to_dict(self) -> Dict[str, Any]:
         positive = [item for item in self.case_results if item.warm_expectation == "reuse_new_skill"]
+        reusable = [
+            item
+            for item in self.case_results
+            if item.warm_expectation in {"reuse_new_skill", "reuse_any_skill"}
+        ]
         return {
             "run_id": self.run_id,
             "ok": self.ok,
@@ -102,6 +107,10 @@ class MvpEvaluationResult:
                 "created_skill_reuse_rate": ratio(
                     sum(1 for item in positive if item.reused_created_skill_ids),
                     len(positive),
+                ),
+                "warm_skill_plan_rate": ratio(
+                    sum(1 for item in reusable if item.warm_source == "skill_execution_ok" and item.warm_plan_skill_ids),
+                    len(reusable),
                 ),
             },
             "cases": [item.to_dict() for item in self.case_results],
@@ -150,6 +159,9 @@ def run_mvp_evaluation(cases: Iterable[MvpEvaluationCase], agent) -> MvpEvaluati
             if not reused:
                 issues.append("created_skill_not_reused")
             if warm.source != "skill_execution_ok":
+                issues.append(f"warm_did_not_use_skill:{warm.source}")
+        elif case.warm_expectation == "reuse_any_skill":
+            if warm.source != "skill_execution_ok" or not warm_plan_ids:
                 issues.append(f"warm_did_not_use_skill:{warm.source}")
         elif reused:
             issues.append("false_reuse_of_cold_skill")

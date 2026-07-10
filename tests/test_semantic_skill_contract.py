@@ -182,6 +182,70 @@ class SemanticSkillContractTests(unittest.TestCase):
         self.assertFalse(compatibility.compatible)
         self.assertIn("fixed_filter_mismatch:document_type", compatibility.rejection_reasons)
 
+    def test_fixed_filter_comparison_is_not_substring_based(self) -> None:
+        available = SemanticSkillContract(
+            subject_terms=["реализация"],
+            operation="list",
+            required_filter_roles=["document_type"],
+            fixed_filter_values={"document_type": "Реализация товаров и услуг"},
+        )
+        negative_probe = SemanticSkillContract.from_dict(
+            {
+                **available.to_dict(),
+                "fixed_filter_values": {"document_type": "Реализация товаров и услуг другое"},
+            }
+        )
+
+        compatibility = semantic_contract_compatibility(negative_probe, available)
+
+        self.assertFalse(compatibility.compatible)
+        self.assertIn("fixed_filter_mismatch:document_type", compatibility.rejection_reasons)
+
+    def test_fixed_filter_comparison_ignores_case_and_spacing_only(self) -> None:
+        available = SemanticSkillContract(
+            subject_terms=["реализация"],
+            operation="list",
+            required_filter_roles=["document_type"],
+            fixed_filter_values={"document_type": "Реализация товаров и услуг"},
+        )
+        requested = SemanticSkillContract.from_dict(
+            {
+                **available.to_dict(),
+                "fixed_filter_values": {"document_type": "  реализация   ТОВАРОВ и услуг "},
+            }
+        )
+
+        compatibility = semantic_contract_compatibility(requested, available)
+
+        self.assertTrue(compatibility.compatible, compatibility.rejection_reasons)
+
+    def test_explicit_contract_drops_filter_values_from_subject(self) -> None:
+        explicit = SemanticSkillContract(
+            subject_terms=["остатки", "куртки", "розничный склад"],
+            operation="balance",
+            required_filter_roles=["product", "warehouse_type"],
+        ).to_dict()
+        explicit["subject_terms"] = ["остатки", "куртки", "розничный склад"]
+        goal = GoalDecomposition(
+            business_goal="Покажи остатки курток на розничном складе",
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="stock",
+                    type="StockTable",
+                    constraints=[
+                        SemanticFilter("product", "contains", "куртки", "куртки"),
+                        SemanticFilter("warehouse_type", "equals", "розничный склад", "розничный склад"),
+                    ],
+                )
+            ],
+            semantic_contract=explicit,
+        )
+
+        parsed = contract_from_goal(data_intent(goal.business_goal), goal)
+
+        self.assertEqual(parsed.subject_terms, ["остатк"])
+
     def test_explicit_contract_from_decomposer_is_preserved(self) -> None:
         explicit = SemanticSkillContract(
             subject_terms=["касса"],

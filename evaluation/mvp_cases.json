@@ -20,14 +20,14 @@
       "description": "Меняется товар при неизменном складском срезе.",
       "cold_question": "Покажи остатки курток на розничном складе",
       "warm_question": "Покажи остатки ботинок на розничном складе",
-      "warm_expectation": "reuse_new_skill"
+      "warm_expectation": "reuse_any_skill"
     },
     {
       "case_id": "document_list_year_reuse",
       "description": "Одинаковый тип документа, меняется период.",
       "cold_question": "Покажи все приходные кассовые ордера за 2023 год",
       "warm_question": "Покажи все приходные кассовые ордера за 2024 год",
-      "warm_expectation": "reuse_new_skill"
+      "warm_expectation": "reuse_any_skill"
     },
     {
       "case_id": "top_sales_year_reuse",

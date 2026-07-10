@@ -9,6 +9,8 @@
 - Торговые semantic review и metadata ranking rules изолированы в domain pack trade_ru и не применяются к universal bot profile.
 - Узкие text classifiers детализации и агрегации заменены структурированным semantic_contract от decomposition LLM.
 - Добавлен изолированный cold/warm MVP evaluation runner, пять положительных и пять отрицательных пар, метрики reuse/false reuse и документ с критериями приемки MVP.
+- Fixed filter values в semantic contract сравниваются по строгому нормализованному равенству, поэтому отрицательная проба больше не принимает значение с совпадающей подстрокой; значения текущих product/warehouse/year-фильтров удаляются из subject_terms.
+- MVP evaluation различает переиспользование нового learned skill и корректное переиспользование уже существующего seed/learned skill, не требуя бессмысленного повторного обучения.
 - Локальные evidence, quarantined skills, evaluation results и diagnostic bundles исключены из Git.
 - Полный regression suite расширен тестами semantic compatibility, full query preservation, learning gate, quarantine, fail-closed sufficiency, post-reuse health и MVP evaluation.
 

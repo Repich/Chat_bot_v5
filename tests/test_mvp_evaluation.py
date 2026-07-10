@@ -40,6 +40,21 @@ class MvpEvaluationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("false_reuse_of_cold_skill", result.case_results[0].issues)
 
+    def test_accepts_reuse_of_preexisting_skill_without_requiring_learning(self) -> None:
+        agent = ScriptedExistingSkillAgent()
+        case = MvpEvaluationCase(
+            case_id="existing",
+            cold_question="cold",
+            warm_question="warm",
+            warm_expectation="reuse_any_skill",
+        )
+
+        result = run_mvp_evaluation([case], agent)
+
+        self.assertTrue(result.ok, result.to_dict())
+        self.assertEqual(result.case_results[0].created_skill_ids, [])
+        self.assertEqual(result.to_dict()["summary"]["warm_skill_plan_rate"], 1.0)
+
 
 class ScriptedLearningAgent:
     def __init__(self, *, reuse: bool) -> None:
@@ -69,6 +84,32 @@ class ScriptedLearningAgent:
             )
         return AgentRunResult(
             source="skill_execution_ok" if self.reuse else "query_synthesis_ok",
+            message="ok",
+            intent=intent,
+            plan=plan,
+        )
+
+
+class ScriptedExistingSkillAgent:
+    def __init__(self) -> None:
+        self.registry = SkillRegistry()
+
+    def handle(self, question: str, *, session_id: str) -> AgentRunResult:
+        intent = IntentResult(
+            intent_type=IntentType.DATA_QUESTION,
+            business_goal=question,
+            requires_1c_data=True,
+            relevant=True,
+        )
+        plan = SkillPlan(
+            plan_id="p-existing",
+            business_goal=question,
+            expected_answer_type="table",
+            nodes=[SkillInvocation(invocation_id="n1", skill_id="seed_existing")],
+            edges=[],
+        )
+        return AgentRunResult(
+            source="skill_execution_ok",
             message="ok",
             intent=intent,
             plan=plan,
