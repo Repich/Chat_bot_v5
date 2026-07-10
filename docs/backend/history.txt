@@ -1,3 +1,17 @@
+5.0.0-alpha.86
+- Learned skills переведены на SemanticSkillContract v2 и semantic_query_template: сохраняется полный успешно выполненный запрос с JOIN, WHERE, GROUP BY, ORDER BY и проверенными параметрами без lossy-реконструкции.
+- Skill matching теперь fail-closed различает operation, measure, aggregation, grain, dimensions, ranking, filter roles, fixed values и result columns; сумма/среднее, максимум/минимум и список/количество не взаимозаменяемы.
+- Добавлен learning gate: read-only safety, актуальная schema, согласованность query/contract, достаточный результат, exact execution evidence, positive/negative semantic probes, metadata dependencies и resolved configuration fingerprint.
+- Результат переиспользованного навыка проходит тот же sufficiency reviewer, что и query synthesis; runtime health обновляется только после финального semantic review.
+- Skill execution стал транзакционным: промежуточные артефакты не попадают в память до принятия результата.
+- Старые active learned skills без SemanticSkillContract v2 автоматически перемещаются в сохраняемый quarantine и исключаются из registry.
+- WIICON5_CONFIG_FINGERPRINT по умолчанию работает в режиме auto; пустые метаданные дают unresolved и блокируют обучение/исполнение learned skills.
+- Торговые semantic review и metadata ranking rules изолированы в domain pack trade_ru и не применяются к universal bot profile.
+- Узкие text classifiers детализации и агрегации заменены структурированным semantic_contract от decomposition LLM.
+- Добавлен изолированный cold/warm MVP evaluation runner, пять положительных и пять отрицательных пар, метрики reuse/false reuse и документ с критериями приемки MVP.
+- Локальные evidence, quarantined skills, evaluation results и diagnostic bundles исключены из Git.
+- Полный regression suite расширен тестами semantic compatibility, full query preservation, learning gate, quarantine, fail-closed sufficiency, post-reuse health и MVP evaluation.
+
 5.0.0-alpha.85
 - Semantic review issues получили severity: repair_required, clarification, warning, learn_only_blocker.
 - Ambiguous "самый продаваемый товар" больше не блокируется как ошибка запроса: если модель ранжирует по денежной сумме без явного уточнения пользователя, агент возвращает clarification с вариантами "по количеству" и "по выручке" без MCP-вызова.

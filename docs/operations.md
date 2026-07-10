@@ -194,6 +194,27 @@ python3 scripts/run_regression.py \
 Для перевода candidate skill в verified нужен успешный replay по связанным
 `case_id`; одного наличия regression case теперь недостаточно.
 
+## MVP Cold/Warm Evaluation
+
+Изолированный прогон самообучения использует `evaluation/mvp_cases.json`, копию
+onboarding index и отдельный временный каталог learned skills. Рабочие навыки
+бота не меняются:
+
+```bash
+python3 scripts/run_mvp_evaluation.py
+```
+
+Windows:
+
+```cmd
+scripts\run_mvp_evaluation.cmd
+```
+
+Отчет содержит cold/warm source, созданные skill ids, навыки warm-плана,
+created-skill reuse rate и false reuse. Результаты и сохраняемые trace пишутся в
+`bot_instances/local/evaluation/results/`. Пороговые значения описаны в
+`docs/mvp_acceptance.md`.
+
 ## Skill Packs
 
 Экспортировать выбранные skills в переносимый pack:

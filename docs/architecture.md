@@ -379,6 +379,42 @@ Trace - главный диагностический артефакт. Он п�
 10. Presentation layer формирует человекочитаемый ответ.
 11. Контекст и trace сохраняются.
 
+## Semantic Skill Contract
+
+Каждый новый learned skill содержит контракт версии 2, независимый от имен
+объектов конкретной конфигурации 1С:
+
+- subject terms;
+- operation: lookup, list, balance, aggregate или rank;
+- measures и точные aggregation semantics;
+- grain и dimensions;
+- обязательные и опциональные filter roles;
+- fixed filter values;
+- result columns;
+- ranking direction, limit и measure.
+
+Composer допускает learned skill в план только при совместимости этого
+контракта с текущей целью. Текстовый similarity сам по себе не является
+основанием для переиспользования.
+
+## Learning Gate
+
+Успешный ответ не равен новому навыку. Перед записью в active каталог gate
+проверяет safety запроса, schema контракта, соответствие query контракту,
+sufficiency, exact execution evidence, negative semantic probes, metadata
+dependencies и fingerprint конфигурации.
+
+Навык хранит полный выполненный query template. Runtime меняет только параметры,
+для которых доказана связь с semantic filters; структура JOIN/WHERE/GROUP/ORDER
+не реконструируется эвристиками.
+
+После warm-выполнения результат снова проходит sufficiency review. Только после
+этого артефакты коммитятся в память, ответ возвращается пользователю, а запуск
+учитывается как success в runtime health.
+
+Legacy learned skills без контракта v2 перемещаются в `learned/quarantine` и
+никогда не загружаются registry.
+
 ## Принципы
 
 - Предпочитать метаданные предположениям.
