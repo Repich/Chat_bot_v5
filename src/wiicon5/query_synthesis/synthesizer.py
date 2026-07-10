@@ -1741,7 +1741,9 @@ def rename_ambiguous_source_aliases(query: str) -> str:
     result = query
     used_aliases = {source.alias.lower() for source in parse_sources(query)} | selected_aliases
     for source in parse_sources(query):
-        if source.alias.lower() not in selected_aliases:
+        conflicts_with_output = source.alias.lower() in selected_aliases
+        conflicts_with_table_part = bool(source.table_part) and source.alias.lower() == source.table_part.lower()
+        if not conflicts_with_output and not conflicts_with_table_part:
             continue
         replacement = unique_source_alias(source.alias, used_aliases)
         source_pattern = r"\s+".join(re.escape(part) for part in source.source.split())

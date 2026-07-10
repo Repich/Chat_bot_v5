@@ -223,6 +223,24 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertIn("НоменклатураИсточник.ПометкаУдаления", result)
         self.assertNotIn("Справочник.Номенклатура КАК Номенклатура ", result)
 
+    def test_postprocess_renames_table_part_alias_equal_to_table_part_name(self) -> None:
+        query = (
+            "ВЫБРАТЬ Товары.Номенклатура КАК Номенклатура, "
+            "СУММА(Товары.Количество) КАК Количество "
+            "ИЗ Документ.РеализацияТоваровУслуг КАК Реализация "
+            "ЛЕВОЕ СОЕДИНЕНИЕ Документ.РеализацияТоваровУслуг.Товары КАК Товары "
+            "ПО Товары.Ссылка = Реализация.Ссылка "
+            "СГРУППИРОВАТЬ ПО Товары.Номенклатура"
+        )
+
+        result = postprocess_1c_query(query)
+
+        self.assertIn("Документ.РеализацияТоваровУслуг.Товары КАК ТоварыИсточник", result)
+        self.assertIn("ТоварыИсточник.Ссылка = Реализация.Ссылка", result)
+        self.assertIn("ТоварыИсточник.Номенклатура КАК Номенклатура", result)
+        self.assertIn("СУММА(ТоварыИсточник.Количество)", result)
+        self.assertNotIn(" КАК Товары ПО Товары.Ссылка", result)
+
     def test_sufficiency_accepts_empty_debt_metric_as_found_no_debt_result(self) -> None:
         review = deterministic_partial_review(
             question="Кому мы должны за последнюю поставку и сколько?",
