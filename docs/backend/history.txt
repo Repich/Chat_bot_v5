@@ -30,6 +30,7 @@
 - Метрика ранжирования сопоставляется через структурную меру и фактическую колонку результата: различное именование semantic role и alias запроса больше не блокирует обучение корректного top/rank-навыка, но другая мера по-прежнему отклоняется.
 - Проверка достаточности skill execution и query synthesis использует единое семантическое сопоставление колонок; квалифицированный alias вроде `КоличествоПродано` покрывает требование `Количество` и не запускает лишний повторный synthesis.
 - Годовой фильтр, который decomposition обозначила общей ролью `period`, параметризует обе границы периода и переиспользуется для другого года; навык больше не становится exact только из-за вариативного имени роли `year`/`period`.
+- Значения структурных фильтров, определяющих тип источника (`document_type`, `catalog_type`, `register_type` и общие аналоги), сохраняются в subject contract; очистка переменных значений больше не удаляет домен навыка, когда LLM вынесла тип объекта в отдельный subject-term.
 - Локальные evidence, quarantined skills, evaluation results и diagnostic bundles исключены из Git.
 - Полный regression suite расширен тестами semantic compatibility, full query preservation, learning gate, quarantine, fail-closed sufficiency, post-reuse health и MVP evaluation.
 

@@ -256,6 +256,36 @@ class SemanticSkillContractTests(unittest.TestCase):
         self.assertNotIn("пальто", contract.subject_terms)
         self.assertNotIn("розничн", contract.subject_terms)
 
+    def test_source_type_filter_remains_part_of_reusable_subject(self) -> None:
+        goal = GoalDecomposition(
+            business_goal="Покажи сумму реализаций за 2024 год",
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="sales",
+                    type="AggregateTable",
+                    constraints=[
+                        SemanticFilter("document_type", "equals", "Реализация товаров и услуг", "реализаций"),
+                        SemanticFilter("year", "equals", "2024", "2024 год"),
+                    ],
+                    required_columns=["Сумма"],
+                )
+            ],
+            semantic_contract=SemanticSkillContract(
+                subject_terms=["реализация", "сумма"],
+                operation="aggregate",
+                measures=[SemanticMeasure(role="сумма документа", aggregation="sum", result_column="Сумма")],
+                required_filter_roles=["document_type", "year"],
+                fixed_filter_values={"document_type": "Реализация товаров и услуг", "year": "2024"},
+                result_columns=["Сумма"],
+            ).to_dict(),
+        )
+
+        contract = contract_from_goal(data_intent(goal.business_goal), goal)
+
+        self.assertIn("реализаци", contract.subject_terms)
+        self.assertNotIn("2024", contract.subject_terms)
+
     def test_parameterized_price_contract_matches_another_product(self) -> None:
         available_goal = GoalDecomposition(
             business_goal="Покажи розничные цены на пальто",

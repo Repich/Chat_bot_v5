@@ -24,6 +24,14 @@ STRUCTURAL_FILTER_ROLES = {
     "ranking",
 }
 
+SOURCE_IDENTITY_FILTER_ROLES = {
+    "catalog_type",
+    "document_type",
+    "entity_type",
+    "object_type",
+    "register_type",
+}
+
 GENERIC_SUBJECT_WORDS = {
     "answer",
     "data",
@@ -575,6 +583,8 @@ def sanitize_explicit_subject_terms(
 
     excluded: set[str] = set()
     for constraint in constraints:
+        if canonical_role(constraint.semantic_field) in SOURCE_IDENTITY_FILTER_ROLES:
+            continue
         excluded.update(tokenized_subject_terms(constraint.value))
         excluded.update(tokenized_subject_terms(constraint.raw_user_text))
 

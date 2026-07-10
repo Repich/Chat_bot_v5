@@ -287,6 +287,57 @@ class SemanticQueryTemplateTests(unittest.TestCase):
         self.assertFalse(gate.ok)
         self.assertIn("goal_filters_reflected_and_parameterized", gate.errors)
 
+    def test_parameterized_year_with_fixed_document_type_is_generalized(self) -> None:
+        question = "Покажи сумму реализаций за 2024 год"
+        intent = data_intent(question)
+        goal = GoalDecomposition(
+            business_goal=question,
+            final_artifact_type="UserAnswer",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="sales",
+                    type="AggregateTable",
+                    constraints=[
+                        SemanticFilter("document_type", "equals", "Реализация товаров и услуг", "реализаций"),
+                        SemanticFilter("year", "equals", "2024", "2024 год"),
+                    ],
+                    required_columns=["Сумма"],
+                )
+            ],
+            semantic_contract=SemanticSkillContract(
+                subject_terms=["реализация", "сумма"],
+                operation="aggregate",
+                measures=[SemanticMeasure(role="сумма документа", aggregation="sum", result_column="Сумма")],
+                grain=["document"],
+                required_filter_roles=["document_type", "year"],
+                fixed_filter_values={"document_type": "Реализация товаров и услуг", "year": "2024"},
+                result_columns=["Сумма"],
+            ).to_dict(),
+        )
+        query = (
+            "ВЫБРАТЬ СУММА(Реализация.СуммаДокумента) КАК СуммаРеализаций "
+            "ИЗ Документ.РеализацияТоваровУслуг КАК Реализация "
+            "ГДЕ Реализация.Дата МЕЖДУ &НачПериода И &КонПериода"
+        )
+        params = {"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"}
+        trace = successful_trace(query, ["СуммаРеализаций"], [{"СуммаРеализаций": 100}])
+        trace["final_query"]["params"] = params
+        trace["successful_steps"][0]["params"] = params
+
+        spec = semantic_query_template_spec(
+            query=query,
+            params=params,
+            limit=1,
+            intent=intent,
+            goal=goal,
+            trace=trace,
+        )
+
+        assert spec is not None
+        self.assertEqual(spec["semantic_contract"]["match_mode"], "generalized")
+        self.assertIn("реализаци", spec["semantic_contract"]["subject_terms"])
+        self.assertEqual(spec["semantic_contract"]["fixed_filter_values"], {"document_type": "реализация товаров и услуг"})
+
     def test_fixed_object_ref_parameter_with_subject_qualifier_remains_generalized(self) -> None:
         question = "Покажи розничные цены на пальто"
         intent = data_intent(question)
