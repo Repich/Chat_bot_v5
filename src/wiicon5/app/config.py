@@ -57,7 +57,7 @@ class Settings:
             skills_dir=path_from_env(values.get("WIICON5_SKILLS_DIR"), base / "skills"),
             bindings_dir=path_from_env(values.get("WIICON5_BINDINGS_DIR"), base / "skills" / "bindings"),
             runs_dir=path_from_env(values.get("WIICON5_RUNS_DIR"), base / "runs"),
-            config_fingerprint=values.get("WIICON5_CONFIG_FINGERPRINT", "local"),
+            config_fingerprint=values.get("WIICON5_CONFIG_FINGERPRINT", "auto"),
             bot_instance=bot_instance,
             bot_context=BotInstanceContext(config=bot_instance, root=bot_root),
             admin_enabled=bool_from_env(values.get("WIICON5_ADMIN_ENABLED"), default=True),

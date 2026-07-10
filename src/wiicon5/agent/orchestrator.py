@@ -17,8 +17,9 @@ from wiicon5.models import GapResolution, SkillGap, SkillPlan
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
 from wiicon5.query_synthesis import QuerySynthesisEngine, QuerySynthesisResult
+from wiicon5.query_synthesis.reuse_review import SkillExecutionPostReview, SkillExecutionPostReviewer
 from wiicon5.skills.composer import SkillComposer
-from wiicon5.skills.learned import LearnedSkillStore, LearnedSkillWriteResult
+from wiicon5.skills.learned import LearnedSkillRuntimeHealthStore, LearnedSkillStore, LearnedSkillWriteResult
 from wiicon5.skills.lifecycle import SkillEvolutionDecision, SkillEvolutionPolicy
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.types import TypeSystem
@@ -60,6 +61,7 @@ class AgentRunResult:
             "final_artifact_type": self.goal.final_artifact_type,
             "expected_answer_type": self.goal.expected_answer_type,
             "required_artifacts": [item.to_dict() for item in self.goal.required_artifacts],
+            "semantic_contract": dict(self.goal.semantic_contract),
         }
 
 
@@ -80,6 +82,8 @@ class AgentOrchestrator:
         clarification_resolver: Optional[ClarificationResolver] = None,
         domain_policy: Optional[DomainPolicy] = None,
         baseline_intent_policy: Optional[BaselineIntentPolicy] = None,
+        skill_execution_reviewer: Optional[SkillExecutionPostReviewer] = None,
+        learned_health_store: Optional[LearnedSkillRuntimeHealthStore] = None,
     ) -> None:
         self.registry = registry
         self.decomposer = decomposer
@@ -94,6 +98,8 @@ class AgentOrchestrator:
         self.learned_skill_store = learned_skill_store
         self.synthesis_candidate_store = synthesis_candidate_store
         self.clarification_resolver = clarification_resolver or ClarificationResolver()
+        self.skill_execution_reviewer = skill_execution_reviewer
+        self.learned_health_store = learned_health_store
         self.trace_writer = TraceWriter(trace_root or Path("runs"))
 
     def handle(self, message: str, *, session_id: str = "") -> AgentRunResult:
@@ -198,8 +204,27 @@ class AgentOrchestrator:
                 execution_result = self.plan_executor.execute(compose_result.plan, context)
                 run_trace.write_json("skill_invocations/execution_result.json", execution_result_to_dict(execution_result))
                 if execution_result.ok and execution_result.final_artifact is not None:
+                    post_review = self._review_skill_execution(
+                        message=message,
+                        intent=decomposition.intent,
+                        goal=decomposition.goal,
+                        plan=compose_result.plan,
+                        execution_result=execution_result,
+                        context=context,
+                    )
+                    if post_review is not None:
+                        run_trace.write_json("skill_invocations/post_execution_review.json", post_review.to_dict())
                     sufficiency_gap = skill_execution_requirement_gap(decomposition.goal, execution_result)
+                    if sufficiency_gap is None and post_review is not None and not post_review.ok:
+                        sufficiency_gap = skill_post_review_gap(decomposition.goal, execution_result, post_review)
                     if sufficiency_gap is not None:
+                        self._record_learned_health(
+                            plan=compose_result.plan,
+                            execution_result=execution_result,
+                            context=context,
+                            accepted=False,
+                            error=post_review.error if post_review is not None else sufficiency_gap.reason,
+                        )
                         run_trace.write_json(
                             "skill_invocations/sufficiency_review.json",
                             {"ok": False, "gap": sufficiency_gap.to_dict()},
@@ -273,6 +298,12 @@ class AgentOrchestrator:
                         run_trace.write_json("result/result.json", result.to_dict())
                         self._record_assistant_and_save(context, result)
                         return result
+                    self._record_learned_health(
+                        plan=compose_result.plan,
+                        execution_result=execution_result,
+                        context=context,
+                        accepted=True,
+                    )
                     result = AgentRunResult(
                         source="skill_execution_ok",
                         message=str(execution_result.final_artifact.value),
@@ -280,11 +311,19 @@ class AgentOrchestrator:
                         goal=decomposition.goal,
                         plan=compose_result.plan,
                         final_artifact=execution_result.final_artifact,
+                        context_artifacts=execution_context_artifacts(execution_result),
                         trace_path=str(run_trace.path),
                     )
                     run_trace.write_json("result/result.json", result.to_dict())
                     self._record_assistant_and_save(context, result)
                     return result
+                self._record_learned_health(
+                    plan=compose_result.plan,
+                    execution_result=execution_result,
+                    context=context,
+                    accepted=False,
+                    error=execution_result.error,
+                )
                 synthesis_result = self._try_query_synthesis(
                     message=message,
                     intent=decomposition.intent,
@@ -439,6 +478,46 @@ class AgentOrchestrator:
         self._record_assistant_and_save(context, result)
         return result
 
+    def _review_skill_execution(
+        self,
+        *,
+        message: str,
+        intent: IntentResult,
+        goal: GoalDecomposition,
+        plan: SkillPlan,
+        execution_result: SkillPlanExecutionResult,
+        context: ConversationContext,
+    ) -> Optional[SkillExecutionPostReview]:
+        if self.skill_execution_reviewer is None:
+            return None
+        return self.skill_execution_reviewer.review(
+            message=message,
+            intent=intent,
+            goal=goal,
+            plan=plan,
+            execution_result=execution_result,
+            context=context,
+        )
+
+    def _record_learned_health(
+        self,
+        *,
+        plan: SkillPlan,
+        execution_result: SkillPlanExecutionResult,
+        context: ConversationContext,
+        accepted: bool,
+        error: str = "",
+    ) -> None:
+        if self.learned_health_store is None:
+            return
+        self.learned_health_store.record_plan_outcome(
+            plan=plan,
+            execution_result=execution_result,
+            context=context,
+            accepted=accepted,
+            error=error,
+        )
+
     def _write_input_trace(self, run_trace: RunTrace, message: str, context: ConversationContext) -> None:
         run_trace.write_json("input/user_message.json", {"message": message})
         run_trace.write_json("input/conversation_packet.json", context.to_packet())
@@ -573,6 +652,9 @@ class AgentOrchestrator:
             )
             if learned is not None:
                 run_trace.write_json("learning/learned_skill.json", learned.to_dict())
+            gate = self.learned_skill_store.last_gate_result
+            if gate is not None:
+                run_trace.write_json("learning/learning_gate.json", gate.to_dict())
         if self.synthesis_candidate_store is not None:
             if learned_synthesis_replaces_workbench_candidate(learned):
                 run_trace.write_json(
@@ -602,6 +684,7 @@ def learned_synthesis_replaces_workbench_candidate(learned: Optional[LearnedSkil
     if learned.skill.implementation_strategy != "learned_query":
         return False
     return str(learned.skill.implementation.get("kind") or "") in {
+        "semantic_query_template",
         "parameterized_lookup_query",
         "period_metric_aggregate",
     }
@@ -613,6 +696,7 @@ def result_goal_to_dict(goal: GoalDecomposition) -> Dict[str, object]:
         "final_artifact_type": goal.final_artifact_type,
         "expected_answer_type": goal.expected_answer_type,
         "required_artifacts": [item.to_dict() for item in goal.required_artifacts],
+        "semantic_contract": dict(goal.semantic_contract),
     }
 
 
@@ -642,6 +726,43 @@ def skill_execution_requirement_gap(
                 missing=[f"column:{column}" for column in missing],
             )
     return None
+
+
+def skill_post_review_gap(
+    goal: GoalDecomposition,
+    execution_result: SkillPlanExecutionResult,
+    review: SkillExecutionPostReview,
+) -> SkillGap:
+    missing = list(review.sufficiency.missing_facts) if review.sufficiency is not None else []
+    if not missing:
+        missing = ["semantic_result_review"]
+    provenance: List[str] = []
+    for artifact in execution_result.artifacts.values():
+        for skill_id in artifact.provenance:
+            if skill_id not in provenance:
+                provenance.append(skill_id)
+    return SkillGap(
+        required_capability="semantic_result_sufficiency",
+        required_output=goal.final_artifact_type,
+        reason=review.error or "Skill result is not semantically sufficient for the user goal.",
+        nearest_skill_ids=provenance,
+        recommended_resolution=GapResolution.CREATE_NEW,
+        missing=missing,
+    )
+
+
+def execution_context_artifacts(execution_result: SkillPlanExecutionResult) -> List[Artifact]:
+    result: List[Artifact] = []
+    seen = set()
+    for artifact in execution_result.artifacts.values():
+        if artifact.type == "UserAnswer" or artifact == execution_result.final_artifact:
+            continue
+        key = (artifact.name, artifact.type, repr(artifact.value), tuple(artifact.provenance))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(artifact)
+    return result
 
 
 def first_artifact_for_requirement(

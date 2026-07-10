@@ -313,6 +313,15 @@ def stock_detail_decomposition_without_required_columns():
                     ],
                 }
             ],
+            "semantic_contract": {
+                "schema_version": 2,
+                "subject_terms": ["остатки", "товар"],
+                "operation": "balance",
+                "measures": [{"role": "остаток", "aggregation": "sum"}],
+                "required_filter_roles": ["product", "warehouse"],
+                "result_columns": ["Номенклатура"],
+                "ranking": {"enabled": False},
+            },
         },
     }
 
@@ -415,6 +424,16 @@ def selling_nomenclature_as_document_list_response():
                     ],
                 },
             ],
+            "semantic_contract": {
+                "schema_version": 2,
+                "subject_terms": ["продажи", "номенклатура"],
+                "operation": "rank",
+                "measures": [{"role": "объем продаж", "aggregation": "sum"}],
+                "grain": ["номенклатура"],
+                "dimensions": ["номенклатура"],
+                "result_columns": ["Номенклатура", "ОбъемПродаж"],
+                "ranking": {"enabled": True, "direction": "desc", "limit": 1, "by_measure": "объем продаж"},
+            },
         },
     }
 

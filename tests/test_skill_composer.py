@@ -101,7 +101,17 @@ class SkillComposerTests(unittest.TestCase):
                 "outputs": [{"name": "table", "type": "PriceTable", "required": True}],
                 "supported_filter_roles": ["product", "price_type"],
                 "implementation_strategy": "learned_query",
-                "implementation": {"kind": "parameterized_lookup_query"},
+                "semantic_contract": {
+                    "schema_version": 2,
+                    "subject_terms": ["цены", "товар"],
+                    "operation": "lookup",
+                    "required_filter_roles": ["product", "price_type"],
+                    "optional_filter_roles": ["product", "price_type"],
+                    "result_columns": [],
+                    "ranking": {"enabled": False},
+                    "match_mode": "generalized",
+                },
+                "implementation": {"kind": "semantic_query_template", "schema_version": 2},
             }
         )
         composer = SkillComposer(SkillRegistry([skill]))
@@ -474,6 +484,15 @@ class SkillComposerTests(unittest.TestCase):
                     ],
                 ),
             ],
+            semantic_contract={
+                "schema_version": 2,
+                "subject_terms": ["продажи", "номенклатура"],
+                "operation": "rank",
+                "measures": [{"role": "объем продаж", "aggregation": "sum"}],
+                "grain": ["номенклатура"],
+                "dimensions": ["номенклатура"],
+                "ranking": {"enabled": True, "direction": "desc", "limit": 1},
+            },
         )
 
         result = composer.compose(goal)

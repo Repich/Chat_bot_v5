@@ -15,6 +15,7 @@ from wiicon5.planner.placeholders import is_unresolved_placeholder_value
 from wiicon5.planner.validator import SkillPlanValidator
 from wiicon5.semantic_roles import roles_match
 from wiicon5.skills.registry import SkillRegistry
+from wiicon5.skills.semantic_contract import SemanticSkillContract, contract_from_goal, semantic_contract_compatibility
 from wiicon5.types import TypeSystem
 
 
@@ -133,6 +134,7 @@ class SkillComposer:
             final_artifact_type=goal.final_artifact_type,
             expected_answer_type=goal.expected_answer_type,
             required_artifacts=normalized,
+            semantic_contract=dict(goal.semantic_contract),
         )
 
     def _ensure_artifact(
@@ -293,6 +295,12 @@ class SkillComposer:
             count_transform = skill.skill_id == "count_entities" and self._count_transform_applicable(requirement, state)
             accepts_constraints = all(_skill_accepts_constraint(skill, constraint) for constraint in requirement.constraints)
             domain_ok = skill_domain_compatible(skill, requirement, state.goal)
+            semantic_compatibility = None
+            if skill.implementation_strategy == "learned_query":
+                semantic_compatibility = semantic_contract_compatibility(
+                    contract_from_goal(None, state.goal),
+                    SemanticSkillContract.from_dict(skill.semantic_contract),
+                )
             accepted = (accepts_constraints or count_transform) and domain_ok
             score = producer_score(skill, requirement, state, self.type_system) if accepted else 0
             reasons = []
@@ -315,6 +323,7 @@ class SkillComposer:
                     "accepted": accepted,
                     "reasons": reasons,
                     "rejection_reason": rejection_reason,
+                    "semantic_contract": semantic_compatibility.to_dict() if semantic_compatibility is not None else None,
                 }
             )
             if accepted:
@@ -655,6 +664,13 @@ def producer_score(
                 score += 10
             if input_port.type == "EntityRefList" and not has_table_requirement:
                 score += 10
+    if skill.implementation_strategy == "learned_query":
+        compatibility = semantic_contract_compatibility(
+            contract_from_goal(None, state.goal),
+            SemanticSkillContract.from_dict(skill.semantic_contract),
+        )
+        if compatibility.compatible:
+            score += compatibility.score
     return score
 
 

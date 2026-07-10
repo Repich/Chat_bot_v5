@@ -51,6 +51,10 @@ def infer_parameter_bindings(params: Dict[str, Any], constraints: Sequence[Seman
     used_roles: set[str] = set()
     bindings: List[Dict[str, Any]] = []
     for parameter, parameter_value in params.items():
+        period_binding = infer_period_parameter_binding(parameter, parameter_value, available)
+        if period_binding is not None:
+            bindings.append(period_binding)
+            continue
         best: Optional[tuple[int, SemanticFilter]] = None
         for constraint in available:
             role = normalize_role(constraint.semantic_field)
@@ -164,7 +168,54 @@ def transform_value(value: Any, transform: str) -> Any:
         if "%" in text:
             return text
         return f"%{text}%"
+    if transform in {"year_start", "year_end"}:
+        try:
+            year = int(str(value).strip())
+        except (TypeError, ValueError):
+            return value
+        if transform == "year_start":
+            return f"{year:04d}-01-01T00:00:00"
+        return f"{year:04d}-12-31T23:59:59"
     return value
+
+
+def infer_period_parameter_binding(
+    parameter: str,
+    parameter_value: Any,
+    constraints: Sequence[SemanticFilter],
+) -> Optional[Dict[str, Any]]:
+    parameter_norm = normalize_token(parameter)
+    start_markers = ["нач", "start", "from"]
+    end_markers = ["кон", "end", "to"]
+    transform = ""
+    if any(marker in parameter_norm for marker in start_markers):
+        transform = "year_start"
+    elif any(marker in parameter_norm for marker in end_markers):
+        transform = "year_end"
+    if not transform:
+        return None
+    for constraint in constraints:
+        role = normalize_role(constraint.semantic_field)
+        if role != "year":
+            continue
+        year = str(constraint.value or constraint.raw_user_text or "").strip()
+        match = re.search(r"(?:19|20)\d{2}", year)
+        if match is None:
+            continue
+        parameter_text = str(parameter_value or "")
+        if match.group(0) not in parameter_text:
+            continue
+        return {
+            "semantic_field": "year",
+            "parameter": str(parameter),
+            "operator": normalize_operator(constraint.operator),
+            "transform": transform,
+            "required": True,
+            "source": "goal_constraint",
+            "example_value": constraint.value,
+            "example_raw_user_text": constraint.raw_user_text,
+        }
+    return None
 
 
 def constraints_from_goal_payload(payload: Any) -> List[SemanticFilter]:

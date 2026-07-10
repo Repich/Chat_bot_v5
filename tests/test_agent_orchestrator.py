@@ -16,6 +16,8 @@ from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.policies.domain_policy import DomainPolicy
 from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.query_synthesis import QuerySynthesisResult
+from wiicon5.query_synthesis.reuse_review import SkillExecutionPostReview
+from wiicon5.query_synthesis.sufficiency import ResultSufficiencyReview
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 
@@ -152,6 +154,46 @@ class AgentOrchestratorTests(unittest.TestCase):
         self.assertIn("Б-900", result.message)
         self.assertEqual(len(synthesizer.calls), 1)
         self.assertIn("column:Номенклатура", sufficiency_review["gap"]["missing"])
+
+    def test_rejected_skill_result_is_not_committed_before_synthesis_fallback(self) -> None:
+        question = "Покажи остатки товара на оптовых складах"
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        memory = ConversationMemory()
+        context = memory.get_or_create("s1")
+        context.add_artifact(Artifact(name="product", type="ProductRef", value={"ref": "product-1"}))
+        data_runner = StaticSkillRunner(
+            {
+                "get_warehouses": [Artifact(name="warehouses", type="WarehouseRefList", value=[{"ref": "w1"}])],
+                "get_stock_balances": [
+                    Artifact(
+                        name="stock_table",
+                        type="StockBalanceTable",
+                        value={"columns": ["Склад", "Остаток"], "rows": [{"Склад": "Чужой склад", "Остаток": 99}]},
+                        provenance=["get_stock_balances"],
+                    )
+                ],
+            }
+        )
+        runners = default_runners()
+        runners["semantic_binding_query"] = data_runner
+        runners["semantic_measure_query"] = data_runner
+        synthesizer = SuccessfulQuerySynthesizer("Исправленный ответ")
+        with TemporaryDirectory() as temp_dir:
+            orchestrator = AgentOrchestrator(
+                registry=registry,
+                decomposer=ScriptedGoalDecomposer({question: stock_question_decomposition()}),
+                memory=memory,
+                plan_executor=SkillPlanExecutor(registry, runners),
+                skill_execution_reviewer=RejectingSkillExecutionReviewer(),
+                query_synthesizer=synthesizer,
+                trace_root=Path(temp_dir),
+            )
+
+            result = orchestrator.handle(question, session_id="s1")
+
+        self.assertEqual(result.source, "query_synthesis_ok")
+        self.assertEqual(result.message, "Исправленный ответ")
+        self.assertIsNone(context.latest_artifact("StockBalanceTable"))
 
     def test_agent_returns_gap_and_evolution_decision_for_missing_filter_support(self) -> None:
         question = "Покажи остатки товара на оптовых складах"
@@ -342,6 +384,19 @@ class SuccessfulQuerySynthesizer:
             message=self.message,
             final_artifact=Artifact(name="answer", type="UserAnswer", value=self.message, provenance=["query_synthesis"]),
             trace={"attempts": [{"result_sufficiency": {"sufficient": True}}]},
+        )
+
+
+class RejectingSkillExecutionReviewer:
+    def review(self, **kwargs) -> SkillExecutionPostReview:
+        return SkillExecutionPostReview(
+            ok=False,
+            sufficiency=ResultSufficiencyReview(
+                sufficient=False,
+                partial=True,
+                missing_facts=["Результат не соответствует исходному вопросу."],
+            ),
+            error="semantic mismatch",
         )
 
 

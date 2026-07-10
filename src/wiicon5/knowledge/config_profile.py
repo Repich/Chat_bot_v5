@@ -47,6 +47,14 @@ def build_configuration_profile(
 ) -> ConfigurationProfile:
     objects = collect_profile_metadata_objects(metadata_provider, search_terms or DEFAULT_PROFILE_SEARCH_TERMS, limit_objects)
     signatures = [metadata_signature(item) for item in objects]
+    if not signatures:
+        return ConfigurationProfile(
+            fingerprint="unresolved",
+            objects_count=0,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            metadata_hash="",
+            source=source,
+        )
     metadata_hash = hash_payload(signatures)
     return ConfigurationProfile(
         fingerprint="cfg_" + metadata_hash[:16],
@@ -66,6 +74,11 @@ def manual_configuration_profile(fingerprint: str) -> ConfigurationProfile:
         metadata_hash="",
         source="manual",
     )
+
+
+def configuration_fingerprint_resolved(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    return bool(normalized) and normalized not in {"auto", "computed", "unknown", "unresolved"}
 
 
 def collect_profile_metadata_objects(

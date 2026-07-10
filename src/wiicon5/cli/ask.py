@@ -22,7 +22,6 @@ def main() -> int:
     settings = Settings.from_env(root=root)
     agent = build_agent(settings)
     context = agent.memory.get_or_create(args.session_id)
-    context.config_fingerprint = settings.config_fingerprint
     if args.product_ref:
         value = parse_ref_argument(args.product_ref)
         context.add_artifact(Artifact(name="product", type="ProductRef", value=value, provenance=["cli"]))

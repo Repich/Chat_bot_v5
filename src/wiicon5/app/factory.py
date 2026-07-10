@@ -29,8 +29,10 @@ from wiicon5.query_synthesis.failure_solver import (
     UnavailableFailureSolver,
 )
 from wiicon5.query_synthesis.sufficiency import ResultSufficiencyReviewer
+from wiicon5.query_synthesis.reuse_review import SkillExecutionPostReviewer
 from wiicon5.skill_runtime.data_skill_runner import DataSkillRunner
 from wiicon5.skills.learned import LearnedSkillRuntimeHealthStore, LearnedSkillStore
+from wiicon5.skills.migration import quarantine_legacy_learned_skills
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.workbench.synthesis_candidates import SynthesisCandidateStore
 
@@ -42,6 +44,7 @@ def build_agent(
     mcp_client: Optional[McpClient] = None,
     memory: Optional[ConversationMemory] = None,
 ) -> AgentOrchestrator:
+    quarantine_legacy_learned_skills(learned_skill_root(settings))
     registry = SkillRegistry.load_from_dirs(skill_registry_roots(settings))
     effective_llm = llm_client or build_llm_client(settings)
     effective_mcp = mcp_client or HttpMcpClient(base_url=settings.mcp_url, timeout_seconds=settings.mcp_timeout_seconds)
@@ -90,26 +93,32 @@ def build_agent(
         else None
     )
     synthesis_candidate_store = SynthesisCandidateStore(bot_instance_root=settings.bot_context.root)
+    result_reviewer = ResultSufficiencyReviewer(
+        effective_llm,
+        domain_hint_packs=settings.bot_instance.domain_hint_packs,
+    )
     return AgentOrchestrator(
         registry=registry,
         decomposer=LLMGoalDecomposer(llm_client=effective_llm, registry=registry, bot_config=settings.bot_instance),
         memory=effective_memory,
         baseline_intent_policy=BaselineIntentPolicy(domain_policy),
         domain_policy=domain_policy,
-        plan_executor=SkillPlanExecutor(registry, runners, learned_health_tracker=learned_health_store),
+        plan_executor=SkillPlanExecutor(registry, runners),
         query_synthesizer=QuerySynthesisEngine(
             llm_client=effective_llm,
             metadata_provider=metadata_provider,
             mcp_client=effective_mcp,
             query_reviewer=query_reviewer,
             answer_formatter=LLMAnswerFormatter(effective_llm),
-            result_reviewer=ResultSufficiencyReviewer(effective_llm),
+            result_reviewer=result_reviewer,
             bot_config=settings.bot_instance,
             onboarding_evidence_provider=OnboardingEvidenceProvider(settings.bot_context.root / "onboarding"),
             failure_solver=build_failure_solver(settings),
         ),
         learned_skill_store=learned_skill_store,
         synthesis_candidate_store=synthesis_candidate_store,
+        skill_execution_reviewer=SkillExecutionPostReviewer(result_reviewer, registry),
+        learned_health_store=learned_health_store,
         trace_root=settings.runs_dir,
     )
 

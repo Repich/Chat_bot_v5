@@ -5,6 +5,7 @@ from typing import Iterable, List, Optional
 
 from wiicon5.models import ArtifactRequirement, SemanticFilter, SkillContract, SkillKind
 from wiicon5.planner.goal import GoalDecomposition
+from wiicon5.skills.semantic_contract import SemanticSkillContract, contract_from_goal, semantic_contract_compatibility
 
 
 DOMAIN_SELECTOR_FIELDS = {"document_type", "document_kind", "object_type", "object_name", "entity_type"}
@@ -74,6 +75,13 @@ def skill_domain_compatible(
         return True
     if skill.implementation_strategy == "context_artifact_lookup":
         return True
+    if skill.implementation_strategy == "learned_query":
+        if goal is None:
+            return False
+        return semantic_contract_compatibility(
+            contract_from_goal(None, goal),
+            SemanticSkillContract.from_dict(skill.semantic_contract),
+        ).compatible
     if _generic_document_list_request(skill, requirement):
         return True
 

@@ -1564,10 +1564,11 @@ class QuerySynthesisTests(unittest.TestCase):
 
             first = orchestrator.handle(first_question, session_id="s1")
 
-            learned_path = skills_dir / "learned" / "active" / "learned_financial_metrics.json"
-            learned_exists = learned_path.exists()
-            learned_payload = json.loads(learned_path.read_text(encoding="utf-8")) if learned_exists else {}
-            evidence_path = skills_dir / "learned" / "evidence" / "learned_financial_metrics" / "creation_trace.json"
+            learned_paths = list((skills_dir / "learned" / "active").glob("*.json"))
+            learned_exists = len(learned_paths) == 1
+            learned_payload = json.loads(learned_paths[0].read_text(encoding="utf-8")) if learned_exists else {}
+            learned_id = str(learned_payload.get("skill_id") or "")
+            evidence_path = skills_dir / "learned" / "evidence" / learned_id / "creation_trace.json"
             evidence_exists = evidence_path.exists()
 
         self.assertEqual(first.source, "query_synthesis_ok")
@@ -1582,8 +1583,9 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(learned_payload["implementation"]["evidence"]["successful_runs"], 1)
         self.assertFalse(learned_payload["implementation"]["evidence"]["human_confirmed"])
         self.assertEqual(learned_payload["implementation"]["config_fingerprint"], "cfg")
-        self.assertIsNotNone(registry.get("learned_financial_metrics"))
-        self.assertIn("learned_financial_metrics", [skill.skill_id for skill in registry.active()])
+        self.assertEqual(learned_payload["implementation"]["kind"], "semantic_query_template")
+        self.assertIsNotNone(registry.get(learned_id))
+        self.assertIn(learned_id, [skill.skill_id for skill in registry.active()])
         self.assertEqual(len(llm.calls), 2)
 
     def test_learned_store_does_not_persist_non_generalized_fixed_query(self) -> None:
@@ -1631,20 +1633,21 @@ class QuerySynthesisTests(unittest.TestCase):
                 goal=None,
                 synthesis_result=QuerySynthesisResult(
                     ok=True,
-                    trace={
-                        "final_query": {
-                            "query": query,
-                            "params": {"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"},
-                            "limit": 1,
-                        },
-                        "metadata_objects": [{"full_name": "РегистрНакопления.ВыручкаИСебестоимостьПродаж"}],
-                    },
+                    trace=successful_learning_trace(
+                        query=query,
+                        params={"НачПериода": "2024-01-01T00:00:00", "КонПериода": "2024-12-31T23:59:59"},
+                        columns=["Товар", "СуммаПродаж"],
+                        rows=[{"Товар": "Товар 1", "СуммаПродаж": 100}],
+                        metadata_objects=[{"full_name": "РегистрНакопления.ВыручкаИСебестоимостьПродаж"}],
+                        limit=1,
+                    ),
                 ),
+                config_fingerprint="cfg",
             )
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.skill.implementation["kind"], "fixed_query")
+        self.assertEqual(result.skill.implementation["kind"], "semantic_query_template")
         self.assertEqual(result.skill.implementation["query"], query)
         self.assertNotIn("metrics", result.skill.implementation)
 
@@ -1876,28 +1879,27 @@ class QuerySynthesisTests(unittest.TestCase):
                 goal=price_lookup_goal("Показать цены с типом себестоимость по курткам", product="куртка", price_type="себестоимость"),
                 synthesis_result=QuerySynthesisResult(
                     ok=True,
-                    trace={
-                        "final_query": {
-                            "query": query,
-                            "params": {"ТоварПоиск": "%куртк%", "ВидЦеныПоиск": "%себестоимость%"},
-                            "limit": 100,
-                        },
-                        "row_count": 3,
-                        "metadata_objects": [
+                    trace=successful_learning_trace(
+                        query=query,
+                        params={"ТоварПоиск": "%куртк%", "ВидЦеныПоиск": "%себестоимость%"},
+                        columns=["Номенклатура", "Цена"],
+                        rows=[{"Номенклатура": "Куртка", "Цена": 0}],
+                        metadata_objects=[
                             {"full_name": "РегистрСведений.ЦеныНоменклатуры"},
                             {"full_name": "Справочник.Номенклатура"},
                             {"full_name": "Справочник.ВидыЦен"},
                         ],
-                    },
+                    ),
                 ),
                 created_from_trace="/runs/agent_1",
                 config_fingerprint="cfg",
             )
 
-            skill_payload = json.loads((Path(temp_dir) / "learned" / "active" / "learned_product_price_lookup.json").read_text(encoding="utf-8"))
+            assert result is not None
+            skill_payload = json.loads(result.path.read_text(encoding="utf-8"))
 
         self.assertIsNotNone(result)
-        self.assertEqual(skill_payload["implementation"]["kind"], "parameterized_lookup_query")
+        self.assertEqual(skill_payload["implementation"]["kind"], "semantic_query_template")
         self.assertEqual(skill_payload["outputs"][0]["type"], "PriceTable")
         self.assertEqual(set(skill_payload["supported_filter_roles"]), {"product", "price_type"})
         self.assertEqual(
@@ -1905,8 +1907,9 @@ class QuerySynthesisTests(unittest.TestCase):
             ["РегистрСведений.ЦеныНоменклатуры", "Справочник.Номенклатура", "Справочник.ВидыЦен"],
         )
         self.assertEqual(skill_payload["implementation"]["config_fingerprint"], "cfg")
-        self.assertIsNotNone(registry.get("learned_product_price_lookup"))
-        self.assertIn("learned_product_price_lookup", [skill.skill_id for skill in registry.active()])
+        learned_id = skill_payload["skill_id"]
+        self.assertIsNotNone(registry.get(learned_id))
+        self.assertIn(learned_id, [skill.skill_id for skill in registry.active()])
 
     def test_learned_lookup_canonicalizes_product_name_role(self) -> None:
         registry = SkillRegistry([])
@@ -1930,19 +1933,19 @@ class QuerySynthesisTests(unittest.TestCase):
                 ),
                 synthesis_result=QuerySynthesisResult(
                     ok=True,
-                    trace={
-                        "final_query": {
-                            "query": price_lookup_query(),
-                            "params": {"ТоварПоиск": "%пальто%", "ВидЦеныПоиск": "%Розничная%"},
-                            "limit": 100,
-                        },
-                        "row_count": 1,
-                        "metadata_objects": [{"full_name": "РегистрСведений.ЦеныНоменклатуры"}],
-                    },
+                    trace=successful_learning_trace(
+                        query=price_lookup_query(),
+                        params={"ТоварПоиск": "%пальто%", "ВидЦеныПоиск": "%Розничная%"},
+                        columns=["Номенклатура", "Цена"],
+                        rows=[{"Номенклатура": "Пальто", "Цена": 100}],
+                        metadata_objects=[{"full_name": "РегистрСведений.ЦеныНоменклатуры"}],
+                    ),
                 ),
+                config_fingerprint="cfg",
             )
 
-            skill_path = Path(temp_dir) / "learned" / "active" / "learned_product_price_lookup.json"
+            assert result is not None
+            skill_path = result.path
             skill_exists = skill_path.exists()
             skill_payload = json.loads(skill_path.read_text(encoding="utf-8"))
 
@@ -2109,7 +2112,7 @@ class QuerySynthesisTests(unittest.TestCase):
             )
 
         self.assertIn("cfg_a", str(exc.exception))
-        self.assertIn("unknown", str(exc.exception))
+        self.assertIn("unresolved", str(exc.exception))
 
     def test_postprocess_removes_redundant_reference_join_and_empty_balance_args(self) -> None:
         query = (
@@ -2371,6 +2374,19 @@ class QuerySynthesisTests(unittest.TestCase):
 
         self.assertNotIn("Документ.ПриобретениеТоваровУслуг", terms)
         self.assertNotIn("РасчетыСПоставщиками", terms)
+
+    def test_semantic_review_can_disable_trade_domain_rules(self) -> None:
+        issues = goal_semantic_review_issues(
+            query="ВЫБРАТЬ ПЕРВЫЕ 1 Продажи.Номенклатура КАК Товар ИЗ РегистрНакопления.Продажи КАК Продажи",
+            params={},
+            goal=None,
+            message="Какой самый продаваемый товар?",
+            intent=data_intent("Какой самый продаваемый товар?"),
+            metadata_objects=[],
+            domain_hint_packs=["one_c_standard"],
+        )
+
+        self.assertEqual(issues, [])
 
     def test_metadata_collection_prioritizes_queryable_objects_before_modules(self) -> None:
         provider = RankingMetadataProvider()
@@ -3113,6 +3129,42 @@ def financial_by_year_decomposition(question: str) -> DecompositionResult:
             ],
         ),
     )
+
+
+def successful_learning_trace(
+    *,
+    query: str,
+    params: Dict[str, object],
+    columns: List[str],
+    rows: List[Dict[str, object]],
+    metadata_objects: List[Dict[str, object]],
+    limit: int = 100,
+) -> Dict[str, object]:
+    sufficiency = {
+        "sufficient": True,
+        "partial": False,
+        "missing_facts": [],
+        "needs_clarification": False,
+        "reasoning": "The exact query result answers the original goal.",
+        "error": "",
+    }
+    return {
+        "final_query": {"query": query, "params": dict(params), "limit": limit},
+        "final_artifact": {"value": {"columns": list(columns), "rows": list(rows)}},
+        "row_count": len(rows),
+        "successful_steps": [
+            {
+                "step": 1,
+                "query": query,
+                "params": dict(params),
+                "columns": list(columns),
+                "rows": list(rows),
+                "sufficiency": sufficiency,
+            }
+        ],
+        "attempts": [{"result_sufficiency": sufficiency}],
+        "metadata_objects": list(metadata_objects),
+    }
 
 
 if __name__ == "__main__":

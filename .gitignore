@@ -19,7 +19,10 @@ bot_instances/*/workbench/smoke/
 bot_instances/*/workbench/audit/
 bot_instances/*/skills/candidates/
 bot_instances/*/skills/evidence/
+bot_instances/*/skills/learned/
 bot_instances/*/regression/results/
+bot_instances/*/evaluation/results/
+diagnostic_bundles/
 skills/bindings/
 skills/learned/
 !skills/learned/

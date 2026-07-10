@@ -42,6 +42,12 @@ class AppFactoryTests(unittest.TestCase):
         self.assertFalse(settings.failure_solver_enabled)
         self.assertEqual(settings.failure_solver_provider, "openai_compatible")
 
+    def test_settings_default_to_automatic_configuration_fingerprint(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            settings = Settings.from_env({}, root=Path(temp_dir))
+
+        self.assertEqual(settings.config_fingerprint, "auto")
+
     def test_settings_loads_admin_security_options(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -253,6 +259,7 @@ class AppFactoryTests(unittest.TestCase):
                     "WIICON5_SKILLS_DIR": str(PROJECT_ROOT / "skills"),
                     "WIICON5_BINDINGS_DIR": str(Path(temp_dir) / "bindings"),
                     "WIICON5_RUNS_DIR": str(Path(temp_dir) / "runs"),
+                    "WIICON5_BOT_ROOT": str(Path(temp_dir) / "bot"),
                     "WIICON5_CONFIG_FINGERPRINT": "auto",
                 },
                 root=PROJECT_ROOT,
@@ -269,6 +276,28 @@ class AppFactoryTests(unittest.TestCase):
         self.assertNotEqual(context.config_fingerprint, "auto")
         self.assertTrue(str(context.config_fingerprint).startswith("cfg_"))
         self.assertGreaterEqual(len(mcp.metadata_calls), 1)
+
+    def test_empty_metadata_does_not_produce_a_reusable_configuration_fingerprint(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            settings = Settings.from_env(
+                {
+                    "WIICON5_SKILLS_DIR": str(PROJECT_ROOT / "skills"),
+                    "WIICON5_BINDINGS_DIR": str(Path(temp_dir) / "bindings"),
+                    "WIICON5_RUNS_DIR": str(Path(temp_dir) / "runs"),
+                    "WIICON5_BOT_ROOT": str(Path(temp_dir) / "bot"),
+                    "WIICON5_CONFIG_FINGERPRINT": "auto",
+                },
+                root=PROJECT_ROOT,
+            )
+            agent = build_agent(
+                settings,
+                llm_client=ScriptedLLMClient([]),
+                mcp_client=DictMcpClient({"success": True, "data": []}, metadata_response={"success": True, "data": []}),
+            )
+
+            context = agent.memory.get_or_create("s1")
+
+        self.assertEqual(context.config_fingerprint, "unresolved")
 
     def test_learned_skill_root_is_bot_specific_by_default(self) -> None:
         with TemporaryDirectory() as temp_dir:

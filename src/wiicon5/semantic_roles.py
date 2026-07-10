@@ -4,6 +4,12 @@ from typing import Any
 
 
 ROLE_ALIASES = {
+    "год": "year",
+    "year_filter": "year",
+    "дата": "period",
+    "date": "period",
+    "date_range": "period",
+    "период": "period",
     "product_name": "product",
     "product_ref": "product",
     "item": "product",

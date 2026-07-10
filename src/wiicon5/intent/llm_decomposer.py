@@ -13,6 +13,7 @@ from wiicon5.planner.domain_compatibility import meaningful_words, words_match
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.prompting import PromptCatalog
 from wiicon5.skills.registry import SkillRegistry
+from wiicon5.skills.semantic_contract import SemanticSkillContract, contract_from_goal, semantic_contract_compatibility
 from wiicon5.types import TypeSystem
 
 
@@ -93,6 +94,25 @@ def decomposition_schema() -> Dict[str, Any]:
                     ],
                 }
             ],
+            "semantic_contract": {
+                "schema_version": 2,
+                "subject_terms": ["business entities or processes"],
+                "operation": "lookup | list | balance | aggregate | rank",
+                "measures": [
+                    {
+                        "role": "business measure",
+                        "aggregation": "sum | avg | count | min | max | empty",
+                        "unit": "currency | quantity | empty",
+                        "result_column": "expected column",
+                    }
+                ],
+                "grain": ["business grain, e.g. document, product, warehouse"],
+                "dimensions": ["requested groupings"],
+                "required_filter_roles": ["semantic filter roles that must be supplied"],
+                "fixed_filter_values": {"semantic filter role": "fixed business value"},
+                "result_columns": ["required result columns"],
+                "ranking": {"enabled": "boolean", "direction": "asc | desc", "limit": "integer", "by_measure": "role"},
+            },
         },
     }
 
@@ -157,8 +177,11 @@ def parse_goal(payload: Dict[str, Any]) -> GoalDecomposition:
         final_artifact_type=str(payload.get("final_artifact_type") or "UserAnswer"),
         expected_answer_type=str(payload.get("expected_answer_type") or "answer"),
         required_artifacts=requirements,
+        semantic_contract=dict(payload.get("semantic_contract", {}))
+        if isinstance(payload.get("semantic_contract"), dict)
+        else {},
     )
-    return ensure_requested_detail_columns(goal)
+    return synchronize_required_columns_from_contract(goal)
 
 
 def parse_constraints(payload: Any) -> List[SemanticFilter]:
@@ -176,8 +199,11 @@ def parse_constraints(payload: Any) -> List[SemanticFilter]:
     return constraints
 
 
-def ensure_requested_detail_columns(goal: GoalDecomposition) -> GoalDecomposition:
-    requested = detail_columns_from_text(goal.business_goal)
+def synchronize_required_columns_from_contract(goal: GoalDecomposition) -> GoalDecomposition:
+    contract = SemanticSkillContract.from_dict(goal.semantic_contract)
+    if not contract.current:
+        return goal
+    requested = list(contract.result_columns)
     if not requested:
         return goal
     updated = []
@@ -205,19 +231,8 @@ def ensure_requested_detail_columns(goal: GoalDecomposition) -> GoalDecompositio
         final_artifact_type=goal.final_artifact_type,
         expected_answer_type=goal.expected_answer_type,
         required_artifacts=updated,
+        semantic_contract=dict(goal.semantic_contract),
     )
-
-
-def detail_columns_from_text(text: str) -> List[str]:
-    normalized = text.lower()
-    columns = []
-    if "детализа" in normalized and ("номенклат" in normalized or "товар" in normalized):
-        columns.append("Номенклатура")
-    if "детализа" in normalized and ("по склад" in normalized or "по мест" in normalized or "в разрезе склад" in normalized):
-        columns.append("Склад")
-    return columns
-
-
 def merge_required_columns(existing: List[str], requested: List[str]) -> List[str]:
     result = list(existing)
     normalized = {item.strip().lower() for item in result}
@@ -271,6 +286,7 @@ def skill_catalog(registry: SkillRegistry) -> List[Dict[str, Any]]:
                 "output_columns": list(skill.implementation.get("output_columns", []))
                 if isinstance(skill.implementation.get("output_columns"), list)
                 else [],
+                "semantic_contract": dict(skill.semantic_contract),
             }
         )
     return result
@@ -302,6 +318,7 @@ def complete_goal_from_skill_catalog(
             *goal.required_artifacts,
             ArtifactRequirement(name=output_name, type=output_type, source="skill", required=True),
         ],
+        semantic_contract=dict(goal.semantic_contract),
     )
 
 
@@ -355,13 +372,23 @@ def best_data_skill_output(
 ) -> Optional[tuple]:
     existing_types = {item.type for item in goal.required_artifacts}
     text_words = meaningful_words(" ".join([intent.business_goal, goal.business_goal, *intent.domain_terms]))
+    requested_contract = contract_from_goal(intent, goal)
     scored = []
     for skill in registry.active():
         if not skill_available_for_goal_decomposition(skill):
             continue
         if skill.kind.value != "data_acquisition" or skill.implementation_strategy == "context_artifact_lookup":
             continue
-        score = skill_text_score(skill.to_dict(), text_words)
+        if skill.implementation_strategy == "learned_query":
+            compatibility = semantic_contract_compatibility(
+                requested_contract,
+                SemanticSkillContract.from_dict(skill.semantic_contract),
+            )
+            if not compatibility.compatible:
+                continue
+            score = compatibility.score
+        else:
+            score = skill_text_score(skill.to_dict(), text_words)
         if score <= 0:
             continue
         for output in skill.outputs:
@@ -396,4 +423,7 @@ def skill_text_score(skill_data: Dict[str, Any], text_words: List[str]) -> int:
 def skill_available_for_goal_decomposition(skill) -> bool:
     if skill.implementation_strategy != "learned_query":
         return True
-    return skill.implementation.get("kind") != "fixed_query"
+    return (
+        skill.implementation.get("kind") == "semantic_query_template"
+        and SemanticSkillContract.from_dict(skill.semantic_contract).current
+    )

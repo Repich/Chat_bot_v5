@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
+from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.intent.models import IntentResult
 from wiicon5.llm.client import LLMClient, LLMProviderError
@@ -20,15 +21,17 @@ RESULT_SUFFICIENCY_PROMPT = (
     "'сначала', 'далее потребуется', 'пока возвращаем', считай результат промежуточным. "
     "Если в вопросе спрашивают 'кому/кто' и 'сколько/какая сумма', ответ достаточен только когда результат содержит и субъект, "
     "и числовую сумму/количество/остаток, либо явно объясняет отсутствие данных. "
-    "Если в вопросе спрашивают долг/задолженность/кому должны, сумма документа поставки сама по себе не равна задолженности, "
-    "если это не подтверждено запросом или метаданными расчетов. "
-    "Если пользователь спрашивает клиента/контрагента/поставщика, а результат в такой колонке содержит договор, объект расчетов "
-    "или другой промежуточный объект вместо самой стороны расчетов, результат недостаточен. "
     "Если вопрос пользователя допускает два бизнес-смысла, а текущий результат покрывает только один из них, "
     "не выбирай смысл за пользователя: верни needs_clarification=true и короткий уточняющий вопрос с вариантами. "
     "Верни строго JSON: sufficient (bool), partial (bool), missing_facts (array of strings), "
     "next_query_goal (string), needs_clarification (bool), clarification_question (string), "
     "clarification_options (array of strings), reasoning (string)."
+)
+
+TRADE_RESULT_SUFFICIENCY_RULES = (
+    " Для торгового домена: сумма документа поставки или отгрузки сама по себе не равна задолженности, "
+    "если это не подтверждено запросом или метаданными расчетов. Если пользователь спрашивает "
+    "клиента/контрагента/поставщика, договор или объект расчетов вместо самой стороны расчетов недостаточен."
 )
 
 
@@ -61,9 +64,21 @@ class ResultSufficiencyReview:
 
 
 class ResultSufficiencyReviewer:
-    def __init__(self, llm_client: LLMClient, *, max_rows: int = 5) -> None:
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        *,
+        max_rows: int = 5,
+        domain_hint_packs: Optional[List[str]] = None,
+    ) -> None:
         self.llm_client = llm_client
         self.max_rows = max_rows
+        self.domain_hint_packs = list(
+            domain_hint_packs if domain_hint_packs is not None else BotInstanceConfig.default().domain_hint_packs
+        )
+        self.system_prompt = RESULT_SUFFICIENCY_PROMPT + (
+            TRADE_RESULT_SUFFICIENCY_RULES if "trade_ru" in self.domain_hint_packs else ""
+        )
 
     def review(
         self,
@@ -84,6 +99,7 @@ class ResultSufficiencyReviewer:
             columns=columns,
             rows=rows,
             query_reasoning=query_reasoning,
+            domain_hint_packs=self.domain_hint_packs,
         )
         if deterministic is not None:
             return deterministic
@@ -122,10 +138,14 @@ class ResultSufficiencyReviewer:
             },
         }
         try:
-            response = self.llm_client.complete_json(system_prompt=RESULT_SUFFICIENCY_PROMPT, user_payload=payload)
+            response = self.llm_client.complete_json(system_prompt=self.system_prompt, user_payload=payload)
         except LLMProviderError as exc:
             return ResultSufficiencyReview(
-                sufficient=True,
+                sufficient=False,
+                partial=True,
+                missing_facts=["Не удалось подтвердить семантическую достаточность результата."],
+                next_query_goal="Повторить проверку достаточности после восстановления сервиса модели.",
+                reasoning="Без проверки достаточности результат нельзя считать подтвержденным.",
                 error=f"LLM result sufficiency review failed: {exc}",
                 trace={"request": payload},
             )
@@ -161,6 +181,7 @@ def deterministic_partial_review(
     columns: List[str],
     rows: List[Dict[str, Any]],
     query_reasoning: str,
+    domain_hint_packs: Optional[List[str]] = None,
 ) -> Optional[ResultSufficiencyReview]:
     reasoning = query_reasoning.lower()
     partial_markers = [
@@ -180,6 +201,10 @@ def deterministic_partial_review(
             next_query_goal="Построить следующий запрос по промежуточному результату и получить недостающие факты.",
             reasoning="Reasoning запроса явно описывает промежуточный шаг, а не финальный ответ.",
         )
+
+    packs = domain_hint_packs if domain_hint_packs is not None else BotInstanceConfig.default().domain_hint_packs
+    if "trade_ru" not in packs:
+        return None
 
     lowered_question = question.lower()
     lowered_columns = " ".join(columns).lower()
@@ -653,4 +678,5 @@ def goal_to_payload(goal: Optional[GoalDecomposition]) -> Optional[Dict[str, Any
         "final_artifact_type": goal.final_artifact_type,
         "expected_answer_type": goal.expected_answer_type,
         "required_artifacts": [item.to_dict() for item in goal.required_artifacts],
+        "semantic_contract": dict(goal.semantic_contract),
     }

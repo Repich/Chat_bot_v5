@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
+from wiicon5.conversation.memory import ConversationMemory
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
@@ -186,6 +187,7 @@ class WorkbenchSynthesisCandidateTests(unittest.TestCase):
             orchestrator = AgentOrchestrator(
                 registry=registry,
                 decomposer=ScriptedGoalDecomposer({question: DecompositionResult(intent=data_intent(question), goal=price_lookup_goal(question))}),
+                memory=ConversationMemory(default_config_fingerprint="cfg_test"),
                 query_synthesizer=PriceLookupQuerySynthesizer(),
                 learned_skill_store=learned_store,
                 synthesis_candidate_store=store,
@@ -194,8 +196,9 @@ class WorkbenchSynthesisCandidateTests(unittest.TestCase):
 
             result = orchestrator.handle(question, session_id="s1")
             candidates = store.list_candidates()
-            learned_path = root / "skills" / "learned" / "active" / "learned_product_price_lookup.json"
-            learned_exists = learned_path.exists()
+            learned_paths = list((root / "skills" / "learned" / "active").glob("*.json"))
+            learned_exists = len(learned_paths) == 1
+            learned_id = json.loads(learned_paths[0].read_text(encoding="utf-8"))["skill_id"] if learned_exists else ""
             skipped_files = list((root / "runs").glob("agent_*/workbench/synthesis_candidate_skipped.json"))
             skipped = json.loads(skipped_files[0].read_text(encoding="utf-8")) if skipped_files else {}
 
@@ -203,7 +206,7 @@ class WorkbenchSynthesisCandidateTests(unittest.TestCase):
         self.assertEqual(candidates, [])
         self.assertTrue(learned_exists)
         self.assertEqual(len(skipped_files), 1)
-        self.assertEqual(skipped["learned_skill_id"], "learned_product_price_lookup")
+        self.assertEqual(skipped["learned_skill_id"], learned_id)
 
 
 class SuccessfulQuerySynthesizer:
@@ -313,6 +316,18 @@ def successful_price_lookup_synthesis_result() -> QuerySynthesisResult:
             },
             "row_count": len(rows),
             "metadata_objects": [{"full_name": "РегистрСведений.ЦеныНоменклатуры"}],
+            "final_artifact": {"value": {"columns": ["Номенклатура", "Цена"], "rows": rows}},
+            "successful_steps": [
+                {
+                    "step": 1,
+                    "query": query,
+                    "params": {"ВидЦены": "Розничная", "ШаблонПальто": "%пальто%"},
+                    "columns": ["Номенклатура", "Цена"],
+                    "rows": rows,
+                    "sufficiency": {"sufficient": True, "partial": False, "error": ""},
+                }
+            ],
+            "attempts": [{"result_sufficiency": {"sufficient": True, "partial": False, "error": ""}}],
         },
     )
 

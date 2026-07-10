@@ -136,6 +136,7 @@ class SkillContract:
     supported_filter_roles: List[str] = field(default_factory=list)
     implementation_strategy: str = ""
     implementation: Dict[str, Any] = field(default_factory=dict)
+    semantic_contract: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "SkillContract":
@@ -153,6 +154,9 @@ class SkillContract:
             supported_filter_roles=[str(item) for item in data.get("supported_filter_roles", [])],
             implementation_strategy=str(data.get("implementation_strategy", "")),
             implementation=dict(data.get("implementation", {})) if isinstance(data.get("implementation"), Mapping) else {},
+            semantic_contract=dict(data.get("semantic_contract", {}))
+            if isinstance(data.get("semantic_contract"), Mapping)
+            else {},
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -173,6 +177,8 @@ class SkillContract:
             data["implementation"] = dict(self.implementation)
         if self.semantic_role:
             data["semantic_role"] = self.semantic_role
+        if self.semantic_contract:
+            data["semantic_contract"] = dict(self.semantic_contract)
         return data
 
     def produces(self, artifact_type: str) -> bool:

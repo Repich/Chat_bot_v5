@@ -13,8 +13,17 @@ from wiicon5.query.query_draft import QueryDraft
 class LearnedQueryBuilder(QueryBuilder):
     def build(self, skill: SkillContract, inputs: Dict[str, Any], context: ConversationContext) -> QueryDraft:
         spec = skill.implementation
+        kind = str(spec.get("kind") or "")
         expected_fingerprint = str(spec.get("config_fingerprint") or "")
         actual_fingerprint = context.config_fingerprint or ""
+        fingerprint_required = bool(expected_fingerprint) or kind == "semantic_query_template"
+        if fingerprint_required and actual_fingerprint.strip().lower() in {"", "auto", "computed", "unknown", "unresolved"}:
+            raise QueryBuildError(
+                f"Learned skill {skill.skill_id} requires config fingerprint {expected_fingerprint or '<resolved>'}, "
+                "but the current configuration fingerprint is unresolved."
+            )
+        if kind == "semantic_query_template" and not expected_fingerprint:
+            raise QueryBuildError(f"Learned skill {skill.skill_id} has no configuration fingerprint.")
         if expected_fingerprint:
             if not actual_fingerprint:
                 raise QueryBuildError(
@@ -26,7 +35,8 @@ class LearnedQueryBuilder(QueryBuilder):
                     f"Learned skill {skill.skill_id} was created for config {expected_fingerprint}, "
                     f"current config is {actual_fingerprint}."
                 )
-        kind = str(spec.get("kind") or "")
+        if kind == "semantic_query_template":
+            return build_semantic_query_template(skill, inputs)
         if kind == "period_metric_aggregate":
             return build_period_metric_aggregate(skill, inputs, context)
         if kind == "parameterized_lookup_query":
@@ -67,6 +77,26 @@ def build_parameterized_lookup_query(skill: SkillContract, inputs: Dict[str, Any
         limit=int(inputs.get("limit") or spec.get("limit") or 100),
         metadata_dependencies=[str(item) for item in spec.get("metadata_dependencies", []) or []],
         reasoning=f"Built from learned parameterized lookup query skill {skill.skill_id}.",
+    )
+
+
+def build_semantic_query_template(skill: SkillContract, inputs: Dict[str, Any]) -> QueryDraft:
+    spec = skill.implementation
+    query = str(spec.get("query") or "").strip()
+    if not query:
+        raise QueryBuildError(f"Learned skill {skill.skill_id} has no query template.")
+    missing_roles = missing_required_filter_roles(spec, inputs)
+    if missing_roles:
+        raise QueryBuildError(
+            f"Learned skill {skill.skill_id} requires semantic filters: {', '.join(missing_roles)}."
+        )
+    params = build_parameterized_lookup_params(spec, inputs)
+    return QueryDraft(
+        query=query,
+        params=params,
+        limit=int(inputs.get("limit") or spec.get("limit") or 100),
+        metadata_dependencies=[str(item) for item in spec.get("metadata_dependencies", []) or []],
+        reasoning=f"Built from learned semantic query template {skill.skill_id}.",
     )
 
 

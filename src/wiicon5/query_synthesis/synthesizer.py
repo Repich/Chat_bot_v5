@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
@@ -31,11 +31,8 @@ from wiicon5.query.list_params import expand_in_list_parameters
 from wiicon5.query.one_c_query_safety import validate_read_only_query
 from wiicon5.query.one_c_query_review import (
     OneCQueryReviewer,
-    dimensions_for,
     matching_parenthesis_position,
-    metadata_for_source,
     parse_sources,
-    resources_for,
     split_top_level_commas,
 )
 from wiicon5.query.reference_value_resolver import ReferenceValueResolver
@@ -44,10 +41,10 @@ from wiicon5.query_synthesis.failure_solver import (
     FailureSolverDecision,
     failure_diagnostic_payload,
 )
+from wiicon5.query_synthesis.metadata_ranking import CompositeMetadataRankingPolicy, MetadataRankingPolicy
 from wiicon5.query_synthesis.semantic_review import (
     clarification_issue,
     repair_required_issues,
-    semantic_issue,
     semantic_review_error,
     semantic_review_ok,
 )
@@ -133,6 +130,7 @@ class QuerySynthesisEngine:
         bot_config: Optional[BotInstanceConfig] = None,
         prompt_catalog: Optional[PromptCatalog] = None,
         term_expansion_policy: Optional[MetadataTermExpansionPolicy] = None,
+        metadata_ranking_policy: Optional[MetadataRankingPolicy] = None,
         onboarding_evidence_provider: Optional[OnboardingEvidenceProvider] = None,
         failure_solver: Optional[FailureSolver] = None,
     ) -> None:
@@ -148,6 +146,9 @@ class QuerySynthesisEngine:
         self.bot_config = bot_config or BotInstanceConfig.default()
         self.prompt_catalog = prompt_catalog or PromptCatalog()
         self.term_expansion_policy = term_expansion_policy or CompositeMetadataTermExpansionPolicy.from_bot_config(
+            self.bot_config
+        )
+        self.metadata_ranking_policy = metadata_ranking_policy or CompositeMetadataRankingPolicy.from_bot_config(
             self.bot_config
         )
         self.onboarding_evidence_provider = onboarding_evidence_provider
@@ -189,6 +190,7 @@ class QuerySynthesisEngine:
             self.metadata_provider,
             search_terms=search_terms,
             max_objects=self.max_metadata_objects,
+            ranking_policy=self.metadata_ranking_policy,
         )
         trace["metadata_search_terms"] = search_terms
         trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
@@ -360,12 +362,14 @@ class QuerySynthesisEngine:
                             self.metadata_provider,
                             search_terms=extra_terms,
                             max_objects=self.max_metadata_objects,
+                            ranking_policy=self.metadata_ranking_policy,
                         ),
                     )
                     metadata_objects = rank_metadata_objects(
                         metadata_objects,
                         search_terms=combined_terms,
                         max_objects=self.max_metadata_objects,
+                        ranking_policy=self.metadata_ranking_policy,
                     )
                     trace["metadata_search_terms"] = combined_terms
                     trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
@@ -382,6 +386,7 @@ class QuerySynthesisEngine:
                 message=message,
                 intent=intent,
                 metadata_objects=metadata_objects,
+                domain_hint_packs=self.bot_config.domain_hint_packs,
             )
             attempt_trace["goal_semantic_review"] = {
                 "ok": semantic_review_ok(semantic_issues),
@@ -434,12 +439,14 @@ class QuerySynthesisEngine:
                             self.metadata_provider,
                             search_terms=extra_terms,
                             max_objects=self.max_metadata_objects,
+                            ranking_policy=self.metadata_ranking_policy,
                         ),
                     )
                     metadata_objects = rank_metadata_objects(
                         metadata_objects,
                         search_terms=combined_terms,
                         max_objects=self.max_metadata_objects,
+                        ranking_policy=self.metadata_ranking_policy,
                     )
                     trace["metadata_search_terms"] = combined_terms
                     trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
@@ -463,6 +470,11 @@ class QuerySynthesisEngine:
                 successful_steps=successful_steps,
             )
             attempt_trace["result_sufficiency"] = sufficiency.to_dict()
+            if sufficiency.error:
+                error = sufficiency.error
+                attempt_trace["error"] = error
+                trace["final_error"] = error
+                return QuerySynthesisResult(ok=False, error=error, trace=trace)
             current_step = successful_step_payload(
                 step=len(successful_steps) + 1,
                 query=query,
@@ -525,12 +537,14 @@ class QuerySynthesisEngine:
                             self.metadata_provider,
                             search_terms=extra_terms,
                             max_objects=self.max_metadata_objects,
+                            ranking_policy=self.metadata_ranking_policy,
                         ),
                     )
                     metadata_objects = rank_metadata_objects(
                         metadata_objects,
                         search_terms=combined_terms,
                         max_objects=self.max_metadata_objects,
+                        ranking_policy=self.metadata_ranking_policy,
                     )
                     trace["metadata_search_terms"] = combined_terms
                     trace["metadata_requests"] = getattr(self.metadata_provider, "last_requests", [])
@@ -826,6 +840,7 @@ class QuerySynthesisEngine:
             message=message,
             intent=intent,
             metadata_objects=metadata_objects,
+            domain_hint_packs=self.bot_config.domain_hint_packs,
         )
         attempt_trace["goal_semantic_review"] = {
             "ok": semantic_review_ok(semantic_issues),
@@ -874,6 +889,11 @@ class QuerySynthesisEngine:
             successful_steps=successful_steps,
         )
         attempt_trace["result_sufficiency"] = sufficiency.to_dict()
+        if sufficiency.error:
+            error = sufficiency.error
+            attempt_trace["error"] = error
+            trace["final_error"] = error
+            return QuerySynthesisResult(ok=False, error=error, trace=trace)
         current_step = successful_step_payload(
             step=len(successful_steps) + 1,
             query=query,
@@ -995,6 +1015,7 @@ class QuerySynthesisEngine:
             columns=columns,
             rows=rows,
             query_reasoning=query_reasoning,
+            domain_hint_packs=self.bot_config.domain_hint_packs,
         )
         if deterministic is not None:
             return deterministic
@@ -1062,6 +1083,7 @@ def collect_metadata_objects(
     *,
     search_terms: List[str],
     max_objects: int,
+    ranking_policy: Optional[MetadataRankingPolicy] = None,
 ) -> List[MetadataObject]:
     candidates: Dict[str, MetadataObject] = {}
     for term in search_terms:
@@ -1087,7 +1109,15 @@ def collect_metadata_objects(
     if queryable_candidates:
         candidates = queryable_candidates
 
-    ranked_names = [item.full_name for item in rank_metadata_objects(list(candidates.values()), search_terms, len(candidates))]
+    ranked_names = [
+        item.full_name
+        for item in rank_metadata_objects(
+            list(candidates.values()),
+            search_terms,
+            len(candidates),
+            ranking_policy=ranking_policy,
+        )
+    ]
     result: List[MetadataObject] = []
     for name in ranked_names[:max_objects]:
         item = candidates[name]
@@ -1104,14 +1134,20 @@ def rank_metadata_objects(
     objects: List[MetadataObject],
     search_terms: List[str],
     max_objects: int,
+    ranking_policy: Optional[MetadataRankingPolicy] = None,
 ) -> List[MetadataObject]:
+    effective_policy = ranking_policy or CompositeMetadataRankingPolicy.from_bot_config()
     return sorted(
         objects,
-        key=lambda item: (-metadata_candidate_score(item, search_terms), item.full_name),
+        key=lambda item: (-metadata_candidate_score(item, search_terms, effective_policy), item.full_name),
     )[:max_objects]
 
 
-def metadata_candidate_score(item: MetadataObject, search_terms: List[str]) -> int:
+def metadata_candidate_score(
+    item: MetadataObject,
+    search_terms: List[str],
+    ranking_policy: MetadataRankingPolicy,
+) -> int:
     full_name = item.full_name
     text = " ".join([full_name, item.synonym]).lower()
     score = 0
@@ -1139,74 +1175,8 @@ def metadata_candidate_score(item: MetadataObject, search_terms: List[str]) -> i
             for word in normalized.split():
                 if len(word) >= 4 and word in text:
                     score += 3
-    score += metadata_structural_fit_score(item, search_terms)
+    score += ranking_policy.score(item, search_terms)
     return score
-
-
-def metadata_structural_fit_score(item: MetadataObject, search_terms: List[str]) -> int:
-    query_text = " ".join(search_terms).lower()
-    if not ("остат" in query_text and any(marker in query_text for marker in ["товар", "номенклатур", "склад", "магазин"])):
-        return 0
-    has_product = metadata_has_field_like(item, ["номенклатур", "товар"], preferred_categories={"dimension"})
-    has_warehouse = metadata_has_field_like(item, ["склад", "магазин"], preferred_categories={"dimension", "attribute"})
-    has_quantity = metadata_has_field_like(
-        item,
-        ["количество", "вналичии", "в наличии", "доступно", "остат"],
-        preferred_categories={"resource", "attribute"},
-        require_numeric=True,
-    )
-    score = 0
-    if has_product:
-        score += 25
-    if has_warehouse:
-        score += 25
-    if has_quantity:
-        score += 25
-    if has_product and has_warehouse:
-        score += 80
-    if has_product and has_warehouse and has_quantity:
-        score += 120
-        if item.full_name.startswith("РегистрНакопления."):
-            score += 40
-        elif item.full_name.startswith("РегистрСведений."):
-            score += 20
-    return score
-
-
-def metadata_has_field_like(
-    item: MetadataObject,
-    terms: List[str],
-    *,
-    preferred_categories: Set[str],
-    require_numeric: bool = False,
-) -> bool:
-    for field_name, details in item.field_details.items():
-        if not is_field_confirmed(details):
-            continue
-        category = str(details.get("_category") or "")
-        if preferred_categories and category not in preferred_categories:
-            continue
-        field_text = " ".join(
-            [
-                field_name,
-                str(details.get("Имя") or details.get("name") or ""),
-                str(details.get("Синоним") or details.get("synonym") or ""),
-                str(details.get("Тип") or details.get("type") or ""),
-            ]
-        ).replace(" ", "").lower()
-        spaced_text = " ".join(
-            [
-                field_name,
-                str(details.get("Имя") or details.get("name") or ""),
-                str(details.get("Синоним") or details.get("synonym") or ""),
-                str(details.get("Тип") or details.get("type") or ""),
-            ]
-        ).lower()
-        if require_numeric and not any(marker in field_text for marker in ["число", "number", "numeric"]):
-            continue
-        if any(term.replace(" ", "").lower() in field_text or term.lower() in spaced_text for term in terms):
-            return True
-    return False
 
 
 def looks_like_full_1c_name(term: str) -> bool:
@@ -1410,6 +1380,7 @@ def goal_to_payload(goal: Optional[GoalDecomposition]) -> Optional[Dict[str, Any
         "final_artifact_type": goal.final_artifact_type,
         "expected_answer_type": goal.expected_answer_type,
         "required_artifacts": [item.to_dict() for item in goal.required_artifacts],
+        "semantic_contract": dict(goal.semantic_contract),
     }
 
 
@@ -1650,11 +1621,10 @@ def should_expand_metadata_after_insufficiency(sufficiency: ResultSufficiencyRev
     return any(
         marker in text
         for marker in [
-            "задолж",
-            "долг",
-            "фактическ",
             "метадан",
             "не получен",
+            "не найден",
+            "отсутств",
             "не подтвержден",
             "не подтверждён",
         ]
@@ -1669,177 +1639,20 @@ def goal_semantic_review_issues(
     message: str = "",
     intent: Optional[IntentResult] = None,
     metadata_objects: List[MetadataObject],
+    domain_hint_packs: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
-    constraints = [constraint for item in (goal.required_artifacts if goal is not None else []) for constraint in item.constraints]
-    haystack = normalized_semantic_text(query, params)
-
-    for constraint in constraints:
-        if constraint.semantic_field == "warehouse_type" and not warehouse_type_filter_reflected(constraint, haystack):
-            issues.append(
-                semantic_issue(
-                    code="required_filter_not_reflected",
-                    message=(
-                        "Запрос не отражает обязательный фильтр warehouse_type из цели. "
-                        "Сохрани ограничение пользователя в запросе: получи подходящие склады или используй "
-                        "проверенное условие по типу склада."
-                    ),
-                )
-            )
-
-    if top_product_aggregate_required(goal=goal, message=message, intent=intent):
-        aggregate_issue = top_product_aggregate_grain_issue(
+    packs = domain_hint_packs if domain_hint_packs is not None else BotInstanceConfig.default().domain_hint_packs
+    if "trade_ru" in packs:
+        issues.extend(trade_ru_semantic_review_issues(
             query=query,
+            params=params,
             goal=goal,
             message=message,
             intent=intent,
             metadata_objects=metadata_objects,
-        )
-        if aggregate_issue is not None:
-            issues.append(aggregate_issue)
-    issues.extend(trade_ru_semantic_review_issues(query=query, message=message, intent=intent))
+        ))
     return issues
-
-
-def top_product_aggregate_required(
-    *,
-    goal: Optional[GoalDecomposition],
-    message: str = "",
-    intent: Optional[IntentResult] = None,
-) -> bool:
-    if goal is not None and goal_requires_top_product_aggregate(goal):
-        return True
-    values = " ".join(
-        [
-            message,
-            getattr(intent, "business_goal", "") if intent is not None else "",
-            " ".join(getattr(intent, "domain_terms", []) or []) if intent is not None else "",
-        ]
-    ).lower()
-    if not any(marker in values for marker in ["больше всего", "наибольш", "максим", "самый больш", "top", "max"]):
-        return False
-    if not any(marker in values for marker in ["товар", "номенклатур", "product"]):
-        return False
-    return any(marker in values for marker in ["остат", "в наличии", "колич", "stock", "quantity"])
-
-
-def warehouse_type_filter_reflected(constraint, haystack: str) -> bool:  # type: ignore[no-untyped-def]
-    if "типсклада" in haystack:
-        return True
-    if "рознич" in haystack or "оптов" in haystack:
-        return True
-    value_terms = semantic_value_terms(str(constraint.value or "") + " " + constraint.raw_user_text)
-    return bool(value_terms and any(term in haystack for term in value_terms))
-
-
-def goal_requires_top_product_aggregate(goal: GoalDecomposition) -> bool:
-    for requirement in goal.required_artifacts:
-        if requirement.type not in {"AggregateTable", "TopNMetricTable", "RankedMetricTable", "RankedStockBalanceTable"}:
-            continue
-        values = " ".join(
-            [requirement.name, requirement.type]
-            + [constraint.semantic_field + " " + str(constraint.value or "") + " " + constraint.raw_user_text for constraint in requirement.constraints]
-        ).lower()
-        if not any(marker in values for marker in ["max", "top", "сам", "больше всего", "наибольш", "максим"]):
-            continue
-        if not any(marker in values for marker in ["product", "номенклат", "товар"]):
-            continue
-        if not any(marker in values for marker in ["stock", "остат", "quantity", "колич"]):
-            continue
-        return True
-    return False
-
-
-def top_product_aggregate_grain_issue(
-    *,
-    query: str,
-    goal: Optional[GoalDecomposition],
-    message: str = "",
-    intent: Optional[IntentResult] = None,
-    metadata_objects: List[MetadataObject],
-) -> Optional[Dict[str, Any]]:
-    normalized_query = " ".join(query.lower().split())
-    if not ("первые" in normalized_query and "упорядочить по" in normalized_query):
-        return None
-    if not goal_has_warehouse_scope(goal) and not query_or_question_has_warehouse_scope(normalized_query, message, intent):
-        return None
-    metadata_by_name = {item.full_name: item for item in metadata_objects if item.full_name}
-    for source in parse_sources(query):
-        if source.object_type != "РегистрНакопления" or source.virtual_table != "Остатки":
-            continue
-        metadata = metadata_for_source(source, metadata_by_name)
-        if metadata is None:
-            continue
-        dimensions = dimensions_for(metadata)
-        resources = resources_for(metadata)
-        if "Номенклатура" not in dimensions or "Склад" not in dimensions:
-            continue
-        if query_groups_product(query) and query_sums_balance_resource(query, resources):
-            return None
-        return semantic_issue(
-            code="aggregate_grain_not_confirmed",
-            message=(
-                "Для top/max товара по остаткам запрос к Остатки() должен агрегировать строки регистра "
-                "до зерна товара: СУММА(<Ресурс>Остаток), СГРУППИРОВАТЬ ПО Номенклатура, сортировка по агрегату. "
-                "Нельзя отвечать ПЕРВЫЕ 1 по одной строке регистра, если у регистра есть дополнительные измерения."
-            ),
-        )
-    return None
-
-
-def goal_has_warehouse_scope(goal: Optional[GoalDecomposition]) -> bool:
-    if goal is None:
-        return False
-    for requirement in goal.required_artifacts:
-        for constraint in requirement.constraints:
-            if constraint.semantic_field in {"warehouse_type", "warehouse", "warehouses"}:
-                return True
-    return False
-
-
-def query_or_question_has_warehouse_scope(
-    normalized_query: str,
-    message: str = "",
-    intent: Optional[IntentResult] = None,
-) -> bool:
-    text = " ".join(
-        [
-            normalized_query,
-            message.lower(),
-            getattr(intent, "business_goal", "").lower() if intent is not None else "",
-            " ".join(getattr(intent, "domain_terms", []) or []).lower() if intent is not None else "",
-        ]
-    )
-    return any(marker in text for marker in ["склад", "магазин", "warehouse"])
-
-
-def query_groups_product(query: str) -> bool:
-    normalized = " ".join(query.lower().split())
-    if "сгруппировать по" not in normalized:
-        return False
-    group_by = normalized.split("сгруппировать по", 1)[1]
-    return "номенклатура" in group_by
-
-
-def query_sums_balance_resource(query: str, resources: Set[str]) -> bool:
-    normalized = " ".join(query.lower().split())
-    if "сумма(" not in normalized:
-        return False
-    if not resources:
-        return "остаток" in normalized
-    return any((resource + "Остаток").lower() in normalized for resource in resources)
-
-
-def normalized_semantic_text(query: str, params: Dict[str, Any]) -> str:
-    return (query + " " + str(params)).replace("_", "").lower()
-
-
-def semantic_value_terms(value: str) -> List[str]:
-    return [
-        token.lower()
-        for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", value)
-        if len(token) >= 4
-    ]
 
 
 def repeats_partial_query(query: str, successful_steps: List[Dict[str, Any]]) -> bool:

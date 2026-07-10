@@ -17,6 +17,8 @@ class SkillRegistry:
     def load_from_dir(cls, root: Path) -> "SkillRegistry":
         registry = cls()
         for path in sorted(root.rglob("*.json")):
+            if not is_loadable_skill_path(path, root):
+                continue
             data = json.loads(path.read_text(encoding="utf-8"))
             if not is_skill_contract_payload(data):
                 continue
@@ -64,3 +66,12 @@ def is_skill_contract_payload(data: object) -> bool:
 def skill_auto_blocked(skill: SkillContract) -> bool:
     health = skill.implementation.get("runtime_health") if isinstance(skill.implementation, dict) else {}
     return isinstance(health, dict) and bool(health.get("auto_blocked"))
+
+
+def is_loadable_skill_path(path: Path, root: Path) -> bool:
+    ignored_directories = {"candidates", "deleted", "evidence", "legacy", "quarantine", "trash"}
+    try:
+        relative_parts = path.relative_to(root).parts[:-1]
+    except ValueError:
+        relative_parts = path.parts[:-1]
+    return not any(part.lower() in ignored_directories for part in relative_parts)

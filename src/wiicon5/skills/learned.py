@@ -9,12 +9,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from wiicon5.conversation.context import ConversationContext
-from wiicon5.execution.runtime import SkillRunResult
+from wiicon5.execution.runtime import SkillPlanExecutionResult, SkillRunResult
 from wiicon5.intent.models import IntentResult
-from wiicon5.models import SkillContract, SkillKind, SkillStatus
+from wiicon5.models import SkillContract, SkillKind, SkillPlan, SkillStatus
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.query.parameterized_lookup import constraints_from_goal_payload, parameterized_lookup_spec_from_query
 from wiicon5.query_synthesis import QuerySynthesisResult
+from wiicon5.skills.learning_gate import LearningGateResult, evaluate_learning_gate
+from wiicon5.skills.query_template_learning import semantic_query_template_spec, skill_from_semantic_template
 from wiicon5.skills.registry import SkillRegistry
 
 
@@ -44,6 +46,7 @@ class LearnedSkillStore:
         self.evidence_dir = self.learned_dir / "evidence"
         self.registry = registry
         self.auto_activate = auto_activate
+        self.last_gate_result: Optional[LearningGateResult] = None
 
     def learn_from_synthesis(
         self,
@@ -55,23 +58,35 @@ class LearnedSkillStore:
         config_fingerprint: str = "",
     ) -> Optional[LearnedSkillWriteResult]:
         if not synthesis_result.ok:
+            self.last_gate_result = None
             return None
         final_query = synthesis_result.trace.get("final_query")
         if not isinstance(final_query, dict):
+            self.last_gate_result = None
             return None
         query = str(final_query.get("query") or "")
-        spec = learned_period_metric_spec(query=query, intent=intent, trace=synthesis_result.trace)
+        spec = semantic_query_template_spec(
+            query=query,
+            params=dict(final_query.get("params") or {}),
+            limit=int(final_query.get("limit") or 100),
+            intent=intent,
+            goal=goal,
+            trace=synthesis_result.trace,
+        )
         if spec is None:
-            spec = learned_parameterized_lookup_spec(
-                query=query,
-                final_query=dict(final_query),
-                goal=goal,
-                trace=synthesis_result.trace,
-            )
-        if spec is None and fixed_query_can_be_reused(query):
-            spec = fixed_query_spec(final_query=dict(final_query), trace=synthesis_result.trace)
-        if spec is None:
+            self.last_gate_result = None
             return None
+        gate = evaluate_learning_gate(
+            intent=intent,
+            goal=goal,
+            synthesis_result=synthesis_result,
+            spec=spec,
+            config_fingerprint=config_fingerprint,
+        )
+        self.last_gate_result = gate
+        if not gate.ok:
+            return None
+        spec["learning_validation"] = gate.to_dict()
         spec = enrich_spec_with_lifecycle(
             spec,
             intent=intent,
@@ -80,7 +95,7 @@ class LearnedSkillStore:
             config_fingerprint=config_fingerprint,
             auto_activate=self.auto_activate,
         )
-        skill = skill_from_spec(spec, intent=intent, goal=goal)
+        skill = skill_from_semantic_template(spec, intent=intent, goal=goal)
         self.active_dir.mkdir(parents=True, exist_ok=True)
         path = self.active_dir / f"{skill.skill_id}.json"
         created = not path.exists()
@@ -185,13 +200,13 @@ def enrich_spec_with_lifecycle(
     result = dict(spec)
     final_query = dict(trace.get("final_query") or {})
     query = str(final_query.get("query") or "")
-    result["metadata_dependency_contract"] = metadata_dependency_contract(result, query=query)
+    result.setdefault("metadata_dependency_contract", metadata_dependency_contract(result, query=query))
     result["evidence"] = {
         "created_from_trace": created_from_trace,
         "question": intent.business_goal,
         "final_query_hash": hash_payload(final_query),
         "result_sample_hash": hash_payload(trace.get("successful_steps", [])),
-        "sufficiency_review": latest_sufficiency_review(trace),
+        "sufficiency_review": compact_sufficiency_review(latest_sufficiency_review(trace)),
         "human_confirmed": False,
         "successful_runs": 1,
         "created_by": "agent",
@@ -227,20 +242,73 @@ class LearnedSkillRuntimeHealthStore:
         invocation_id: str = "",
         inputs: Optional[Dict[str, Any]] = None,
     ) -> None:
+        failed = learned_result_failed(result)
+        self.record_outcome(
+            skill=skill,
+            context=context,
+            accepted=not failed,
+            error=learned_result_error(result),
+            invocation_id=invocation_id,
+            inputs=inputs or {},
+        )
+
+    def record_plan_outcome(
+        self,
+        *,
+        plan: SkillPlan,
+        execution_result: SkillPlanExecutionResult,
+        context: ConversationContext,
+        accepted: bool,
+        error: str = "",
+    ) -> None:
+        traces = {
+            str(item.get("invocation_id") or ""): item
+            for item in execution_result.trace.get("invocations", []) or []
+            if isinstance(item, dict)
+        }
+        for invocation in plan.nodes:
+            skill = self.registry.get(invocation.skill_id)
+            if skill is None or skill.implementation_strategy != "learned_query":
+                continue
+            if invocation.invocation_id not in traces:
+                continue
+            invocation_trace = traces.get(invocation.invocation_id, {})
+            invocation_ok = bool(invocation_trace.get("ok", execution_result.ok))
+            if not execution_result.ok and invocation.invocation_id != execution_result.failed_invocation_id:
+                continue
+            invocation_error = str(invocation_trace.get("error") or error)
+            self.record_outcome(
+                skill=skill,
+                context=context,
+                accepted=accepted and invocation_ok,
+                error="" if accepted and invocation_ok else invocation_error or error or "semantic_result_rejected",
+                invocation_id=invocation.invocation_id,
+                inputs=dict(invocation_trace.get("inputs") or invocation.inputs),
+            )
+
+    def record_outcome(
+        self,
+        *,
+        skill: SkillContract,
+        context: ConversationContext,
+        accepted: bool,
+        error: str = "",
+        invocation_id: str = "",
+        inputs: Optional[Dict[str, Any]] = None,
+    ) -> None:
         if skill.implementation_strategy != "learned_query":
             return
         skill_path = self.active_dir / f"{skill.skill_id}.json"
         if not skill_path.exists():
             return
         health = dict(skill.implementation.get("runtime_health") or default_runtime_health())
-        failed = learned_result_failed(result)
         now = utc_iso()
         health["reuse_count"] = int(health.get("reuse_count") or 0) + 1
         health["last_used_at"] = now
-        if failed:
+        if not accepted:
             health["failure_count"] = int(health.get("failure_count") or 0) + 1
             health["consecutive_failures"] = int(health.get("consecutive_failures") or 0) + 1
-            health["last_error"] = learned_result_error(result)
+            health["last_error"] = error or "semantic_result_rejected"
             health["last_failed_at"] = now
         else:
             health["success_count"] = int(health.get("success_count") or 0) + 1
@@ -255,11 +323,12 @@ class LearnedSkillRuntimeHealthStore:
         self._append_reuse_evidence(
             skill=skill,
             health=health,
-            result=result,
+            result=None,
             context=context,
             invocation_id=invocation_id,
             inputs=inputs or {},
-            failed=failed,
+            failed=not accepted,
+            error=error,
         )
 
     def _patch_skill_file(self, path: Path, health: Dict[str, Any]) -> None:
@@ -273,11 +342,12 @@ class LearnedSkillRuntimeHealthStore:
         *,
         skill: SkillContract,
         health: Dict[str, Any],
-        result: SkillRunResult,
+        result: Optional[SkillRunResult],
         context: ConversationContext,
         invocation_id: str,
         inputs: Dict[str, Any],
         failed: bool,
+        error: str = "",
     ) -> None:
         evidence_dir = self.evidence_dir / skill.skill_id
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -286,9 +356,9 @@ class LearnedSkillRuntimeHealthStore:
             "skill_id": skill.skill_id,
             "invocation_id": invocation_id,
             "question": latest_user_question(context),
-            "ok": result.ok and not failed,
+            "ok": (result.ok if result is not None else True) and not failed,
             "failed": failed,
-            "error": learned_result_error(result),
+            "error": error or (learned_result_error(result) if result is not None else ""),
             "inputs": inputs,
             "runtime_health": health,
         }
@@ -490,6 +560,26 @@ def latest_sufficiency_review(trace: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(attempt, dict) and isinstance(attempt.get("result_sufficiency"), dict):
             return dict(attempt["result_sufficiency"])
     return {}
+
+
+def compact_sufficiency_review(review: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(review, dict):
+        return {}
+    return {
+        key: review.get(key)
+        for key in [
+            "sufficient",
+            "partial",
+            "missing_facts",
+            "next_query_goal",
+            "needs_clarification",
+            "clarification_question",
+            "clarification_options",
+            "reasoning",
+            "error",
+        ]
+        if key in review
+    }
 
 
 def hash_payload(payload: Any) -> str:
