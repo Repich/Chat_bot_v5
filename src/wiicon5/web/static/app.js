@@ -301,18 +301,49 @@
       container.innerHTML = "<div class=\"message assistant\">Новая сессия создана. Задайте вопрос по WIICON или WIIC.</div>";
       return;
     }
-    container.innerHTML = messages.map((message) => renderMessage(message.role, message.content)).join("");
+    container.innerHTML = messages.map((message) => renderMessage(message.role, message.content, message.ts)).join("");
     container.scrollTop = container.scrollHeight;
   }
 
-  function renderMessage(role, content) {
-    const cssRole = role === "user" ? "user" : role === "error" ? "error" : "assistant";
-    return `<div class="message ${cssRole}">${renderers.escapeHtml(content || "")}</div>`;
+  function formatMessageTime(timestamp) {
+    if (!timestamp) {
+      return null;
+    }
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    return {
+      iso: date.toISOString(),
+      short: new Intl.DateTimeFormat("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(date),
+      full: new Intl.DateTimeFormat("ru-RU", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(date),
+    };
   }
 
-  function appendMessage(role, content) {
+  function renderMessage(role, content, timestamp) {
+    const cssRole = role === "user" ? "user" : role === "error" ? "error" : "assistant";
+    const time = formatMessageTime(timestamp);
+    const timeLabel = role === "user" ? "Отправлено" : role === "error" ? "Ошибка" : "Ответ";
+    const timeHtml = time
+      ? `<time class="message-time" datetime="${renderers.escapeHtml(time.iso)}" title="${renderers.escapeHtml(time.full)}">${timeLabel} ${renderers.escapeHtml(time.short)}</time>`
+      : "";
+    return `<div class="message ${cssRole}"><div class="message-content">${renderers.escapeHtml(content || "")}</div>${timeHtml}</div>`;
+  }
+
+  function appendMessage(role, content, timestamp) {
     const container = requiredElement("messages");
-    container.insertAdjacentHTML("beforeend", renderMessage(role, content));
+    container.insertAdjacentHTML("beforeend", renderMessage(role, content, timestamp || new Date().toISOString()));
     container.scrollTop = container.scrollHeight;
   }
 
@@ -325,7 +356,7 @@
     }
     const sessionId = currentSessionId();
     input.value = "";
-    appendMessage("user", message);
+    appendMessage("user", message, new Date().toISOString());
     const payload = { message, session_id: sessionId };
     const productRef = requiredElement("productRefInput").value.trim();
     if (productRef) {
@@ -334,7 +365,13 @@
     try {
       const data = await api.fetchJson("/chat", { method: "POST", body: payload });
       const result = data.result || {};
-      appendMessage("assistant", result.message || renderers.formatJson(result));
+      const responseMessages = Array.isArray(data.messages) ? data.messages : [];
+      const assistantMessage = responseMessages.slice().reverse().find((item) => item.role === "assistant");
+      appendMessage(
+        "assistant",
+        result.message || renderers.formatJson(result),
+        assistantMessage && assistantMessage.ts ? assistantMessage.ts : new Date().toISOString(),
+      );
       rememberSession(sessionId);
       await loadSessions();
       startTitleBlink("Новое сообщение");

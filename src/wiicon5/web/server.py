@@ -399,8 +399,18 @@ def make_handler(
                     return
                 session_id = str(payload.get("session_id") or "default")
                 seed_context_from_payload(agent, session_id, payload)
+                context = agent.memory.get_or_create(session_id)
+                message_offset = len(context.messages)
                 result = agent.handle(message, session_id=session_id)
-                self._send_json(200, {"ok": True, "result": result.to_dict()})
+                new_messages = context.messages[message_offset:]
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "result": result.to_dict(),
+                        "messages": [item.to_dict() for item in new_messages],
+                    },
+                )
             except Exception as exc:  # Keep HTTP layer diagnostic rather than crashing the server.
                 self._send_json(500, {"ok": False, "error": str(exc)})
 

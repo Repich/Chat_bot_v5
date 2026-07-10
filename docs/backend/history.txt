@@ -1,3 +1,6 @@
+5.0.0-alpha.87
+- POST `/chat` возвращает сохраненные события текущего обмена с серверными timestamps, чтобы web-клиент показывал фактическое время ответа и сохранял его в истории диалога.
+
 5.0.0-alpha.86
 - Learned skills переведены на SemanticSkillContract v2 и semantic_query_template: сохраняется полный успешно выполненный запрос с JOIN, WHERE, GROUP BY, ORDER BY и проверенными параметрами без lossy-реконструкции.
 - Skill matching теперь fail-closed различает operation, measure, aggregation, grain, dimensions, ranking, filter roles, fixed values и result columns; сумма/среднее, максимум/минимум и список/количество не взаимозаменяемы.
