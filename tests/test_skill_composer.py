@@ -139,6 +139,67 @@ class SkillComposerTests(unittest.TestCase):
         self.assertEqual(result.plan.nodes[0].skill_id, "learned_product_price_lookup")
         self.assertEqual(result.plan.nodes[0].inputs["filters"][0]["semantic_field"], "product_name")
 
+    def test_composer_accepts_fixed_filter_implied_by_goal_subject(self) -> None:
+        skill = SkillContract.from_dict(
+            {
+                "skill_id": "learned_retail_price_lookup",
+                "version": "0.1.0",
+                "kind": "data_acquisition",
+                "status": "verified",
+                "description": "Retail prices by product.",
+                "capabilities": ["learned_query", "semantic_query_template"],
+                "inputs": [{"name": "filters", "type": "SemanticFilterList", "required": True}],
+                "outputs": [{"name": "table", "type": "PriceTable", "required": True}],
+                "supported_filter_roles": ["product", "price_type"],
+                "implementation_strategy": "learned_query",
+                "semantic_contract": {
+                    "schema_version": 2,
+                    "subject_terms": ["розничные цены"],
+                    "operation": "list",
+                    "required_filter_roles": ["product"],
+                    "optional_filter_roles": ["product", "price_type"],
+                    "fixed_filter_values": {"price_type": "розничная"},
+                    "result_columns": ["Номенклатура", "Цена"],
+                    "ranking": {"enabled": False},
+                    "match_mode": "generalized",
+                },
+                "implementation": {"kind": "semantic_query_template", "schema_version": 2},
+            }
+        )
+        composer = SkillComposer(SkillRegistry([skill]))
+        goal = GoalDecomposition(
+            business_goal="Покажи розничные цены на куртки",
+            final_artifact_type="PriceTable",
+            expected_answer_type="table",
+            required_artifacts=[
+                ArtifactRequirement(
+                    name="prices",
+                    type="PriceTable",
+                    constraints=[SemanticFilter("product", "contains", "куртки", "куртки")],
+                    required_columns=["Номенклатура", "Цена"],
+                )
+            ],
+            semantic_contract={
+                "schema_version": 2,
+                "subject_terms": ["розничные цены", "куртки"],
+                "operation": "list",
+                "required_filter_roles": ["product"],
+                "result_columns": ["Номенклатура", "Цена"],
+                "ranking": {"enabled": False},
+            },
+        )
+
+        result = composer.compose(goal)
+
+        self.assertEqual(result.gaps, [])
+        self.assertIsNotNone(result.plan)
+        assert result.plan is not None
+        self.assertEqual(result.plan.nodes[0].skill_id, "learned_retail_price_lookup")
+        self.assertEqual(
+            [item["semantic_field"] for item in result.plan.nodes[0].inputs["filters"]],
+            ["product"],
+        )
+
     def test_composer_reports_gap_when_existing_skill_needs_filter_extension(self) -> None:
         base_registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         warehouse_skill = base_registry.get("get_warehouses")
