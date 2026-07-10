@@ -205,6 +205,24 @@ class QuerySynthesisTests(unittest.TestCase):
         assert match is not None
         self.assertEqual(match.value["УникальныйИдентификатор"], right_ref["УникальныйИдентификатор"])
 
+    def test_postprocess_renames_source_alias_that_conflicts_with_output_column(self) -> None:
+        query = (
+            "ВЫБРАТЬ Номенклатура.Наименование КАК Номенклатура, "
+            "Цены.Цена КАК Цена "
+            "ИЗ РегистрСведений.Цены КАК Цены "
+            "ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК Номенклатура "
+            "ПО Цены.Номенклатура = Номенклатура.Ссылка "
+            "ГДЕ НЕ Номенклатура.ПометкаУдаления"
+        )
+
+        result = postprocess_1c_query(query)
+
+        self.assertIn("КАК НоменклатураИсточник", result)
+        self.assertIn("НоменклатураИсточник.Наименование КАК Номенклатура", result)
+        self.assertIn("НоменклатураИсточник.Ссылка", result)
+        self.assertIn("НоменклатураИсточник.ПометкаУдаления", result)
+        self.assertNotIn("Справочник.Номенклатура КАК Номенклатура ", result)
+
     def test_sufficiency_accepts_empty_debt_metric_as_found_no_debt_result(self) -> None:
         review = deterministic_partial_review(
             question="Кому мы должны за последнюю поставку и сколько?",
@@ -2169,8 +2187,8 @@ class QuerySynthesisTests(unittest.TestCase):
 
         result = postprocess_1c_query(query)
 
-        self.assertIn("ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК Номенклатура", result)
-        self.assertIn("Номенклатура.Наименование ПОДОБНО &Шаблон", result)
+        self.assertIn("ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Номенклатура КАК НоменклатураИсточник", result)
+        self.assertIn("НоменклатураИсточник.Наименование ПОДОБНО &Шаблон", result)
         self.assertNotIn("Цены.Номенклатура ПОДОБНО &Шаблон", result)
 
     def test_postprocess_adds_empty_parentheses_to_accumulation_virtual_table(self) -> None:

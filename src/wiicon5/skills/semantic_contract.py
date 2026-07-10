@@ -355,17 +355,18 @@ def semantic_contract_compatibility(
         reasons.append("result_columns_match")
         score += 10
 
-    if requested.subject_terms and available.subject_terms:
-        matches = sum(
-            1
-            for term in requested.subject_terms
-            if any(semantic_terms_match(term, candidate) for candidate in available.subject_terms)
-        )
-        if matches == 0:
-            rejected.append("subject_mismatch")
+    requested_qualifiers = semantic_subject_qualifiers(requested)
+    if requested_qualifiers:
+        unmatched_subjects = [
+            term
+            for term in requested_qualifiers
+            if not any(semantic_terms_match(term, candidate) for candidate in available.subject_terms)
+        ]
+        if unmatched_subjects:
+            rejected.append("subject_mismatch:" + ",".join(unmatched_subjects))
         else:
             reasons.append("subject_match")
-            score += min(20, matches * 5)
+            score += min(20, len(requested_qualifiers) * 5)
 
     return SemanticCompatibility(
         compatible=not rejected,
@@ -659,6 +660,22 @@ def semantic_measure_roles_match(left: str, right: str) -> bool:
         any(semantic_terms_match(term, candidate) for candidate in left_specific)
         for term in right_specific
     )
+
+
+def semantic_subject_qualifiers(contract: SemanticSkillContract) -> List[str]:
+    structural_terms = unique(
+        [
+            *(item.role for item in contract.measures if item.role),
+            *contract.result_columns,
+            *contract.grain,
+            *contract.dimensions,
+        ]
+    )
+    return [
+        term
+        for term in contract.subject_terms
+        if not any(semantic_terms_match(term, structural) for structural in structural_terms)
+    ]
 
 
 def fixed_filter_values_match(left: Any, right: Any) -> bool:

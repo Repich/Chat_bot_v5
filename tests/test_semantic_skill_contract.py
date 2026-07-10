@@ -95,6 +95,25 @@ class SemanticSkillContractTests(unittest.TestCase):
         self.assertFalse(compatibility.compatible)
         self.assertIn("measure_mismatch:сумма задолженности", compatibility.rejection_reasons)
 
+    def test_unrepresented_debt_qualifier_rejects_document_amount_contract(self) -> None:
+        requested = SemanticSkillContract(
+            subject_terms=["контрагент", "сумма документа", "задолженность"],
+            operation="lookup",
+            measures=[SemanticMeasure(role="сумма документа", unit="currency")],
+            result_columns=["Контрагент", "СуммаДокумента"],
+        )
+        available = SemanticSkillContract(
+            subject_terms=["отгрузка", "контрагент", "сумма документа"],
+            operation="lookup",
+            measures=[SemanticMeasure(role="сумма документа", unit="currency")],
+            result_columns=["Контрагент", "СуммаДокумента"],
+        )
+
+        compatibility = semantic_contract_compatibility(requested, available)
+
+        self.assertFalse(compatibility.compatible)
+        self.assertIn("subject_mismatch:задолженность", compatibility.rejection_reasons)
+
     def test_outdated_contract_is_never_compatible(self) -> None:
         requested = SemanticSkillContract(subject_terms=["остатки"], operation="balance")
         outdated = SemanticSkillContract.from_dict(

@@ -1708,8 +1708,55 @@ def postprocess_1c_query(query: str) -> str:
     )
     text = normalize_direct_parameter_in_list_operator(text)
     text = move_virtual_balance_in_list_param_filters_to_where(text)
+    text = rename_ambiguous_source_aliases(text)
     text = remove_redundant_reference_joins(text)
     return text
+
+
+def rename_ambiguous_source_aliases(query: str) -> str:
+    from_match = re.search(r"\bИЗ\b", query, flags=re.IGNORECASE)
+    if from_match is None:
+        return query
+    selected_aliases = {
+        item.lower()
+        for item in re.findall(
+            r"\bКАК\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)\b",
+            query[: from_match.start()],
+            flags=re.IGNORECASE,
+        )
+    }
+    result = query
+    used_aliases = {source.alias.lower() for source in parse_sources(query)} | selected_aliases
+    for source in parse_sources(query):
+        if source.alias.lower() not in selected_aliases:
+            continue
+        replacement = unique_source_alias(source.alias, used_aliases)
+        source_pattern = r"\s+".join(re.escape(part) for part in source.source.split())
+        declaration = re.compile(
+            rf"(\b(?:ИЗ|СОЕДИНЕНИЕ)\s+{source_pattern}\s+КАК\s+){re.escape(source.alias)}\b",
+            flags=re.IGNORECASE,
+        )
+        result, changed = declaration.subn(rf"\g<1>{replacement}", result, count=1)
+        if not changed:
+            continue
+        result = re.sub(
+            rf"\b{re.escape(source.alias)}\s*\.",
+            f"{replacement}.",
+            result,
+            flags=re.IGNORECASE,
+        )
+        used_aliases.add(replacement.lower())
+    return result
+
+
+def unique_source_alias(alias: str, used_aliases: set[str]) -> str:
+    base = f"{alias}Источник"
+    candidate = base
+    index = 2
+    while candidate.lower() in used_aliases:
+        candidate = f"{base}{index}"
+        index += 1
+    return candidate
 
 
 def normalize_direct_parameter_in_list_operator(query: str) -> str:
