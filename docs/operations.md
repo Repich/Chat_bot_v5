@@ -29,6 +29,9 @@ Bot instance по умолчанию читается из:
 bot_instances/local/bot.yaml
 ```
 
+Выделенный WIIC-инстанс и синхронизация его документации описаны в
+`docs/wiic_instance_operations.md`.
+
 Полезные переменные bot workspace:
 
 - `WIICON5_BOT_ID`: id экземпляра, например `local` или `client_a`;

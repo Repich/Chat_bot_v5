@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.memory import ConversationMemory
 from wiicon5.instance_knowledge.answer import KnowledgeAnswerService
-from wiicon5.instance_knowledge.importers import JsonKnowledgeImporter, html_to_markdown
+from wiicon5.instance_knowledge.importers import ConfluenceClient, JsonKnowledgeImporter, html_to_markdown
 from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
 from wiicon5.instance_knowledge.models import KnowledgePage
 from wiicon5.instance_knowledge.storage import KnowledgeRepository
@@ -57,6 +58,28 @@ class InstanceKnowledgeTests(unittest.TestCase):
         self.assertEqual(pages[0].version, 7)
         self.assertEqual(pages[0].space_key, "BRIT")
         self.assertEqual(pages[0].source_url, "https://bwiki.example/pages/viewpage.action?pageId=20")
+
+    def test_confluence_client_walks_descendants_with_same_origin_rest(self) -> None:
+        payloads = {
+            "/rest/api/content/10?": confluence_payload("10", "1C WIIC", "<p>Корень</p>", []),
+            "/rest/api/content/10/child/page?": {
+                "results": [confluence_payload("20", "Требования", "<p>Инструкция</p>", [{"id": "10", "title": "1C WIIC"}])],
+                "limit": 100,
+            },
+            "/rest/api/content/20/child/page?": {"results": [], "limit": 100},
+        }
+
+        def fake_urlopen(request, timeout=0):
+            for marker, payload in payloads.items():
+                if marker in request.full_url:
+                    return FakeHttpResponse(payload)
+            raise AssertionError(request.full_url)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            pages = ConfluenceClient(base_url="https://bwiki.example", headers={"Cookie": "hidden"}).fetch_tree("10")
+        self.assertEqual([page.page_id for page in pages], ["10", "20"])
+        self.assertEqual(pages[1].parent_id, "10")
+        self.assertEqual(pages[1].ancestor_titles, ["1C WIIC"])
 
     def test_sync_creates_immutable_snapshots_and_supports_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -292,6 +315,33 @@ def prepared_repository(root: Path, *, updated_at: str = "2026-07-01T00:00:00Z")
     if not result.ok:
         raise AssertionError(result.error)
     return repository
+
+
+def confluence_payload(page_id: str, title: str, body: str, ancestors):
+    return {
+        "id": page_id,
+        "title": title,
+        "body": {"storage": {"value": body}},
+        "ancestors": ancestors,
+        "version": {"number": 1, "when": "2026-07-01T00:00:00Z"},
+        "space": {"key": "BRIT"},
+        "_links": {"webui": f"/pages/viewpage.action?pageId={page_id}"},
+    }
+
+
+class FakeHttpResponse:
+    def __init__(self, payload) -> None:
+        self.status = 200
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
 
 
 if __name__ == "__main__":

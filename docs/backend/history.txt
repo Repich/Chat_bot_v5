@@ -1,3 +1,11 @@
+5.0.0-alpha.88
+- Добавлена instance-scoped база знаний для документации конкретной системы: неизменяемые snapshots, manifest изменений, page hierarchy, provenance, freshness и безопасный rollback.
+- Реализован read-only импорт дерева Confluence/BWiki через REST, а также импорт JSON и локального каталога HTML/Markdown без сохранения credentials.
+- Документальные ответы проходят отдельный grounded LLM review, требуют использованные chunk IDs и получают проверенные ссылки/версии/даты на стороне приложения.
+- Документация передается в decomposition/query synthesis как терминологический контекст, но не заменяет verified MCP/onboarding metadata.
+- Создан изолированный bot instance `wiic_bwiki`, CLI синхронизации и запуска на порту 7786; приватные snapshots исключены из Git.
+- Добавлены knowledge status/search/page/sync/activate API и регрессионные тесты изоляции, импорта, отката, поиска, grounded sources и маршрута без MCP.
+
 5.0.0-alpha.87
 - POST `/chat` возвращает сохраненные события текущего обмена с серверными timestamps, чтобы web-клиент показывал фактическое время ответа и сохранял его в истории диалога.
 
