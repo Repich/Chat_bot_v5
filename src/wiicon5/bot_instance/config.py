@@ -6,6 +6,20 @@ from typing import Any, Dict, List, Mapping, Optional
 
 
 @dataclass(frozen=True)
+class InstanceKnowledgeConfig:
+    enabled: bool = False
+    answer_enabled: bool = True
+    source_kind: str = "confluence"
+    base_url: str = ""
+    root_page_id: str = ""
+    space_key: str = ""
+    stale_after_days: int = 730
+    search_top_k: int = 8
+    sync_timeout_seconds: float = 30.0
+    max_pages: int = 5000
+
+
+@dataclass(frozen=True)
 class BotInstanceConfig:
     bot_id: str = "local"
     bot_name: str = "WIICON ChatBot 5"
@@ -32,6 +46,7 @@ class BotInstanceConfig:
         "Это вне моей зоны: я работаю с WIICON/WIIC и данными 1С. По погоде лучше познакомлю с отличным синоптиком."
     )
     out_of_scope_answer: str = "Это вне моей зоны: я работаю с WIICON/WIIC, данными 1С и диагностикой связанных запросов."
+    knowledge: InstanceKnowledgeConfig = field(default_factory=InstanceKnowledgeConfig)
 
     @classmethod
     def default(cls) -> "BotInstanceConfig":
@@ -48,6 +63,7 @@ class BotInstanceConfig:
         bot = dict(payload.get("bot") or {})
         baseline = dict(payload.get("baseline") or {})
         answers = dict(payload.get("answers") or {})
+        knowledge = dict(payload.get("knowledge") or {})
         return cls(
             bot_id=str(bot.get("id") or "local"),
             bot_name=str(bot.get("name") or "WIICON ChatBot 5"),
@@ -65,6 +81,18 @@ class BotInstanceConfig:
                 answers.get("out_of_scope_weather") or cls.default().out_of_scope_weather_answer
             ),
             out_of_scope_answer=str(answers.get("out_of_scope_default") or cls.default().out_of_scope_answer),
+            knowledge=InstanceKnowledgeConfig(
+                enabled=as_bool(knowledge.get("enabled"), default=False),
+                answer_enabled=as_bool(knowledge.get("answer_enabled"), default=True),
+                source_kind=str(knowledge.get("source_kind") or "confluence"),
+                base_url=str(knowledge.get("base_url") or ""),
+                root_page_id=str(knowledge.get("root_page_id") or ""),
+                space_key=str(knowledge.get("space_key") or ""),
+                stale_after_days=as_int(knowledge.get("stale_after_days"), default=730, minimum=1),
+                search_top_k=as_int(knowledge.get("search_top_k"), default=8, minimum=1, maximum=20),
+                sync_timeout_seconds=as_float(knowledge.get("sync_timeout_seconds"), default=30.0, minimum=1.0),
+                max_pages=as_int(knowledge.get("max_pages"), default=5000, minimum=1),
+            ),
         )
 
 
@@ -174,3 +202,20 @@ def as_list(value: Any) -> List[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return [str(value)]
+
+
+def as_int(value: Any, *, default: int, minimum: int, maximum: Optional[int] = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    parsed = max(minimum, parsed)
+    return min(parsed, maximum) if maximum is not None else parsed
+
+
+def as_float(value: Any, *, default: float, minimum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, parsed)
