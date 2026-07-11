@@ -5,11 +5,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from wiicon5.agent.orchestrator import AgentOrchestrator
+from wiicon5.bot_instance import BotInstanceConfig
+from wiicon5.conversation.memory import ConversationMemory
+from wiicon5.instance_knowledge.answer import KnowledgeAnswerService
 from wiicon5.instance_knowledge.importers import JsonKnowledgeImporter, html_to_markdown
 from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
 from wiicon5.instance_knowledge.models import KnowledgePage
 from wiicon5.instance_knowledge.storage import KnowledgeRepository
 from wiicon5.instance_knowledge.sync import KnowledgeSyncService, knowledge_auth_headers
+from wiicon5.intent.decomposer import DecompositionResult
+from wiicon5.intent.models import IntentResult, IntentType
+from wiicon5.llm.client import ScriptedLLMClient
+from wiicon5.skills.registry import SkillRegistry
+from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 
 
 class InstanceKnowledgeTests(unittest.TestCase):
@@ -132,6 +141,116 @@ class InstanceKnowledgeTests(unittest.TestCase):
             {"Authorization": "Bearer secret"},
         )
 
+    def test_bot_instance_parses_knowledge_configuration(self) -> None:
+        config = BotInstanceConfig.from_mapping(
+            {
+                "bot": {"id": "wiic"},
+                "knowledge": {
+                    "enabled": True,
+                    "base_url": "https://bwiki.example",
+                    "root_page_id": "177957241",
+                    "stale_after_days": "365",
+                    "search_top_k": "6",
+                },
+            }
+        )
+        self.assertTrue(config.knowledge.enabled)
+        self.assertEqual(config.knowledge.root_page_id, "177957241")
+        self.assertEqual(config.knowledge.stale_after_days, 365)
+        self.assertEqual(config.knowledge.search_top_k, 6)
+
+    def test_grounded_answer_adds_verified_source_and_stale_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = prepared_repository(Path(temp_dir), updated_at="2020-01-01T00:00:00Z")
+            knowledge_base = InstanceKnowledgeBase(repository, stale_after_days=365)
+            hit = knowledge_base.search("Как исправить ошибку статуса 3PL?")[0]
+            llm = ScriptedLLMClient(
+                [
+                    {
+                        "answerable": True,
+                        "answer": "Проверьте очередь обмена и повторите отправку.",
+                        "used_chunk_ids": [hit.chunk_id],
+                        "confidence": "high",
+                        "needs_live_data": False,
+                        "contradictions": [],
+                    }
+                ]
+            )
+            result = KnowledgeAnswerService(knowledge_base=knowledge_base, llm_client=llm).answer(
+                "Как исправить ошибку статуса 3PL?",
+                ConversationMemory().get_or_create("s1"),
+            )
+        self.assertTrue(result.answerable)
+        self.assertIn("Проверьте очередь обмена", result.answer)
+        self.assertIn("давно не обновлялся", result.answer)
+        self.assertIn("[Ошибки интеграции 3PL](https://bwiki.example/pages/1)", result.answer)
+
+    def test_grounded_answer_rejects_unknown_source_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            knowledge_base = InstanceKnowledgeBase(prepared_repository(Path(temp_dir)))
+            llm = ScriptedLLMClient(
+                [
+                    {
+                        "answerable": True,
+                        "answer": "Ответ",
+                        "used_chunk_ids": ["invented"],
+                        "confidence": "high",
+                        "needs_live_data": False,
+                        "contradictions": [],
+                    }
+                ]
+            )
+            result = KnowledgeAnswerService(knowledge_base=knowledge_base, llm_client=llm).answer(
+                "Как исправить ошибку статуса 3PL?",
+                ConversationMemory().get_or_create("s1"),
+            )
+        self.assertFalse(result.answerable)
+        self.assertIn("unknown evidence", result.error)
+
+    def test_orchestrator_answers_documentation_question_without_skill_or_mcp(self) -> None:
+        question = "Почему не поступил статус успешной интеграции в 3PL?"
+        decomposition = DecompositionResult(
+            intent=IntentResult(
+                intent_type=IntentType.GENERAL_QUESTION,
+                business_goal=question,
+                requires_1c_data=False,
+                expected_output="answer",
+                domain_terms=["3PL", "статус"],
+                relevant=True,
+            )
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            knowledge_base = InstanceKnowledgeBase(prepared_repository(root))
+            hit = knowledge_base.search(question)[0]
+            answerer = KnowledgeAnswerService(
+                knowledge_base=knowledge_base,
+                llm_client=ScriptedLLMClient(
+                    [
+                        {
+                            "answerable": True,
+                            "answer": "Проверьте очередь обмена.",
+                            "used_chunk_ids": [hit.chunk_id],
+                            "confidence": "high",
+                            "needs_live_data": False,
+                            "contradictions": [],
+                        }
+                    ]
+                ),
+            )
+            orchestrator = AgentOrchestrator(
+                registry=SkillRegistry(),
+                decomposer=ScriptedGoalDecomposer({question: decomposition}),
+                knowledge_answerer=answerer,
+                trace_root=root / "runs",
+            )
+            result = orchestrator.handle(question, session_id="s1")
+            trace = Path(result.trace_path or "")
+            answer_trace_exists = (trace / "knowledge/answer.json").exists()
+        self.assertEqual(result.source, "instance_knowledge")
+        self.assertIn("Проверьте очередь обмена", result.message)
+        self.assertTrue(answer_trace_exists)
+
 
 def page_payload(page_id: str, title: str, content: str, *, updated_at: str = "2026-07-01T00:00:00Z"):
     return {
@@ -143,6 +262,36 @@ def page_payload(page_id: str, title: str, content: str, *, updated_at: str = "2
         "updated_at": updated_at,
         "version": 1,
     }
+
+
+def prepared_repository(root: Path, *, updated_at: str = "2026-07-01T00:00:00Z") -> KnowledgeRepository:
+    export = root / "knowledge-export.json"
+    export.write_text(
+        json.dumps(
+            {
+                "pages": [
+                    page_payload(
+                        "1",
+                        "Ошибки интеграции 3PL",
+                        "# Успешная интеграция в 3PL\nЕсли статус не поступил, проверьте очередь обмена.",
+                        updated_at=updated_at,
+                    )
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    repository = KnowledgeRepository(root / "knowledge")
+    result = KnowledgeSyncService(
+        repository=repository,
+        source_kind="confluence",
+        base_url="https://bwiki.example",
+        root_page_id="1",
+    ).sync(input_json=export)
+    if not result.ok:
+        raise AssertionError(result.error)
+    return repository
 
 
 if __name__ == "__main__":

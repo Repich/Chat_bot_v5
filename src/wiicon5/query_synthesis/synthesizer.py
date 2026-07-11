@@ -20,6 +20,7 @@ from wiicon5.knowledge.metadata import (
     metadata_object_trust,
 )
 from wiicon5.knowledge.onboarding_evidence import OnboardingEvidenceProvider
+from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
 from wiicon5.llm.client import LLMClient, LLMProviderError
 from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpQueryRequest, normalize_mcp_rows
@@ -133,6 +134,7 @@ class QuerySynthesisEngine:
         metadata_ranking_policy: Optional[MetadataRankingPolicy] = None,
         onboarding_evidence_provider: Optional[OnboardingEvidenceProvider] = None,
         failure_solver: Optional[FailureSolver] = None,
+        instance_knowledge: Optional[InstanceKnowledgeBase] = None,
     ) -> None:
         self.llm_client = llm_client
         self.metadata_provider = metadata_provider
@@ -153,6 +155,7 @@ class QuerySynthesisEngine:
         )
         self.onboarding_evidence_provider = onboarding_evidence_provider
         self.failure_solver = failure_solver
+        self.instance_knowledge = instance_knowledge
 
     def run(
         self,
@@ -164,6 +167,16 @@ class QuerySynthesisEngine:
         gaps: List[Dict[str, Any]],
     ) -> QuerySynthesisResult:
         trace: Dict[str, Any] = {"gaps": list(gaps)}
+        instance_knowledge = (
+            self.instance_knowledge.evidence_pack(
+                message,
+                top_k=self.bot_config.knowledge.search_top_k,
+                max_chars=10000,
+            )
+            if self.instance_knowledge is not None
+            else {"available": False}
+        )
+        trace["instance_knowledge"] = instance_knowledge
         reset_metadata_request_log(self.metadata_provider)
         try:
             discovery = self.llm_client.complete_json(
@@ -173,6 +186,7 @@ class QuerySynthesisEngine:
                     "intent": intent.to_dict(),
                     "goal": goal_to_payload(goal),
                     "conversation_context": context.to_packet(),
+                    "instance_knowledge": instance_knowledge,
                     "gaps": gaps,
                     "schema": {
                         "metadata_search_terms": ["term"],
@@ -236,6 +250,7 @@ class QuerySynthesisEngine:
                         "conversation_context": context.to_packet(),
                         "metadata_objects": [metadata_object_summary(item) for item in metadata_objects],
                         "onboarding_evidence": onboarding_evidence,
+                        "instance_knowledge": instance_knowledge,
                         "hypothesis": discovery.get("hypothesis"),
                         "draft_query": discovery.get("draft_query"),
                         "previous_error": previous_error,

@@ -13,6 +13,7 @@ from wiicon5.execution.runtime import SkillPlanExecutionResult, SkillPlanExecuto
 from wiicon5.intent.decomposer import GoalDecomposer
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.intent.relevance_gate import RelevanceGate
+from wiicon5.instance_knowledge.answer import KnowledgeAnswerService
 from wiicon5.models import GapResolution, SkillGap, SkillPlan
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
@@ -85,6 +86,7 @@ class AgentOrchestrator:
         baseline_intent_policy: Optional[BaselineIntentPolicy] = None,
         skill_execution_reviewer: Optional[SkillExecutionPostReviewer] = None,
         learned_health_store: Optional[LearnedSkillRuntimeHealthStore] = None,
+        knowledge_answerer: Optional[KnowledgeAnswerService] = None,
     ) -> None:
         self.registry = registry
         self.decomposer = decomposer
@@ -101,6 +103,7 @@ class AgentOrchestrator:
         self.clarification_resolver = clarification_resolver or ClarificationResolver()
         self.skill_execution_reviewer = skill_execution_reviewer
         self.learned_health_store = learned_health_store
+        self.knowledge_answerer = knowledge_answerer
         self.trace_writer = TraceWriter(trace_root or Path("runs"))
 
     def handle(self, message: str, *, session_id: str = "") -> AgentRunResult:
@@ -150,6 +153,9 @@ class AgentOrchestrator:
 
         decomposition = self.decomposer.decompose(message, context)
         run_trace.write_json("intent/intent_response.json", {"intent": decomposition.intent.to_dict()})
+        decomposition_knowledge = getattr(self.decomposer, "last_knowledge_evidence", None)
+        if isinstance(decomposition_knowledge, dict):
+            run_trace.write_json("knowledge/decomposition_evidence.json", decomposition_knowledge)
 
         if is_llm_unavailable_intent(decomposition.intent):
             result = AgentRunResult(
@@ -161,6 +167,28 @@ class AgentOrchestrator:
             run_trace.write_json("result/result.json", result.to_dict())
             self._record_assistant_and_save(context, result)
             return result
+
+        if self.knowledge_answerer is not None and not decomposition.intent.requires_1c_data:
+            knowledge_result = self.knowledge_answerer.answer(message, context)
+            run_trace.write_json("knowledge/answer.json", knowledge_result.to_dict())
+            if knowledge_result.answerable:
+                artifact = Artifact(
+                    name="knowledge_answer",
+                    type="UserAnswer",
+                    value=knowledge_result.answer,
+                    provenance=[f"instance_knowledge:{item}" for item in knowledge_result.used_chunk_ids],
+                )
+                result = AgentRunResult(
+                    source="instance_knowledge",
+                    message=knowledge_result.answer,
+                    intent=decomposition.intent,
+                    goal=decomposition.goal,
+                    final_artifact=artifact,
+                    trace_path=str(run_trace.path),
+                )
+                run_trace.write_json("result/result.json", result.to_dict())
+                self._record_assistant_and_save(context, result)
+                return result
 
         if not self.relevance_gate.is_relevant(decomposition.intent):
             result = AgentRunResult(

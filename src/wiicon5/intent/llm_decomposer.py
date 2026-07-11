@@ -6,6 +6,7 @@ from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.intent.decomposer import DecompositionResult, GoalDecomposer
 from wiicon5.intent.models import ContextDependency, IntentResult, IntentType
+from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
 from wiicon5.llm.client import LLMClient, LLMProviderError
 from wiicon5.models import ArtifactRequirement, SemanticFilter
 from wiicon5.planner.aggregate_intent import AGGREGATE_TABLE_TYPE, repair_document_list_aggregate_goal
@@ -25,16 +26,25 @@ class LLMGoalDecomposer(GoalDecomposer):
         registry: SkillRegistry,
         bot_config: Optional[BotInstanceConfig] = None,
         prompt_catalog: Optional[PromptCatalog] = None,
+        instance_knowledge: Optional[InstanceKnowledgeBase] = None,
     ) -> None:
         self.llm_client = llm_client
         self.registry = registry
         self.bot_config = bot_config or BotInstanceConfig.default()
         self.prompt_catalog = prompt_catalog or PromptCatalog()
+        self.instance_knowledge = instance_knowledge
+        self.last_knowledge_evidence: Dict[str, Any] = {"available": False}
 
     def decompose(self, message: str, context: ConversationContext) -> DecompositionResult:
+        self.last_knowledge_evidence = (
+            self.instance_knowledge.evidence_pack(message, top_k=self.bot_config.knowledge.search_top_k, max_chars=8000)
+            if self.instance_knowledge is not None
+            else {"available": False}
+        )
         payload = {
             "message": message,
             "conversation_context": context.to_packet(),
+            "instance_knowledge": self.last_knowledge_evidence,
             "available_artifact_types": sorted(available_artifact_types(self.registry)),
             "available_skills": skill_catalog(self.registry),
             "schema": decomposition_schema(),

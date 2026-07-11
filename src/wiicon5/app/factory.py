@@ -7,6 +7,9 @@ from wiicon5.app.config import Settings
 from wiicon5.conversation.memory import ConversationMemory
 from wiicon5.execution.runtime import SkillPlanExecutor, default_runners
 from wiicon5.intent.llm_decomposer import LLMGoalDecomposer
+from wiicon5.instance_knowledge.answer import KnowledgeAnswerService
+from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
+from wiicon5.instance_knowledge.storage import KnowledgeRepository
 from wiicon5.knowledge.bindings import BindingResolver, JsonBindingStore
 from wiicon5.knowledge.config_profile import build_configuration_profile, manual_configuration_profile
 from wiicon5.knowledge.discovery import MetadataBindingDiscoverer
@@ -77,6 +80,7 @@ def build_agent(
         metadata_provider=metadata_provider,
     )
     effective_memory = memory or ConversationMemory(default_config_fingerprint=config_profile.fingerprint)
+    instance_knowledge = build_instance_knowledge(settings)
     learned_skills_dir = learned_skill_root(settings)
     learned_health_store = LearnedSkillRuntimeHealthStore(
         skills_dir=learned_skills_dir,
@@ -99,7 +103,12 @@ def build_agent(
     )
     return AgentOrchestrator(
         registry=registry,
-        decomposer=LLMGoalDecomposer(llm_client=effective_llm, registry=registry, bot_config=settings.bot_instance),
+        decomposer=LLMGoalDecomposer(
+            llm_client=effective_llm,
+            registry=registry,
+            bot_config=settings.bot_instance,
+            instance_knowledge=instance_knowledge,
+        ),
         memory=effective_memory,
         baseline_intent_policy=BaselineIntentPolicy(domain_policy),
         domain_policy=domain_policy,
@@ -114,12 +123,32 @@ def build_agent(
             bot_config=settings.bot_instance,
             onboarding_evidence_provider=OnboardingEvidenceProvider(settings.bot_context.root / "onboarding"),
             failure_solver=build_failure_solver(settings),
+            instance_knowledge=instance_knowledge,
         ),
         learned_skill_store=learned_skill_store,
         synthesis_candidate_store=synthesis_candidate_store,
         skill_execution_reviewer=SkillExecutionPostReviewer(result_reviewer, registry),
         learned_health_store=learned_health_store,
         trace_root=settings.runs_dir,
+        knowledge_answerer=(
+            KnowledgeAnswerService(
+                knowledge_base=instance_knowledge,
+                llm_client=effective_llm,
+                top_k=settings.bot_instance.knowledge.search_top_k,
+            )
+            if instance_knowledge is not None and settings.bot_instance.knowledge.answer_enabled
+            else None
+        ),
+    )
+
+
+def build_instance_knowledge(settings: Settings) -> Optional[InstanceKnowledgeBase]:
+    config = settings.bot_instance.knowledge
+    if not config.enabled:
+        return None
+    return InstanceKnowledgeBase(
+        KnowledgeRepository(settings.bot_context.root / "knowledge"),
+        stale_after_days=config.stale_after_days,
     )
 
 
