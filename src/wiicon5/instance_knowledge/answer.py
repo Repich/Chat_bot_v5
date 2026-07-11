@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.instance_knowledge.index import InstanceKnowledgeBase, KnowledgeHit
@@ -15,6 +15,13 @@ KNOWLEDGE_ANSWER_PROMPT = (
     "Документация может быть неполной, противоречивой и устаревшей. Не дополняй ее догадками. "
     "Если прямого ответа нет, если вопрос требует фактических данных текущей базы 1С или проверки текущего состояния, "
     "верни answerable=false. Если источники расходятся, перечисли суть расхождения в contradictions и не скрывай его. "
+    "needs_live_data=true ставь только когда вопрос действительно требует актуальных значений или состояния базы 1С; "
+    "отсутствие точной инструкции в документации само по себе не означает, что нужны живые данные. "
+    "Можно объединять несколько взаимодополняющих фрагментов одной или разных страниц, но каждый шаг ответа должен "
+    "подтверждаться evidence. "
+    "Если evidence подтверждает только часть ответа, но эта часть полезна пользователю, разрешено вернуть "
+    "answerable=true и confidence=low: прямо скажи, что именно подтверждено и какой инструкции или детали в "
+    "документации нет. Не придумывай отсутствующие шаги. "
     "Предпочитай более новую версию только когда источники описывают один и тот же процесс. "
     "В answer не добавляй ссылки и список источников: приложение добавит проверенные ссылки само. "
     "used_chunk_ids должен содержать только идентификаторы реально использованных evidence. "
@@ -58,13 +65,24 @@ class KnowledgeAnswerService:
         self.llm_client = llm_client
         self.top_k = max(1, min(top_k, 20))
 
-    def answer(self, question: str, context: ConversationContext) -> KnowledgeAnswerResult:
-        hits = self.knowledge_base.search(question, top_k=self.top_k)
+    def answer(
+        self,
+        question: str,
+        context: ConversationContext,
+        *,
+        query_hints: Optional[Sequence[str]] = None,
+    ) -> KnowledgeAnswerResult:
+        retrieval_queries = retrieval_query_set(question, query_hints or [])
+        hits = self.knowledge_base.search_many(retrieval_queries, top_k=self.top_k)
         if not hits:
-            return KnowledgeAnswerResult(answerable=False, trace={"hits": []})
+            return KnowledgeAnswerResult(
+                answerable=False,
+                trace={"retrieval_queries": retrieval_queries, "hits": []},
+            )
         evidence = [hit.to_dict(include_content=True) for hit in hits]
         payload = {
             "question": question,
+            "retrieval_queries": retrieval_queries,
             "conversation": [item.to_dict() for item in context.messages[-8:]],
             "evidence": evidence,
             "schema": {
@@ -83,7 +101,7 @@ class KnowledgeAnswerService:
             return KnowledgeAnswerResult(
                 answerable=False,
                 error=f"Knowledge answer LLM failed: {exc}",
-                trace={"request": payload},
+                trace={"retrieval_queries": retrieval_queries, "request": payload},
             )
         answerable = bool(response.get("answerable", False))
         needs_live_data = bool(response.get("needs_live_data", False))
@@ -95,7 +113,12 @@ class KnowledgeAnswerService:
             return KnowledgeAnswerResult(
                 answerable=False,
                 error="Knowledge answer referenced unknown evidence chunks.",
-                trace={"request": payload, "response": response, "invalid_chunk_ids": invalid_ids},
+                trace={
+                    "retrieval_queries": retrieval_queries,
+                    "request": payload,
+                    "response": response,
+                    "invalid_chunk_ids": invalid_ids,
+                },
             )
         if not answerable or needs_live_data:
             return KnowledgeAnswerResult(
@@ -104,13 +127,13 @@ class KnowledgeAnswerService:
                 used_chunk_ids=used_ids,
                 contradictions=unique_strings(response.get("contradictions")),
                 needs_live_data=needs_live_data,
-                trace={"request": payload, "response": response},
+                trace={"retrieval_queries": retrieval_queries, "request": payload, "response": response},
             )
         if not answer or not used_ids:
             return KnowledgeAnswerResult(
                 answerable=False,
                 error="Knowledge answer has no grounded answer or source ids.",
-                trace={"request": payload, "response": response},
+                trace={"retrieval_queries": retrieval_queries, "request": payload, "response": response},
             )
         selected_hits = [valid_hits[item] for item in used_ids]
         contradictions = unique_strings(response.get("contradictions"))
@@ -122,8 +145,27 @@ class KnowledgeAnswerService:
             used_chunk_ids=used_ids,
             contradictions=contradictions,
             needs_live_data=False,
-            trace={"request": payload, "response": response, "sources": [item.to_dict() for item in selected_hits]},
+            trace={
+                "retrieval_queries": retrieval_queries,
+                "request": payload,
+                "response": response,
+                "sources": [item.to_dict() for item in selected_hits],
+            },
         )
+
+
+def retrieval_query_set(question: str, query_hints: Sequence[str]) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for value in [question, *query_hints]:
+        query = str(value).strip()
+        key = query.casefold()
+        if query and key not in seen:
+            seen.add(key)
+            result.append(query)
+        if len(result) >= 8:
+            break
+    return result
 
 
 def append_provenance(answer: str, hits: List[KnowledgeHit], contradictions: List[str]) -> str:

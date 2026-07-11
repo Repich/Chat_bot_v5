@@ -267,7 +267,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                 mcp_client=DictMcpClient({"success": True, "data": []}),
                 preview_service=preview_service,
             )
-            with patch("wiicon5.web.server.HTTPServer", FakeHTTPServer):
+        with patch("wiicon5.web.server.ThreadingHTTPServer", FakeHTTPServer):
                 with self.assertRaises(StopServer):
                     run_http_server(
                         agent,

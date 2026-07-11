@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -14,6 +14,13 @@ from wiicon5.instance_knowledge.storage import KnowledgeRepository
 STOPWORDS = {
     "как", "что", "где", "когда", "почему", "зачем", "какой", "какая", "какие", "для", "или", "это",
     "при", "надо", "нужно", "можно", "система", "системе", "wiic", "wiicon", "1с", "1c", "покажи",
+}
+
+TITLE_QUERY_STOPWORDS = {
+    "как", "что", "где", "когда", "почему", "зачем", "какой", "какая", "какие",
+    "хочу", "нужно", "надо", "можно", "сделать", "получить", "получение", "оформить",
+    "выполнить", "узнать", "показать", "покажи", "рассказать", "расскажи", "инструкция",
+    "для", "или", "при", "это",
 }
 
 
@@ -62,7 +69,56 @@ class InstanceKnowledgeBase:
     def available(self) -> bool:
         return bool(self.repository.current_snapshot_id())
 
-    def search(self, query: str, *, top_k: int = 8) -> List[KnowledgeHit]:
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        max_chunks_per_page: int = 3,
+    ) -> List[KnowledgeHit]:
+        hits = self._search_raw(query, top_k=20)
+        return diversify_hits(
+            hits,
+            top_k=top_k,
+            max_chunks_per_page=max_chunks_per_page,
+        )
+
+    def search_many(
+        self,
+        queries: Sequence[str],
+        *,
+        top_k: int = 8,
+        max_chunks_per_page: int = 3,
+    ) -> List[KnowledgeHit]:
+        unique_queries = unique_queries_for_search(queries, limit=8)
+        if not unique_queries:
+            return []
+        fused: Dict[str, Tuple[KnowledgeHit, float]] = {}
+        candidate_limit = max(12, min(20, top_k * 3))
+        for query_index, query in enumerate(unique_queries):
+            query_hits = self._search_raw(query, top_k=candidate_limit)
+            if not query_hits:
+                continue
+            max_score = max(hit.score for hit in query_hits) or 1.0
+            query_weight = 1.0 if query_index == 0 else 0.85
+            for rank, hit in enumerate(query_hits, start=1):
+                normalized_score = hit.score / max_score
+                contribution = query_weight * (normalized_score + 1.0 / (10.0 + rank))
+                previous = fused.get(hit.chunk_id)
+                if previous is None:
+                    fused[hit.chunk_id] = (hit, contribution)
+                else:
+                    best_hit = hit if hit.score > previous[0].score else previous[0]
+                    fused[hit.chunk_id] = (best_hit, previous[1] + contribution)
+        ranked = [replace(hit, score=score) for hit, score in fused.values()]
+        ranked.sort(key=lambda item: (-item.score, item.title, item.chunk_id))
+        return diversify_hits(
+            ranked,
+            top_k=top_k,
+            max_chunks_per_page=max_chunks_per_page,
+        )
+
+    def _search_raw(self, query: str, *, top_k: int) -> List[KnowledgeHit]:
         terms = search_terms(query)
         if not terms:
             return []
@@ -203,10 +259,17 @@ def split_long_text(content: str, *, max_chars: int, overlap_chars: int) -> List
 
 
 def search_terms(value: str) -> List[str]:
+    tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё_]{3,}", value.lower())
     result = []
-    for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё_]{3,}", value.lower()):
+    for token in tokens:
         if token in STOPWORDS:
             continue
+        stem = light_stem(token)
+        if stem and stem not in result:
+            result.append(stem)
+    if result:
+        return result[:32]
+    for token in tokens:
         stem = light_stem(token)
         if stem and stem not in result:
             result.append(stem)
@@ -233,6 +296,19 @@ def score_chunk(chunk: KnowledgeChunk, terms: Sequence[str], raw_query: str) -> 
     content = normalized_search_text(chunk.content)
     score = 0.0
     matched = 0
+    full_query = normalized_search_text(raw_query)
+    if full_query and full_query in title:
+        score += 100.0
+    elif full_query and full_query in heading:
+        score += 60.0
+    title_terms = title_search_terms(raw_query)
+    if len(title_terms) >= 2:
+        title_coverage = sum(1 for term in title_terms if term in title) / len(title_terms)
+        heading_coverage = sum(1 for term in title_terms if term in heading) / len(title_terms)
+        if title_coverage >= 0.67:
+            score += 90.0 * title_coverage
+        elif heading_coverage >= 0.67:
+            score += 50.0 * heading_coverage
     for term in terms:
         term_matched = False
         if term in title:
@@ -251,6 +327,10 @@ def score_chunk(chunk: KnowledgeChunk, terms: Sequence[str], raw_query: str) -> 
         if term_matched:
             matched += 1
     meaningful_query = " ".join(search_terms(raw_query))
+    if meaningful_query and meaningful_query in title and meaningful_query != full_query:
+        score += 45.0
+    elif meaningful_query and meaningful_query in heading and meaningful_query != full_query:
+        score += 30.0
     if meaningful_query and meaningful_query in content:
         score += 15.0
     coverage = matched / max(1, len(terms))
@@ -260,6 +340,17 @@ def score_chunk(chunk: KnowledgeChunk, terms: Sequence[str], raw_query: str) -> 
 
 def normalized_search_text(value: str) -> str:
     return " ".join(light_stem(token) for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё_]{3,}", value.lower()))
+
+
+def title_search_terms(value: str) -> List[str]:
+    result: List[str] = []
+    for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё_]{3,}", value.lower()):
+        if token in TITLE_QUERY_STOPWORDS:
+            continue
+        stem = light_stem(token)
+        if stem and stem not in result:
+            result.append(stem)
+    return result[:12]
 
 
 def snippet(content: str, terms: Sequence[str], *, max_chars: int = 420) -> str:
@@ -286,3 +377,38 @@ def is_stale(updated_at: str, stale_after_days: int) -> bool:
         parsed = parsed.replace(tzinfo=timezone.utc)
     age = datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
     return age.days > stale_after_days
+
+
+def unique_queries_for_search(queries: Sequence[str], *, limit: int) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for value in queries:
+        query = str(value).strip()
+        key = query.casefold()
+        if query and key not in seen:
+            seen.add(key)
+            result.append(query)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def diversify_hits(
+    hits: Sequence[KnowledgeHit],
+    *,
+    top_k: int,
+    max_chunks_per_page: int,
+) -> List[KnowledgeHit]:
+    limit = max(1, min(top_k, 20))
+    per_page_limit = max(1, min(max_chunks_per_page, limit))
+    page_counts: Dict[str, int] = {}
+    result: List[KnowledgeHit] = []
+    for hit in hits:
+        page_count = page_counts.get(hit.page_id, 0)
+        if page_count >= per_page_limit:
+            continue
+        result.append(hit)
+        page_counts[hit.page_id] = page_count + 1
+        if len(result) >= limit:
+            break
+    return result

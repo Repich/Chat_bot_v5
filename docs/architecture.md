@@ -9,6 +9,9 @@ flowchart TD
     Orchestrator --> Memory["ConversationMemory"]
     Orchestrator --> Baseline["Baseline и relevance checks"]
     Orchestrator --> Decomposer["LLM goal decomposition"]
+    Decomposer --> RAG["Multi-query instance RAG"]
+    RAG --> Snapshot["Bot-specific knowledge snapshot"]
+    RAG --> Formatter
     Decomposer --> Composer["SkillComposer"]
     Composer --> Registry["SkillRegistry"]
     Composer --> Executor["SkillPlanExecutor"]

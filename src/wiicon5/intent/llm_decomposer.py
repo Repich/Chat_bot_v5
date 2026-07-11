@@ -70,6 +70,9 @@ def decomposition_schema() -> Dict[str, Any]:
             "requires_1c_data": "boolean",
             "expected_output": "table | short_answer | answer",
             "domain_terms": ["terms from user question"],
+            "knowledge_queries": [
+                "alternative short retrieval queries for instance documentation"
+            ],
             "context_dependencies": [
                 {
                     "role": "semantic role, e.g. product",
@@ -161,10 +164,25 @@ def parse_intent(message: str, payload: Any) -> IntentResult:
         requires_1c_data=bool(payload.get("requires_1c_data", False)),
         expected_output=str(payload.get("expected_output") or "answer"),
         domain_terms=[str(item) for item in payload.get("domain_terms", []) or []],
+        knowledge_queries=unique_non_empty_strings(payload.get("knowledge_queries"), limit=8),
         context_dependencies=dependencies,
         relevant=bool(payload.get("relevant", intent_type not in {IntentType.OUT_OF_SCOPE, IntentType.UNKNOWN})),
         reasoning=str(payload.get("reasoning") or ""),
     )
+
+
+def unique_non_empty_strings(value: Any, *, limit: int) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for item in value or []:
+        text = str(item).strip()
+        key = text.casefold()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
 
 
 def parse_goal(payload: Dict[str, Any]) -> GoalDecomposition:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Type
 from urllib.parse import parse_qs, unquote, urlparse
@@ -2080,7 +2080,7 @@ def run_http_server(
     instance_knowledge: InstanceKnowledgeBase | None = None,
     knowledge_sync_service: KnowledgeSyncService | None = None,
 ) -> None:
-    server = HTTPServer(
+    server = ThreadingHTTPServer(
         (host, port),
         make_handler(
             agent,

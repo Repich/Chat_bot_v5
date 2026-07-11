@@ -15,6 +15,41 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class LLMDecomposerTests(unittest.TestCase):
+    def test_llm_decomposer_preserves_distinct_knowledge_retrieval_queries(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        llm = ScriptedLLMClient(
+            [
+                {
+                    "intent": {
+                        "intent_type": "general_question",
+                        "business_goal": "Понять пользовательский процесс",
+                        "requires_1c_data": False,
+                        "expected_output": "answer",
+                        "domain_terms": ["операция"],
+                        "knowledge_queries": [
+                            "возврат оборудования",
+                            "Возврат оборудования",
+                            "документ возврата",
+                        ],
+                        "relevant": True,
+                    },
+                    "goal": None,
+                }
+            ]
+        )
+        decomposer = LLMGoalDecomposer(llm_client=llm, registry=registry)
+
+        result = decomposer.decompose(
+            "Как выполнить операцию?",
+            ConversationContext(session_id="knowledge-query-test"),
+        )
+
+        self.assertEqual(
+            result.intent.knowledge_queries,
+            ["возврат оборудования", "документ возврата"],
+        )
+        self.assertIn("intent.knowledge_queries", llm.calls[0]["system_prompt"])
+
     def test_llm_decomposer_parses_stock_goal_without_query_or_metadata(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
         llm = ScriptedLLMClient([stock_decomposition_response()])

@@ -36,6 +36,7 @@ class IntentResult:
     requires_1c_data: bool
     expected_output: str = "answer"
     domain_terms: List[str] = field(default_factory=list)
+    knowledge_queries: List[str] = field(default_factory=list)
     context_dependencies: List[ContextDependency] = field(default_factory=list)
     relevant: bool = True
     reasoning: str = ""
@@ -47,8 +48,8 @@ class IntentResult:
             "requires_1c_data": self.requires_1c_data,
             "expected_output": self.expected_output,
             "domain_terms": list(self.domain_terms),
+            "knowledge_queries": list(self.knowledge_queries),
             "context_dependencies": [item.to_dict() for item in self.context_dependencies],
             "relevant": self.relevant,
             "reasoning": self.reasoning,
         }
-

@@ -18,6 +18,7 @@ from wiicon5.instance_knowledge.sync import KnowledgeSyncService, knowledge_auth
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.llm.client import ScriptedLLMClient
+from wiicon5.query_synthesis import QuerySynthesisResult
 from wiicon5.skills.registry import SkillRegistry
 from wiicon5.testing.scripted_decomposer import ScriptedGoalDecomposer
 
@@ -157,6 +158,93 @@ class InstanceKnowledgeTests(unittest.TestCase):
             self.assertTrue(hits[0].stale)
             self.assertIn("очередь обмена", hits[0].content)
 
+    def test_multi_query_search_uses_semantic_hints_without_question_specific_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = repository_from_pages(
+                root,
+                [
+                    page_payload(
+                        "1",
+                        "Возврат оборудования",
+                        "Для возврата создайте документ и укажите склад-получатель.",
+                    ),
+                    page_payload(
+                        "2",
+                        "Выдача оборудования",
+                        "Выдача оформляется отдельным документом.",
+                    ),
+                ],
+            )
+            knowledge_base = InstanceKnowledgeBase(repository)
+
+            direct_hits = knowledge_base.search("Как отменить ранее выполненную операцию?")
+            expanded_hits = knowledge_base.search_many(
+                [
+                    "Как отменить ранее выполненную операцию?",
+                    "возврат оборудования",
+                ]
+            )
+
+        self.assertFalse(direct_hits)
+        self.assertTrue(expanded_hits)
+        self.assertEqual(expanded_hits[0].page_id, "1")
+
+    def test_search_prioritizes_full_title_phrase_over_generic_term_frequency(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = repository_from_pages(
+                root,
+                [
+                    page_payload(
+                        "1",
+                        "Доступ к системе продукта",
+                        "Для получения доступа создайте заявку в сервисном каталоге.",
+                    ),
+                    page_payload(
+                        "2",
+                        "Ограничение прав",
+                        " ".join(["доступ права группа доступность"] * 80),
+                    ),
+                ],
+            )
+
+            hits = InstanceKnowledgeBase(repository).search(
+                "Как получить доступ к системе продукта?",
+                top_k=4,
+            )
+
+        self.assertTrue(hits)
+        self.assertEqual(hits[0].page_id, "1")
+
+    def test_multi_query_search_limits_duplicate_chunks_from_same_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repeated = "\n\n".join(
+                f"# Шаг {index}\nПроверка очереди обмена и повторная отправка статуса. " * 30
+                for index in range(6)
+            )
+            repository = repository_from_pages(
+                root,
+                [
+                    page_payload("1", "Большая инструкция", repeated),
+                    page_payload(
+                        "2",
+                        "Краткая диагностика",
+                        "Проверьте очередь обмена перед повторной отправкой.",
+                    ),
+                ],
+            )
+            hits = InstanceKnowledgeBase(repository).search_many(
+                ["очередь обмена", "повторная отправка"],
+                top_k=6,
+                max_chunks_per_page=2,
+            )
+
+        page_ids = [hit.page_id for hit in hits]
+        self.assertLessEqual(page_ids.count("1"), 2)
+        self.assertIn("2", page_ids)
+
     def test_auth_headers_prefer_bearer_and_do_not_require_credentials(self) -> None:
         self.assertEqual(knowledge_auth_headers({}), {})
         self.assertEqual(
@@ -229,6 +317,145 @@ class InstanceKnowledgeTests(unittest.TestCase):
             )
         self.assertFalse(result.answerable)
         self.assertIn("unknown evidence", result.error)
+
+    def test_grounded_answer_uses_intent_retrieval_queries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            knowledge_base = InstanceKnowledgeBase(
+                repository_from_pages(
+                    root,
+                    [
+                        page_payload(
+                            "1",
+                            "Возврат оборудования",
+                            "Для возврата создайте документ и заполните склад.",
+                        )
+                    ],
+                )
+            )
+            hit = knowledge_base.search("возврат оборудования")[0]
+            llm = ScriptedLLMClient(
+                [
+                    {
+                        "answerable": True,
+                        "answer": "Создайте документ возврата и заполните склад.",
+                        "used_chunk_ids": [hit.chunk_id],
+                        "confidence": "high",
+                        "needs_live_data": False,
+                        "contradictions": [],
+                    }
+                ]
+            )
+            result = KnowledgeAnswerService(
+                knowledge_base=knowledge_base,
+                llm_client=llm,
+            ).answer(
+                "Как отменить ранее выполненную операцию?",
+                ConversationMemory().get_or_create("s1"),
+                query_hints=["возврат оборудования"],
+            )
+
+        self.assertTrue(result.answerable)
+        self.assertEqual(
+            result.trace["retrieval_queries"],
+            ["Как отменить ранее выполненную операцию?", "возврат оборудования"],
+        )
+        self.assertIn("Возврат оборудования", result.answer)
+
+    def test_orchestrator_returns_honest_message_when_documentation_is_insufficient(self) -> None:
+        question = "Как работает неизвестная операция?"
+        decomposition = DecompositionResult(
+            intent=IntentResult(
+                intent_type=IntentType.GENERAL_QUESTION,
+                business_goal=question,
+                requires_1c_data=False,
+                expected_output="answer",
+                domain_terms=["неизвестная операция"],
+                knowledge_queries=["неизвестная операция"],
+                relevant=True,
+            )
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            answerer = KnowledgeAnswerService(
+                knowledge_base=InstanceKnowledgeBase(prepared_repository(root)),
+                llm_client=ScriptedLLMClient([]),
+            )
+            orchestrator = AgentOrchestrator(
+                registry=SkillRegistry(),
+                decomposer=ScriptedGoalDecomposer({question: decomposition}),
+                knowledge_answerer=answerer,
+                trace_root=root / "runs",
+            )
+            result = orchestrator.handle(question, session_id="s1")
+
+        self.assertEqual(result.source, "instance_knowledge_insufficient")
+        self.assertIn("документации", result.message)
+        self.assertNotIn("Я агент", result.message)
+
+    def test_documentation_can_answer_after_live_data_query_failure(self) -> None:
+        question = "Как выполняется операция возврата?"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            knowledge_base = InstanceKnowledgeBase(
+                repository_from_pages(
+                    root,
+                    [
+                        page_payload(
+                            "1",
+                            "Возврат оборудования",
+                            "Для возврата создайте документ и заполните склад.",
+                        )
+                    ],
+                )
+            )
+            hit = knowledge_base.search("возврат оборудования")[0]
+            answerer = KnowledgeAnswerService(
+                knowledge_base=knowledge_base,
+                llm_client=ScriptedLLMClient(
+                    [
+                        {
+                            "answerable": True,
+                            "answer": "Создайте документ возврата и заполните склад.",
+                            "used_chunk_ids": [hit.chunk_id],
+                            "confidence": "high",
+                            "needs_live_data": False,
+                            "contradictions": [],
+                        }
+                    ]
+                ),
+            )
+            orchestrator = AgentOrchestrator(
+                registry=SkillRegistry(),
+                decomposer=ScriptedGoalDecomposer({}),
+                knowledge_answerer=answerer,
+                trace_root=root / "runs",
+            )
+            context = ConversationMemory().get_or_create("fallback")
+            context.append_message("user", question)
+            trace = orchestrator.trace_writer.new_run(prefix="fallback")
+            result = orchestrator._query_synthesis_failed_result(
+                synthesis_result=QuerySynthesisResult(ok=False, error="query unavailable"),
+                intent=IntentResult(
+                    intent_type=IntentType.DATA_QUESTION,
+                    business_goal=question,
+                    requires_1c_data=True,
+                    domain_terms=["возврат"],
+                    knowledge_queries=["возврат оборудования"],
+                ),
+                goal=None,
+                trace_path=str(trace.path),
+                user_message=question,
+                context=context,
+                run_trace=trace,
+            )
+            fallback_trace_exists = (
+                trace.path / "knowledge/data_failure_fallback.json"
+            ).exists()
+
+        self.assertEqual(result.source, "instance_knowledge_fallback")
+        self.assertIn("Создайте документ возврата", result.message)
+        self.assertTrue(fallback_trace_exists)
 
     def test_orchestrator_answers_documentation_question_without_skill_or_mcp(self) -> None:
         question = "Почему не поступил статус успешной интеграции в 3PL?"
@@ -303,6 +530,24 @@ def prepared_repository(root: Path, *, updated_at: str = "2026-07-01T00:00:00Z")
             },
             ensure_ascii=False,
         ),
+        encoding="utf-8",
+    )
+    repository = KnowledgeRepository(root / "knowledge")
+    result = KnowledgeSyncService(
+        repository=repository,
+        source_kind="confluence",
+        base_url="https://bwiki.example",
+        root_page_id="1",
+    ).sync(input_json=export)
+    if not result.ok:
+        raise AssertionError(result.error)
+    return repository
+
+
+def repository_from_pages(root: Path, pages) -> KnowledgeRepository:
+    export = root / "knowledge-export.json"
+    export.write_text(
+        json.dumps({"pages": pages}, ensure_ascii=False),
         encoding="utf-8",
     )
     repository = KnowledgeRepository(root / "knowledge")

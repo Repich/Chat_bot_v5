@@ -13,7 +13,7 @@ from wiicon5.execution.runtime import SkillPlanExecutionResult, SkillPlanExecuto
 from wiicon5.intent.decomposer import GoalDecomposer
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.intent.relevance_gate import RelevanceGate
-from wiicon5.instance_knowledge.answer import KnowledgeAnswerService
+from wiicon5.instance_knowledge.answer import KnowledgeAnswerResult, KnowledgeAnswerService
 from wiicon5.models import GapResolution, SkillGap, SkillPlan
 from wiicon5.planner.goal import GoalDecomposition
 from wiicon5.policies import BaselineIntentPolicy, DomainPolicy
@@ -168,8 +168,16 @@ class AgentOrchestrator:
             self._record_assistant_and_save(context, result)
             return result
 
+        knowledge_result = None
         if self.knowledge_answerer is not None and not decomposition.intent.requires_1c_data:
-            knowledge_result = self.knowledge_answerer.answer(message, context)
+            knowledge_result = self.knowledge_answerer.answer(
+                message,
+                context,
+                query_hints=[
+                    *decomposition.intent.knowledge_queries,
+                    *decomposition.intent.domain_terms,
+                ],
+            )
             run_trace.write_json("knowledge/answer.json", knowledge_result.to_dict())
             if knowledge_result.answerable:
                 artifact = Artifact(
@@ -202,6 +210,17 @@ class AgentOrchestrator:
             return result
 
         if decomposition.intent.intent_type == IntentType.GENERAL_QUESTION:
+            if knowledge_result is not None:
+                result = AgentRunResult(
+                    source="instance_knowledge_insufficient",
+                    message=knowledge_insufficient_message(knowledge_result),
+                    intent=decomposition.intent,
+                    goal=decomposition.goal,
+                    trace_path=str(run_trace.path),
+                )
+                run_trace.write_json("result/result.json", result.to_dict())
+                self._record_assistant_and_save(context, result)
+                return result
             result = AgentRunResult(
                 source="general_answer",
                 message=self.domain_policy.general_answer(decomposition.intent),
@@ -311,6 +330,9 @@ class AgentOrchestrator:
                                 plan=compose_result.plan,
                                 gaps=[sufficiency_gap],
                                 trace_path=str(run_trace.path),
+                                user_message=message,
+                                context=context,
+                                run_trace=run_trace,
                             )
                             run_trace.write_json("result/result.json", result.to_dict())
                             self._record_assistant_and_save(context, result)
@@ -407,6 +429,9 @@ class AgentOrchestrator:
                         goal=decomposition.goal,
                         plan=compose_result.plan,
                         trace_path=str(run_trace.path),
+                        user_message=message,
+                        context=context,
+                        run_trace=run_trace,
                     )
                     run_trace.write_json("result/result.json", result.to_dict())
                     self._record_assistant_and_save(context, result)
@@ -490,6 +515,9 @@ class AgentOrchestrator:
                 gaps=compose_result.gaps,
                 evolution_decisions=decisions,
                 trace_path=str(run_trace.path),
+                user_message=message,
+                context=context,
+                run_trace=run_trace,
             )
             run_trace.write_json("result/result.json", result.to_dict())
             self._record_assistant_and_save(context, result)
@@ -641,7 +669,39 @@ class AgentOrchestrator:
         plan: Optional[SkillPlan] = None,
         gaps: Optional[List[SkillGap]] = None,
         evolution_decisions: Optional[List[SkillEvolutionDecision]] = None,
+        user_message: str = "",
+        context: Optional[ConversationContext] = None,
+        run_trace: Optional[RunTrace] = None,
     ) -> AgentRunResult:
+        if self.knowledge_answerer is not None and user_message and context is not None:
+            knowledge_result = self.knowledge_answerer.answer(
+                user_message,
+                context,
+                query_hints=[*intent.knowledge_queries, *intent.domain_terms],
+            )
+            if run_trace is not None:
+                run_trace.write_json("knowledge/data_failure_fallback.json", knowledge_result.to_dict())
+            if knowledge_result.answerable:
+                artifact = Artifact(
+                    name="knowledge_answer",
+                    type="UserAnswer",
+                    value=knowledge_result.answer,
+                    provenance=[
+                        f"instance_knowledge:{item}" for item in knowledge_result.used_chunk_ids
+                    ],
+                )
+                return AgentRunResult(
+                    source="instance_knowledge_fallback",
+                    message=knowledge_result.answer,
+                    intent=intent,
+                    goal=goal,
+                    plan=plan,
+                    final_artifact=artifact,
+                    context_artifacts=synthesis_result.context_artifacts,
+                    gaps=list(gaps or []),
+                    evolution_decisions=list(evolution_decisions or []),
+                    trace_path=trace_path,
+                )
         message = query_synthesis_failure_message(synthesis_result.error)
         diagnostic_path = Path(trace_path) / "diagnostics" / "query_synthesis_failure.json"
         if diagnostic_path.exists():
@@ -855,6 +915,23 @@ def llm_unavailable_message(intent: IntentResult) -> str:
     if details:
         return f"Сервис модели сейчас недоступен, поэтому я не могу обработать запрос. Детали: {details}"
     return "Сервис модели сейчас недоступен, поэтому я не могу обработать запрос."
+
+
+def knowledge_insufficient_message(result: KnowledgeAnswerResult) -> str:
+    if result.needs_live_data:
+        return (
+            "Для надежного ответа нужны актуальные данные текущей базы 1С, а не только "
+            "снимок документации. Сформулируйте, какие значения или состояние нужно проверить."
+        )
+    if result.error:
+        return (
+            "Не удалось надежно сформировать ответ по загруженной документации. "
+            "Попробуйте уточнить название операции, документа или шага процесса."
+        )
+    return (
+        "В загруженной документации не нашлось достаточно подтвержденной информации для "
+        "точного ответа. Уточните название операции, документа или бизнес-сценария."
+    )
 
 
 def execution_result_to_dict(execution_result) -> Dict[str, object]:
