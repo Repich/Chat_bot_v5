@@ -1,0 +1,59 @@
+bot:
+  id: wiic_bwiki
+  name: WIIC Agent 5
+  domain_label: функциональность WIIC, пользовательская документация WIIC и данные выделенной базы 1С
+  answer_style: business_short
+  forbidden_write_operations: true
+  domain_hint_packs:
+    - one_c_standard
+    - trade_ru
+    - wiicon
+
+baseline:
+  general_markers:
+    - привет
+    - здравств
+    - добрый день
+    - кто ты
+    - что ты
+    - представься
+    - что умеешь
+    - что можешь
+    - возможности
+  data_markers:
+    - покажи
+    - найди
+    - сколько
+    - остат
+    - склад
+    - номенклатур
+    - заказ
+    - документ
+    - задолж
+    - клиент
+    - поступлен
+    - требован
+  weather_markers:
+    - погода
+    - температура
+    - дожд
+    - снег
+
+knowledge:
+  enabled: true
+  answer_enabled: true
+  source_kind: confluence
+  base_url: https://bwiki.beeline.ru
+  root_page_id: 177957241
+  space_key: BRIT
+  stale_after_days: 730
+  search_top_k: 8
+  sync_timeout_seconds: 45
+  max_pages: 5000
+
+answers:
+  intro: Я WIIC Agent 5, отдельный агент для тестирования функциональности WIIC. Отвечаю по локальному снимку документации со ссылками на источники, а после подключения MCP смогу получать данные выделенной базы 1С.
+  capabilities: Умею искать инструкции и описание ошибок в документации WIIC, отмечать устаревшие и противоречивые источники, а также работать с данными 1С через MCP и создавать переиспользуемые навыки.
+  default_general: Я агент по функциональности WIIC, пользовательской документации и данным подключенной базы 1С.
+  out_of_scope_weather: Это вне моей зоны: я работаю с WIIC и данными 1С. По погоде лучше познакомлю с отличным синоптиком.
+  out_of_scope_default: Это вне моей зоны: я работаю с функциональностью WIIC, ее документацией и данными подключенной базы 1С.

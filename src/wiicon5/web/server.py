@@ -8,9 +8,13 @@ from typing import Any, Dict, List, Mapping, Type
 from urllib.parse import parse_qs, unquote, urlparse
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
+from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ResolvedEntity
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.models import SkillContract, SkillStatus, ValidationIssue
+from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
+from wiicon5.instance_knowledge.storage import KnowledgeRepository
+from wiicon5.instance_knowledge.sync import KnowledgeSyncService
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.regression import load_cases, run_regression_replay, save_replay_result
 from wiicon5.skills.learned import auto_learning_report
@@ -55,6 +59,8 @@ def make_handler(
     onboarding_candidate_service: OnboardingCandidateService | None = None,
     synthesis_candidate_store: SynthesisCandidateStore | None = None,
     skill_lifecycle: SkillLifecycleService | None = None,
+    instance_knowledge: InstanceKnowledgeBase | None = None,
+    knowledge_sync_service: KnowledgeSyncService | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -101,6 +107,20 @@ def make_handler(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         audit_log=effective_draft_store.audit,
     )
+    effective_bot_config = BotInstanceConfig.from_file(effective_onboarding_manager.bot_instance_root / "bot.yaml")
+    knowledge_repository = KnowledgeRepository(effective_onboarding_manager.bot_instance_root / "knowledge")
+    effective_instance_knowledge = instance_knowledge or InstanceKnowledgeBase(
+        knowledge_repository,
+        stale_after_days=effective_bot_config.knowledge.stale_after_days,
+    )
+    effective_knowledge_sync = knowledge_sync_service or KnowledgeSyncService(
+        repository=knowledge_repository,
+        source_kind=effective_bot_config.knowledge.source_kind,
+        base_url=effective_bot_config.knowledge.base_url,
+        root_page_id=effective_bot_config.knowledge.root_page_id,
+        timeout_seconds=effective_bot_config.knowledge.sync_timeout_seconds,
+        max_pages=effective_bot_config.knowledge.max_pages,
+    )
 
     class Wiicon5Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -116,7 +136,33 @@ def make_handler(
                 self._send_json(200, {"ok": True, "service": "wiicon5", "version": current_version()})
                 return
             if path == "/api/ui/config":
-                self._send_json(200, {"ok": True, "config": ui_config(effective_admin_security)})
+                self._send_json(200, {"ok": True, "config": ui_config(effective_admin_security, effective_bot_config)})
+                return
+            if path == "/api/knowledge/status":
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "config": public_knowledge_config(effective_bot_config),
+                        "status": effective_instance_knowledge.status(),
+                    },
+                )
+                return
+            if path == "/api/knowledge/search":
+                term = first_query_value(query, "q") or first_query_value(query, "term")
+                hits = effective_instance_knowledge.search(
+                    term,
+                    top_k=effective_bot_config.knowledge.search_top_k,
+                ) if term else []
+                self._send_json(200, {"ok": True, "query": term, "hits": [item.to_dict() for item in hits]})
+                return
+            if path == "/api/knowledge/page":
+                page_id = first_query_value(query, "page_id")
+                page = effective_instance_knowledge.page(page_id) if page_id else None
+                if page is None:
+                    self._send_json(404, {"ok": False, "error": "knowledge_page_not_found", "page_id": page_id})
+                    return
+                self._send_json(200, {"ok": True, "page": page.to_dict()})
                 return
             if path == "/api/docs":
                 self._send_json(200, {"ok": True, "docs": documentation_index()})
@@ -335,6 +381,22 @@ def make_handler(
                     self._send_json(202, {"ok": True, "status": status.to_dict()})
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+            if parsed.path == "/api/admin/knowledge/sync":
+                result = effective_knowledge_sync.sync()
+                self._send_json(200 if result.ok else 502, result.to_dict())
+                return
+            if parsed.path == "/api/admin/knowledge/activate":
+                try:
+                    payload = self._read_json()
+                    snapshot_id = str(payload.get("snapshot_id") or "").strip()
+                    if not snapshot_id:
+                        self._send_json(400, {"ok": False, "error": "snapshot_id is required"})
+                        return
+                    manifest = effective_knowledge_sync.activate(snapshot_id)
+                    self._send_json(200, {"ok": True, "manifest": manifest.to_dict()})
+                except Exception as exc:
+                    self._send_json(400, {"ok": False, "error": str(exc)})
                 return
             if parsed.path == "/api/admin/regression/run":
                 self._run_regression_replay()
@@ -1181,7 +1243,8 @@ def read_text_file(path: Path) -> str:
         return "История изменений пока не найдена.\n"
 
 
-def ui_config(admin_security: AdminSecurityConfig) -> Dict[str, Any]:
+def ui_config(admin_security: AdminSecurityConfig, bot_config: BotInstanceConfig | None = None) -> Dict[str, Any]:
+    effective_bot = bot_config or BotInstanceConfig.default()
     return {
         "version": current_version(),
         "admin": {
@@ -1190,7 +1253,22 @@ def ui_config(admin_security: AdminSecurityConfig) -> Dict[str, Any]:
             "local_only": admin_security.bind_local_only,
             "raw_query_edit_allowed": admin_security.allow_raw_query_edit,
         },
-        "bot": {"id": "local", "name": "WIICON ChatBot 5"},
+        "bot": {"id": effective_bot.bot_id, "name": effective_bot.bot_name},
+        "knowledge": public_knowledge_config(effective_bot),
+    }
+
+
+def public_knowledge_config(bot_config: BotInstanceConfig) -> Dict[str, Any]:
+    knowledge = bot_config.knowledge
+    return {
+        "enabled": knowledge.enabled,
+        "answer_enabled": knowledge.answer_enabled,
+        "source_kind": knowledge.source_kind,
+        "base_url": knowledge.base_url,
+        "root_page_id": knowledge.root_page_id,
+        "space_key": knowledge.space_key,
+        "stale_after_days": knowledge.stale_after_days,
+        "search_top_k": knowledge.search_top_k,
     }
 
 
@@ -1999,6 +2077,8 @@ def run_http_server(
     preview_service: QueryPreviewService | None = None,
     smoke_service: McpSmokeTestService | None = None,
     admin_security: AdminSecurityConfig | None = None,
+    instance_knowledge: InstanceKnowledgeBase | None = None,
+    knowledge_sync_service: KnowledgeSyncService | None = None,
 ) -> None:
     server = HTTPServer(
         (host, port),
@@ -2009,6 +2089,8 @@ def run_http_server(
             preview_service=preview_service,
             smoke_service=smoke_service,
             admin_security=admin_security,
+            instance_knowledge=instance_knowledge,
+            knowledge_sync_service=knowledge_sync_service,
         ),
     )
     try:

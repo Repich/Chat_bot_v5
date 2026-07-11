@@ -486,6 +486,40 @@ label {
   gap: 10px;
 }
 
+.knowledge-workspace {
+  display: grid;
+  grid-template-rows: minmax(260px, auto) minmax(280px, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.knowledge-content {
+  min-height: 280px;
+  overflow: auto;
+}
+
+.knowledge-hit .entity-summary {
+  max-width: 90ch;
+}
+
+.status-pill.warning {
+  color: #8a4b08;
+  background: #fff3d6;
+  border-color: #efc77b;
+}
+
+.secondary-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  color: #176b61;
+  border: 1px solid #b9ccc9;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+}
+
 .draft-grid {
   grid-template-columns: repeat(4, minmax(160px, 1fr));
 }

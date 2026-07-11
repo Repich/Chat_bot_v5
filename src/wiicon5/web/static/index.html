@@ -18,6 +18,7 @@
         <button class="nav-button" type="button" data-view="workbench">Мастерская навыков</button>
         <button class="nav-button" type="button" data-view="learning">Обучение</button>
         <button class="nav-button" type="button" data-view="metadata">Метаданные</button>
+        <button class="nav-button" type="button" data-view="knowledge">База знаний</button>
         <button class="nav-button" type="button" data-view="docs">Документация</button>
         <button class="nav-button" type="button" data-view="admin">Администрирование</button>
       </nav>
@@ -143,6 +144,36 @@
           </aside>
           <section class="workspace-main">
             <article id="docsContent" class="doc-content">Документация не загружена.</article>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-knowledge" class="app-view" data-view-panel="knowledge">
+        <div class="two-column-page">
+          <aside class="workspace-sidebar">
+            <h2>База знаний экземпляра</h2>
+            <p class="muted">Локальный снимок пользовательской документации WIIC. Ответы агента содержат ссылки на использованные страницы.</p>
+            <div id="knowledgeStatus" class="summary-content">Статус не загружен.</div>
+            <label class="field-label" for="knowledgeSearchInput">Поиск по документации</label>
+            <input id="knowledgeSearchInput" class="text-input" type="search" placeholder="Ошибка интеграции, ПВЗ, требование">
+            <button id="knowledgeSearchButton" class="primary-button" type="button">Найти</button>
+            <details class="advanced-panel">
+              <summary>Управление снимками</summary>
+              <button id="knowledgeSyncButton" class="secondary-button" type="button">Синхронизировать с BWiki</button>
+              <label class="field-label" for="knowledgeSnapshotSelect">Активный снимок</label>
+              <select id="knowledgeSnapshotSelect" class="text-input"></select>
+              <button id="knowledgeActivateButton" class="secondary-button" type="button">Переключить снимок</button>
+            </details>
+          </aside>
+          <section class="workspace-main knowledge-workspace">
+            <div class="card">
+              <div class="card-header">
+                <h2>Найденные страницы</h2>
+                <button id="knowledgeStatusReloadButton" class="ghost-button" type="button">Обновить статус</button>
+              </div>
+              <div id="knowledgeResults" class="card-list">Введите вопрос или термин для поиска.</div>
+            </div>
+            <article id="knowledgeContent" class="doc-content knowledge-content">Выберите найденную страницу.</article>
           </section>
         </div>
       </section>

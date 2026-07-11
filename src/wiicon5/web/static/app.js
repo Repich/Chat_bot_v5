@@ -13,6 +13,10 @@
       items: [],
       selectedPath: "",
     },
+    knowledge: {
+      loaded: false,
+      snapshots: [],
+    },
     admin: {
       token: "",
       tokenRequired: false,
@@ -176,6 +180,9 @@
     }
     if (view === "learning" && !state.learning.loaded) {
       loadLearningReport();
+    }
+    if (view === "knowledge" && !state.knowledge.loaded) {
+      loadKnowledgeStatus();
     }
   }
 
@@ -443,6 +450,103 @@
     }).join("");
   }
 
+  async function loadKnowledgeStatus(button) {
+    return runAction(button, "Статус", () => api.fetchJson("/api/knowledge/status"), (data) => {
+      state.knowledge.loaded = true;
+      const status = data.status || {};
+      const config = data.config || {};
+      const current = status.current || null;
+      state.knowledge.snapshots = status.snapshots || [];
+      const output = requiredElement("knowledgeStatus");
+      if (!config.enabled) {
+        output.innerHTML = "<strong>Отключена</strong><br><span class=\"muted\">Включите knowledge.enabled в bot.yaml этого экземпляра.</span>";
+      } else if (!current) {
+        output.innerHTML = "<strong>Документация не загружена</strong><br><span class=\"muted\">Выполните синхронизацию или импорт локального экспорта.</span>";
+      } else {
+        output.innerHTML = `<strong>${renderers.escapeHtml(current.page_count || 0)} страниц</strong><br>
+          <span class="muted">${renderers.escapeHtml(current.chunk_count || 0)} фрагментов; снимок ${renderers.escapeHtml(current.snapshot_id || "")}</span><br>
+          <span class="muted">Добавлено ${renderers.escapeHtml(current.added || 0)}, изменено ${renderers.escapeHtml(current.updated || 0)}, удалено ${renderers.escapeHtml(current.removed || 0)}</span>`;
+      }
+      const select = requiredElement("knowledgeSnapshotSelect");
+      select.innerHTML = state.knowledge.snapshots.map((item) => {
+        const selected = current && item.snapshot_id === current.snapshot_id ? " selected" : "";
+        return `<option value="${renderers.escapeHtml(item.snapshot_id || "")}"${selected}>${renderers.escapeHtml(item.created_at || item.snapshot_id || "")}: ${renderers.escapeHtml(item.page_count || 0)} стр.</option>`;
+      }).join("");
+      return data;
+    }).catch((error) => {
+      requiredElement("knowledgeStatus").textContent = error.message || String(error);
+      return null;
+    });
+  }
+
+  async function searchKnowledge(button) {
+    const term = requiredElement("knowledgeSearchInput").value.trim();
+    if (!term) {
+      throw new Error("Введите вопрос или термин для поиска.");
+    }
+    return runAction(button, "Поиск", () => api.fetchJson(`/api/knowledge/search?q=${encodeURIComponent(term)}`), (data) => {
+      renderKnowledgeHits(data.hits || []);
+      return data;
+    });
+  }
+
+  function renderKnowledgeHits(hits) {
+    const output = requiredElement("knowledgeResults");
+    if (!hits.length) {
+      output.innerHTML = "<div class=\"empty-state\"><h3>Ничего не найдено</h3><p>Попробуйте термин из интерфейса или название бизнес-процесса.</p></div>";
+      return;
+    }
+    output.innerHTML = hits.map((hit) => `<article class="entity-card knowledge-hit">
+      <div class="entity-card-header">
+        <div><div class="entity-kind">${renderers.escapeHtml((hit.ancestor_titles || []).join(" / ") || "WIIC")}</div><h3>${renderers.escapeHtml(hit.title || "Страница")}</h3></div>
+        <span class="status-pill${hit.stale ? " warning" : ""}">${hit.stale ? "возможно устарела" : "актуальность не просрочена"}</span>
+      </div>
+      ${hit.heading ? `<h4>${renderers.escapeHtml(hit.heading)}</h4>` : ""}
+      <p class="entity-summary">${renderers.escapeHtml(hit.snippet || "")}</p>
+      <div class="entity-actions">
+        <button class="primary-button knowledge-page-button" type="button" data-page-id="${renderers.escapeHtml(hit.page_id || "")}">Открыть страницу</button>
+        ${hit.source_url ? `<a class="secondary-link" href="${renderers.escapeHtml(hit.source_url)}" target="_blank" rel="noopener noreferrer">Открыть в BWiki</a>` : ""}
+      </div>
+    </article>`).join("");
+  }
+
+  async function openKnowledgePage(pageId, button) {
+    return runAction(button, "Открытие", () => api.fetchJson(`/api/knowledge/page?page_id=${encodeURIComponent(pageId)}`), (data) => {
+      const page = data.page || {};
+      const source = page.source_url
+        ? `<p><a href="${renderers.escapeHtml(page.source_url)}" target="_blank" rel="noopener noreferrer">Открыть исходную страницу в BWiki</a></p>`
+        : "";
+      const meta = `<p class="muted">Версия ${renderers.escapeHtml(page.version || 0)}; обновлено ${renderers.escapeHtml(page.updated_at || "дата неизвестна")}</p>`;
+      requiredElement("knowledgeContent").innerHTML = `<h1>${renderers.escapeHtml(page.title || "Страница")}</h1>${meta}${source}${renderers.renderMarkdownContent(page.content || "")}`;
+      return data;
+    });
+  }
+
+  async function syncKnowledge(button) {
+    return runAction(button, "Синхронизация", () => api.fetchAdmin("/api/admin/knowledge/sync", { method: "POST", body: {} }), async (data) => {
+      state.knowledge.loaded = false;
+      await loadKnowledgeStatus();
+      showInfo("База знаний обновлена");
+      return data;
+    });
+  }
+
+  async function activateKnowledgeSnapshot(button) {
+    const snapshotId = requiredElement("knowledgeSnapshotSelect").value;
+    if (!snapshotId) {
+      throw new Error("Нет доступного снимка для переключения.");
+    }
+    return runAction(button, "Переключение", () => api.fetchAdmin("/api/admin/knowledge/activate", {
+      method: "POST",
+      body: { snapshot_id: snapshotId },
+    }), async (data) => {
+      state.knowledge.loaded = false;
+      await loadKnowledgeStatus();
+      showInfo("Активный снимок изменен");
+      return data;
+    });
+  }
+
   async function loadDocumentationIndex(button) {
     return runAction(button, "Документация", () => api.fetchJson("/api/docs"), (data) => {
       state.docs.items = data.docs || [];
@@ -670,6 +774,23 @@
       }
       requiredElement("docsSelect").value = button.dataset.docPath;
       openSelectedDocumentation(button);
+    });
+
+    optionalBind("knowledgeStatusReloadButton", "click", (event) => loadKnowledgeStatus(event.currentTarget));
+    optionalBind("knowledgeSearchButton", "click", (event) => searchKnowledge(event.currentTarget));
+    optionalBind("knowledgeSyncButton", "click", (event) => syncKnowledge(event.currentTarget));
+    optionalBind("knowledgeActivateButton", "click", (event) => activateKnowledgeSnapshot(event.currentTarget));
+    optionalBind("knowledgeSearchInput", "keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        searchKnowledge(requiredElement("knowledgeSearchButton"));
+      }
+    });
+    requiredElement("knowledgeResults").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-page-id]");
+      if (button) {
+        openKnowledgePage(button.dataset.pageId, button);
+      }
     });
 
     optionalBind("backendHistoryButton", "click", (event) => loadHistory("backend", event.currentTarget));

@@ -4,7 +4,9 @@ import argparse
 from pathlib import Path
 
 from wiicon5.app.config import Settings
-from wiicon5.app.factory import build_agent
+from wiicon5.app.factory import build_agent, build_instance_knowledge
+from wiicon5.instance_knowledge.storage import KnowledgeRepository
+from wiicon5.instance_knowledge.sync import KnowledgeSyncService
 from wiicon5.mcp.client import HttpMcpClient
 from wiicon5.onboarding.status import OnboardingManager
 from wiicon5.web.admin_security import AdminSecurityConfig
@@ -39,6 +41,16 @@ def main() -> int:
         allowed_config_roots=settings.admin_allowed_config_roots,
         allow_raw_query_edit=settings.workbench_allow_raw_query_edit,
     )
+    instance_knowledge = build_instance_knowledge(settings)
+    knowledge = settings.bot_instance.knowledge
+    knowledge_sync_service = KnowledgeSyncService(
+        repository=KnowledgeRepository(settings.bot_context.root / "knowledge"),
+        source_kind=knowledge.source_kind,
+        base_url=knowledge.base_url,
+        root_page_id=knowledge.root_page_id,
+        timeout_seconds=knowledge.sync_timeout_seconds,
+        max_pages=knowledge.max_pages,
+    )
     print(f"WIICON5 listening on http://{args.host}:{args.port}/chat")
     run_http_server(
         agent,
@@ -49,6 +61,8 @@ def main() -> int:
         preview_service=preview_service,
         smoke_service=smoke_service,
         admin_security=admin_security,
+        instance_knowledge=instance_knowledge,
+        knowledge_sync_service=knowledge_sync_service,
     )
     return 0
 
