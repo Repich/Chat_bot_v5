@@ -84,7 +84,8 @@ class OpenAICompatibleLLMClient(LLMClient):
                 break
             except urllib.error.HTTPError as exc:
                 raw_body = exc.read().decode("utf-8", errors="replace")
-                if exc.code in {502, 503, 504} and attempt < self.max_retries:
+                retryable = exc.code in {502, 503, 504} and not is_guardrail_mask_failure(raw_body)
+                if retryable and attempt < self.max_retries:
                     LOGGER.warning(
                         "Temporary LLM gateway failure status=%s attempt=%s/%s request_id=%s",
                         exc.code,
@@ -124,6 +125,23 @@ def gateway_request_id(raw_body: str) -> str:
     if isinstance(error, dict) and error.get("request_id"):
         return str(error["request_id"])
     return ""
+
+
+def gateway_error_code(raw_body: str) -> str:
+    try:
+        payload = json.loads(raw_body)
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    if isinstance(error, dict):
+        return str(error.get("code") or "")
+    return ""
+
+
+def is_guardrail_mask_failure(raw_body: str) -> bool:
+    return gateway_error_code(raw_body) == "router_v4_guardrails_mask_failed"
 
 
 class ScriptedLLMClient(LLMClient):

@@ -73,6 +73,21 @@ class OpenAICompatibleLLMClientTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 3)
         self.assertIn("router-request-2", str(raised.exception))
 
+    def test_guardrail_mask_failure_is_not_retried_with_identical_payload(self) -> None:
+        error = http_error(
+            503,
+            {
+                "error": {"code": "router_v4_guardrails_mask_failed"},
+                "request_id": "mask-request-1",
+            },
+        )
+        with patch("urllib.request.urlopen", side_effect=error) as urlopen:
+            with self.assertRaises(LLMProviderError) as raised:
+                self.client().complete_json(system_prompt="system", user_payload={})
+
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertIn("mask-request-1", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

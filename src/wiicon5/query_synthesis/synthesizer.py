@@ -249,48 +249,94 @@ class QuerySynthesisEngine:
         )
         max_total_attempts = self.max_repair_attempts + self.max_successful_steps + 2
         trace["max_total_attempts"] = max_total_attempts
+        masking_recovery_active = False
+        prompt_relevance_terms = metadata_prompt_relevance_terms(
+            message=message,
+            intent=intent,
+            goal=goal,
+            discovery=discovery,
+        )
         for attempt in range(1, max_total_attempts + 1):
             if forbidden_metadata_sources:
                 metadata_objects = [
                     item for item in metadata_objects if item.full_name not in forbidden_metadata_sources
                 ]
+            query_payload = {
+                "message": message,
+                "intent": intent.to_dict(),
+                "goal": goal_to_payload(goal),
+                "conversation_context": context.to_packet(),
+                "metadata_objects": [metadata_object_summary(item) for item in metadata_objects],
+                "onboarding_evidence": onboarding_evidence,
+                "instance_knowledge": prompt_instance_knowledge,
+                "hypothesis": discovery.get("hypothesis"),
+                "draft_query": discovery.get("draft_query"),
+                "previous_error": previous_error,
+                "previous_query": previous_query,
+                "previous_query_review": previous_review,
+                "forbidden_metadata_sources": list(forbidden_metadata_sources),
+                "previous_successful_steps": compact_successful_steps(successful_steps),
+                "previous_result_insufficiency": previous_result_insufficiency,
+                "query_review_rules": prompt_query_review_guidance,
+                "attempt": attempt,
+                "schema": {"query": "1C query text", "params": {}, "limit": 100, "reasoning": "why this query"},
+            }
+            if masking_recovery_active:
+                query_payload = masking_recovery_payload(
+                    query_payload,
+                    metadata_objects=metadata_objects,
+                    relevance_terms=prompt_relevance_terms,
+                )
             try:
                 query_response = self.llm_client.complete_json(
                     system_prompt=self.prompt_catalog.query_prompt(self.bot_config),
-                    user_payload={
-                        "message": message,
-                        "intent": intent.to_dict(),
-                        "goal": goal_to_payload(goal),
-                        "conversation_context": context.to_packet(),
-                        "metadata_objects": [metadata_object_summary(item) for item in metadata_objects],
-                        "onboarding_evidence": onboarding_evidence,
-                        "instance_knowledge": prompt_instance_knowledge,
-                        "hypothesis": discovery.get("hypothesis"),
-                        "draft_query": discovery.get("draft_query"),
-                        "previous_error": previous_error,
-                        "previous_query": previous_query,
-                        "previous_query_review": previous_review,
-                        "forbidden_metadata_sources": list(forbidden_metadata_sources),
-                        "previous_successful_steps": compact_successful_steps(successful_steps),
-                        "previous_result_insufficiency": previous_result_insufficiency,
-                        "query_review_rules": prompt_query_review_guidance,
-                        "attempt": attempt,
-                        "schema": {"query": "1C query text", "params": {}, "limit": 100, "reasoning": "why this query"},
-                    },
+                    user_payload=query_payload,
                 )
             except LLMProviderError as exc:
-                return self._failed_result(
-                    message=message,
-                    intent=intent,
-                    goal=goal,
-                    context=context,
-                    gaps=gaps,
-                    error=f"LLM query synthesis failed: {exc}",
-                    trace=trace,
-                    metadata_objects=metadata_objects,
-                    onboarding_evidence=onboarding_evidence,
-                    successful_steps=successful_steps,
-                )
+                if not masking_recovery_active and is_guardrail_masking_error(str(exc)):
+                    masking_recovery_active = True
+                    query_payload = masking_recovery_payload(
+                        query_payload,
+                        metadata_objects=metadata_objects,
+                        relevance_terms=prompt_relevance_terms,
+                    )
+                    recovery_trace = trace.setdefault(
+                        "masking_recovery",
+                        {"activated": True, "reason": str(exc), "attempts": []},
+                    )
+                    recovery_attempt = {
+                        "attempt": attempt,
+                        "payload_chars": json_size(query_payload),
+                        "metadata_objects_chars": json_size(query_payload.get("metadata_objects")),
+                    }
+                    recovery_trace["attempts"].append(recovery_attempt)
+                    try:
+                        query_response = self.llm_client.complete_json(
+                            system_prompt=self.prompt_catalog.query_prompt(self.bot_config),
+                            user_payload=query_payload,
+                        )
+                        recovery_attempt["ok"] = True
+                    except LLMProviderError as recovery_exc:
+                        recovery_attempt["ok"] = False
+                        recovery_attempt["error"] = str(recovery_exc)
+                        exc = recovery_exc
+                    else:
+                        exc = None
+                if exc is None:
+                    pass
+                else:
+                    return self._failed_result(
+                        message=message,
+                        intent=intent,
+                        goal=goal,
+                        context=context,
+                        gaps=gaps,
+                        error=f"LLM query synthesis failed: {exc}",
+                        trace=trace,
+                        metadata_objects=metadata_objects,
+                        onboarding_evidence=onboarding_evidence,
+                        successful_steps=successful_steps,
+                    )
 
             raw_query = str(query_response.get("query") or "").strip()
             query = postprocess_1c_query(raw_query)
@@ -1411,6 +1457,148 @@ def compact_query_review_guidance(value: Dict[str, Any]) -> Dict[str, Any]:
         "evidence_confidence": evidence.get("confidence"),
         "evidence": hits,
     }
+
+
+def masking_recovery_payload(
+    payload: Dict[str, Any],
+    *,
+    metadata_objects: List[MetadataObject],
+    relevance_terms: List[str],
+) -> Dict[str, Any]:
+    compact = dict(payload)
+    conversation = payload.get("conversation_context") if isinstance(payload.get("conversation_context"), dict) else {}
+    compact["conversation_context"] = {
+        "session_id": conversation.get("session_id"),
+        "resolved_entities": list(conversation.get("resolved_entities") or [])[:10],
+    }
+    compact["metadata_objects"] = [
+        metadata_object_prompt_summary(item, relevance_terms=relevance_terms)
+        for item in metadata_objects
+    ]
+    compact["onboarding_evidence"] = compact_onboarding_for_masking(payload.get("onboarding_evidence"))
+    compact["instance_knowledge"] = {
+        "available": False,
+        "omitted_reason": "gateway_masking_recovery",
+    }
+    compact["draft_query"] = ""
+    rules = payload.get("query_review_rules") if isinstance(payload.get("query_review_rules"), dict) else {}
+    compact["query_review_rules"] = {"rules": list(rules.get("rules") or [])}
+    return compact
+
+
+def metadata_object_prompt_summary(
+    item: MetadataObject,
+    *,
+    relevance_terms: List[str],
+    max_fields: int = 40,
+) -> Dict[str, Any]:
+    summary = metadata_object_summary(item)
+    fields = list(summary.get("fields") or [])
+    if len(fields) <= max_fields:
+        summary.pop("field_hints", None)
+        return summary
+    term_tokens = relevance_tokens(relevance_terms)
+    ranked = sorted(
+        enumerate(fields),
+        key=lambda indexed: (
+            -metadata_field_relevance_score(indexed[1], term_tokens),
+            indexed[0],
+        ),
+    )
+    selected = [name for _, name in ranked[:max_fields]]
+    selected_set = set(selected)
+    summary["fields"] = selected
+    summary.pop("field_hints", None)
+    details = summary.get("field_details") if isinstance(summary.get("field_details"), dict) else {}
+    summary["field_details"] = {name: details[name] for name in selected if name in details}
+    table_parts = summary.get("table_parts") if isinstance(summary.get("table_parts"), dict) else {}
+    summary["table_parts"] = {
+        name: details
+        for name, details in table_parts.items()
+        if name in selected_set or metadata_field_relevance_score(name, term_tokens) > 0
+    }
+    summary["fields_total"] = len(fields)
+    summary["fields_truncated"] = True
+    return summary
+
+
+def metadata_prompt_relevance_terms(
+    *,
+    message: str,
+    intent: IntentResult,
+    goal: Optional[GoalDecomposition],
+    discovery: Dict[str, Any],
+) -> List[str]:
+    result: List[str] = [message, intent.business_goal]
+    result.extend(str(item) for item in intent.domain_terms)
+    result.extend(str(item) for item in discovery.get("metadata_search_terms", []) or [])
+    collect_string_values(goal_to_payload(goal), result)
+    return result
+
+
+def collect_string_values(value: Any, result: List[str]) -> None:
+    if isinstance(value, str):
+        if value and value not in result:
+            result.append(value)
+        return
+    if isinstance(value, dict):
+        for nested in value.values():
+            collect_string_values(nested, result)
+        return
+    if isinstance(value, list):
+        for nested in value:
+            collect_string_values(nested, result)
+
+
+def relevance_tokens(values: List[str]) -> List[str]:
+    result: List[str] = []
+    for value in values:
+        for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё_]{3,}", str(value).lower()):
+            normalized = light_relevance_stem(token)
+            if normalized and normalized not in result:
+                result.append(normalized)
+    return result
+
+
+def light_relevance_stem(value: str) -> str:
+    for ending in ("иями", "ями", "ами", "ого", "ему", "ыми", "ий", "ый", "ая", "ое", "ие", "ов", "ев", "ам", "ям", "ах", "ях", "ы", "и", "а", "я"):
+        if len(value) >= len(ending) + 5 and value.endswith(ending):
+            return value[: -len(ending)]
+    return value
+
+
+def metadata_field_relevance_score(field_name: str, term_tokens: List[str]) -> int:
+    normalized = "".join(re.findall(r"[0-9A-Za-zА-Яа-яЁё_]+", field_name.lower()))
+    score = 100 if field_name in {"Ссылка", "Номер", "Дата", "Проведен", "ПометкаУдаления"} else 0
+    for token in term_tokens:
+        if len(token) >= 4 and token in normalized:
+            score += 20
+    return score
+
+
+def compact_onboarding_for_masking(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict) or not value.get("available"):
+        return {"available": False}
+    register_usage: List[Dict[str, Any]] = []
+    for row in list(value.get("register_usage") or [])[:4]:
+        if not isinstance(row, dict):
+            continue
+        register_usage.append(
+            {
+                "document": row.get("document"),
+                "registers": list(row.get("registers") or [])[:6],
+            }
+        )
+    return {
+        "available": True,
+        "terms": list(value.get("terms") or [])[:12],
+        "register_usage": register_usage,
+        "query_patterns_omitted": True,
+    }
+
+
+def is_guardrail_masking_error(value: str) -> bool:
+    return "router_v4_guardrails_mask_failed" in value
 
 
 def truncate_text(value: str, max_chars: int) -> str:

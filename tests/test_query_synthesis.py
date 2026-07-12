@@ -15,7 +15,7 @@ from wiicon5.execution.runtime import SkillPlanExecutor, default_runners
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider, metadata_object_from_payload
-from wiicon5.llm.client import ScriptedLLMClient
+from wiicon5.llm.client import LLMClient, LLMProviderError, ScriptedLLMClient
 from wiicon5.mcp.client import DictMcpClient, McpClient
 from wiicon5.mcp.contracts import McpMetadataRequest, McpMetadataResponse, McpQueryRequest, McpQueryResponse
 from wiicon5.models import ArtifactRequirement, SemanticFilter, SkillContract
@@ -35,6 +35,7 @@ from wiicon5.query_synthesis.synthesizer import (
     rank_metadata_objects,
     search_terms_from_discovery,
     metadata_object_summary,
+    metadata_object_prompt_summary,
     should_expand_metadata,
 )
 from wiicon5.query_synthesis.sufficiency import deterministic_partial_review
@@ -95,6 +96,49 @@ class QuerySynthesisTests(unittest.TestCase):
             "evidence_query",
         )
         self.assertEqual(len(llm.calls), 2)
+
+    def test_synthesis_recovers_from_gateway_mask_failure_with_minimal_payload(self) -> None:
+        llm = ExceptionScriptedLLMClient(
+            [
+                discovery_response(["денежные средства", "касса"]),
+                LLMProviderError(
+                    'LLM HTTP 503: {"error":{"code":"router_v4_guardrails_mask_failed"},'
+                    '"request_id":"mask-request"}'
+                ),
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        Остатки.Касса КАК Касса,
+                        Остатки.СуммаОстаток КАК Остаток
+                    ИЗ
+                        РегистрНакопления.ДенежныеСредства.Остатки() КАК Остатки
+                    """
+                ),
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=FakeMetadataProvider(),
+            mcp_client=DictMcpClient({"success": True, "data": [{"Касса": "Основная", "Остаток": 100}]}),
+            onboarding_evidence_provider=FakeOnboardingEvidenceProvider(),
+        )
+
+        result = engine.run(
+            message="Покажи остаток денежных средств в кассе",
+            intent=data_intent("Покажи остаток денежных средств"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(llm.calls), 3)
+        fallback_payload = llm.calls[2]["user_payload"]
+        self.assertFalse(fallback_payload["instance_knowledge"]["available"])
+        self.assertTrue(fallback_payload["onboarding_evidence"]["query_patterns_omitted"])
+        self.assertNotIn("query_patterns", fallback_payload["onboarding_evidence"])
+        self.assertEqual(fallback_payload["draft_query"], "")
+        self.assertTrue(result.trace["masking_recovery"]["attempts"][0]["ok"])
 
     def test_synthesis_continues_after_partial_document_reference_result(self) -> None:
         document_ref = document_object_ref(
@@ -2585,6 +2629,28 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(set(first_details), {"category", "synonym", "type"})
         self.assertLess(len(json.dumps(summary, ensure_ascii=False)), 25000)
 
+        relevant_summary = metadata_object_prompt_summary(
+            MetadataObject(
+                full_name=metadata.full_name,
+                synonym=metadata.synonym,
+                fields=fields + ["Статус", "фит_ДатаДоставки", "ЖелаемаяДатаПоступления", "Номер"],
+                field_details={
+                    **metadata.field_details,
+                    "Статус": {"_source": "mcp", "_trust": "verified"},
+                    "фит_ДатаДоставки": {"_source": "mcp", "_trust": "verified"},
+                    "ЖелаемаяДатаПоступления": {"_source": "mcp", "_trust": "verified"},
+                    "Номер": {"_source": "mcp", "_trust": "verified"},
+                },
+                raw=metadata.raw,
+            ),
+            relevance_terms=["статус доставки", "ожидаемая дата", "номер документа"],
+        )
+        self.assertLessEqual(len(relevant_summary["fields"]), 40)
+        self.assertIn("Статус", relevant_summary["fields"])
+        self.assertIn("фит_ДатаДоставки", relevant_summary["fields"])
+        self.assertIn("ЖелаемаяДатаПоступления", relevant_summary["fields"])
+        self.assertIn("Номер", relevant_summary["fields"])
+
         knowledge = compact_instance_knowledge(
             {
                 "available": True,
@@ -2748,6 +2814,19 @@ class FakeMetadataProvider(MetadataProvider):
     def get_object(self, full_name: str) -> MetadataObject:
         self.last_requests.append({"operation": "get_object", "full_name": full_name})
         return self.object
+
+
+class ExceptionScriptedLLMClient(LLMClient):
+    def __init__(self, responses: List[object]) -> None:
+        self.responses = list(responses)
+        self.calls: List[Dict[str, object]] = []
+
+    def complete_json(self, *, system_prompt: str, user_payload: Dict[str, object]) -> Dict[str, object]:
+        self.calls.append({"system_prompt": system_prompt, "user_payload": user_payload})
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response  # type: ignore[return-value]
 
 
 class FakeOnboardingEvidenceProvider:
