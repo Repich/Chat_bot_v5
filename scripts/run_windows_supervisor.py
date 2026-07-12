@@ -60,6 +60,9 @@ def start_bot(install_root: Path, port: int, service_log: Path, supervisor_log: 
         runtime = Path(sys.executable)
     env = dict(os.environ)
     env.update(read_env_file(install_root / "config" / ".env.wiicon5"))
+    existing_python_path = env.get("PYTHONPATH", "")
+    app_source = str(app_root / "src")
+    env["PYTHONPATH"] = app_source if not existing_python_path else app_source + os.pathsep + existing_python_path
     env.update(
         {
             "PYTHONUTF8": "1",
@@ -81,14 +84,17 @@ def start_bot(install_root: Path, port: int, service_log: Path, supervisor_log: 
     stream = service_log.open("a", encoding="utf-8")
     command = [
         str(runtime),
-        str(app_root / "scripts" / "run_wiic_bwiki.py"),
+        "-m",
+        "wiicon5.cli.serve",
+        "--root",
+        str(app_root),
         "--host",
         "0.0.0.0",
         "--port",
         str(port),
     ]
     log(supervisor_log, f"Запуск версии {read_version(app_root)}: {' '.join(command)}")
-    process = subprocess.Popen(command, cwd=str(app_root), env=env, stdout=stream, stderr=subprocess.STDOUT)
+    process = subprocess.Popen(command, cwd=str(install_root), env=env, stdout=stream, stderr=subprocess.STDOUT)
     stream.close()
     return process
 
@@ -179,6 +185,19 @@ def wait_for_health(port: int, child: subprocess.Popen, *, timeout_seconds: int)
 
 def stop_process(process: subprocess.Popen) -> None:
     if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        try:
+            process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
         return
     process.terminate()
     try:

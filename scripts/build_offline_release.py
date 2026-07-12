@@ -56,6 +56,10 @@ def main() -> int:
         build_installer_archive(root, app_files, runtime_zip, installer_path, version)
         built_packages.append(installer_path)
         print(installer_path)
+    recovery_path = output_dir / f"wiicon5-recover-update-{version}.ps1"
+    write_windows_text_file(root / "deployment" / "windows" / "recover-update.ps1", recovery_path)
+    built_packages.append(recovery_path)
+    print(recovery_path)
     checksum_path = output_dir / "SHA256SUMS.txt"
     write_checksum_manifest(built_packages, checksum_path)
     print(checksum_path)
@@ -109,7 +113,14 @@ def build_installer_archive(
         with zipfile.ZipFile(runtime_zip) as archive:
             archive.extractall(stage / "runtime")
         configure_embedded_python(stage / "runtime")
-        for name in ["install.cmd", "install.ps1", "run-bot.cmd", "apply-update.cmd", "server.env.example"]:
+        for name in [
+            "install.cmd",
+            "install.ps1",
+            "run-bot.cmd",
+            "apply-update.cmd",
+            "recover-update.ps1",
+            "server.env.example",
+        ]:
             write_windows_text_file(root / "deployment" / "windows" / name, stage / name)
         (stage / "PACKAGE_VERSION.txt").write_text(version + "\n", encoding="utf-8")
         zip_tree(stage, target)

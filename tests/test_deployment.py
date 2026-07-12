@@ -6,8 +6,9 @@ import unittest
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from scripts.build_offline_release import main as build_offline_release_main
 from scripts.build_offline_release import write_checksum_manifest, write_windows_text_file
 from wiicon5.deployment.diagnostics import SessionDiagnosticStore
 from wiicon5.deployment.updates import (
@@ -150,6 +151,7 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
         installer = (project_root / "deployment" / "windows" / "install.ps1").read_text(encoding="utf-8")
         run_bot = (project_root / "deployment" / "windows" / "run-bot.cmd").read_text(encoding="utf-8")
         apply_update = (project_root / "deployment" / "windows" / "apply-update.cmd").read_text(encoding="utf-8")
+        recover_update = (project_root / "deployment" / "windows" / "recover-update.ps1").read_text(encoding="utf-8")
         server_env = (project_root / "deployment" / "windows" / "server.env.example").read_text(encoding="utf-8")
         supervisor = (project_root / "scripts" / "run_windows_supervisor.py").read_text(encoding="utf-8")
 
@@ -157,6 +159,8 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
         self.assertIn(f'$InstallRoot = "{expected_root}"', installer)
         self.assertIn("$NormalizedPackageRoot -ieq $NormalizedInstallRoot", installer)
         self.assertIn("$LegacyInstallRoot", installer)
+        self.assertIn("Stop-InstalledWiiconProcesses $InstallRoot", installer)
+        self.assertIn('"wiicon5.cli.serve"', installer)
         self.assertIn('$ServerName = "ms-1cmonitor"', installer)
         self.assertIn("Get-Content $templatePath -Raw -Encoding UTF8", installer)
         self.assertIn("Get-Content $ConfigPath -Raw -Encoding UTF8", installer)
@@ -168,6 +172,28 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
         self.assertIn(f"WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS={expected_root}\\data", server_env)
         self.assertIn('"--host",\n        "0.0.0.0"', supervisor)
         self.assertIn('default="ms-1cmonitor"', supervisor)
+        self.assertIn('"wiicon5.cli.serve"', supervisor)
+        self.assertNotIn('str(app_root / "scripts" / "run_wiic_bwiki.py")', supervisor)
+        self.assertIn('["taskkill", "/PID", str(process.pid), "/T", "/F"]', supervisor)
+        self.assertIn("Stop-ScheduledTask", recover_update)
+        self.assertIn("apply_stopped_update.py", recover_update)
+        self.assertIn("--rollback", recover_update)
+        self.assertIn("Wait-WiiconHealth", recover_update)
+
+    def test_windows_supervisor_stops_complete_process_tree(self) -> None:
+        from scripts import run_windows_supervisor
+
+        process = MagicMock()
+        process.pid = 4242
+        process.poll.return_value = None
+        with patch.object(run_windows_supervisor.os, "name", "nt"), patch.object(
+            run_windows_supervisor.subprocess, "run"
+        ) as taskkill:
+            run_windows_supervisor.stop_process(process)
+
+        taskkill.assert_called_once()
+        self.assertEqual(taskkill.call_args.args[0], ["taskkill", "/PID", "4242", "/T", "/F"])
+        process.wait.assert_called_once_with(timeout=20)
 
     def test_release_builder_writes_checksums_for_current_packages(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -184,10 +210,36 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
             self.assertEqual(lines[0], f"{hashlib.sha256(b'full').hexdigest()}  full.zip")
             self.assertEqual(lines[1], f"{hashlib.sha256(b'update').hexdigest()}  update.zip")
 
+    def test_release_builder_emits_standalone_recovery_script(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        version = (project_root / "VERSION").read_text(encoding="utf-8").strip()
+        with TemporaryDirectory() as temp_dir, patch(
+            "sys.argv",
+            [
+                "build_offline_release.py",
+                "--output-dir",
+                temp_dir,
+                "--mode",
+                "update",
+            ],
+        ):
+            self.assertEqual(build_offline_release_main(), 0)
+            recovery = Path(temp_dir) / f"wiicon5-recover-update-{version}.ps1"
+            checksums = (Path(temp_dir) / "SHA256SUMS.txt").read_text(encoding="ascii")
+
+        self.assertTrue(recovery.name in checksums)
+
     def test_windows_payload_uses_powershell_bom_ascii_batch_and_crlf(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         windows_root = project_root / "deployment" / "windows"
-        names = ["install.cmd", "install.ps1", "run-bot.cmd", "apply-update.cmd", "server.env.example"]
+        names = [
+            "install.cmd",
+            "install.ps1",
+            "run-bot.cmd",
+            "apply-update.cmd",
+            "recover-update.ps1",
+            "server.env.example",
+        ]
         for name in names:
             self.assertTrue(all(value < 128 for value in (windows_root / name).read_bytes()), name)
 

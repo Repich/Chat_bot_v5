@@ -29,6 +29,22 @@ function Copy-NewFilesOnly([string]$Source, [string]$Destination) {
     }
 }
 
+function Stop-InstalledWiiconProcesses([string]$Root) {
+    $patterns = @("run-bot.cmd", "run_windows_supervisor.py", "run_wiic_bwiki.py", "wiicon5.cli.serve")
+    Get-CimInstance Win32_Process | Where-Object {
+        $process = $_
+        if ($process.ProcessId -eq $PID -or -not $process.CommandLine -or -not $process.CommandLine.Contains($Root)) {
+            return $false
+        }
+        foreach ($pattern in $patterns) {
+            if ($process.CommandLine.Contains($pattern)) { return $true }
+        }
+        return $false
+    } | Sort-Object ProcessId -Descending | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $NormalizedPackageRoot = [System.IO.Path]::GetFullPath($PackageRoot).TrimEnd('\')
 $NormalizedInstallRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 if ($NormalizedPackageRoot -ieq $NormalizedInstallRoot) {
@@ -43,7 +59,7 @@ if ($NormalizedPackageRoot -ieq $NormalizedInstallRoot) {
             Copy-Item $sourceDirectory $targetDirectory -Recurse -Force
         }
     }
-    foreach ($file in @("run-bot.cmd", "apply-update.cmd", "server.env", "server.env.example")) {
+    foreach ($file in @("run-bot.cmd", "apply-update.cmd", "recover-update.ps1", "server.env", "server.env.example")) {
         $sourceFile = Join-Path $PackageRoot $file
         if (Test-Path $sourceFile) {
             Copy-Item $sourceFile (Join-Path $StagedSourceRoot $file) -Force
@@ -58,6 +74,8 @@ if ($ExistingTask -and $ExistingTask.State -eq "Running") {
     Stop-ScheduledTask -TaskName $TaskName
     Start-Sleep -Seconds 3
 }
+Stop-InstalledWiiconProcesses $InstallRoot
+Start-Sleep -Seconds 2
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 foreach ($directory in @("app", "runtime", "data", "config", "logs", "updates\inbox", "updates\applied", "updates\failed")) {
     New-Item -ItemType Directory -Path (Join-Path $InstallRoot $directory) -Force | Out-Null
@@ -88,7 +106,7 @@ Copy-Item (Join-Path $SourceRoot "app\current") (Join-Path $InstallRoot "app\cur
 Copy-Item (Join-Path $SourceRoot "runtime\*") (Join-Path $InstallRoot "runtime") -Recurse -Force
 Copy-NewFilesOnly (Join-Path $SourceRoot "data_seed") (Join-Path $InstallRoot "data")
 
-foreach ($file in @("run-bot.cmd", "apply-update.cmd")) {
+foreach ($file in @("run-bot.cmd", "apply-update.cmd", "recover-update.ps1")) {
     Copy-Item (Join-Path $SourceRoot $file) (Join-Path $InstallRoot $file) -Force
 }
 
