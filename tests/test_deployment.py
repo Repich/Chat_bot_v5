@@ -150,6 +150,7 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
         installer = (project_root / "deployment" / "windows" / "install.ps1").read_text(encoding="utf-8")
         run_bot = (project_root / "deployment" / "windows" / "run-bot.cmd").read_text(encoding="utf-8")
         apply_update = (project_root / "deployment" / "windows" / "apply-update.cmd").read_text(encoding="utf-8")
+        server_env = (project_root / "deployment" / "windows" / "server.env.example").read_text(encoding="utf-8")
         supervisor = (project_root / "scripts" / "run_windows_supervisor.py").read_text(encoding="utf-8")
 
         expected_root = r"C:\Monitoring\WiiconChatBot_5"
@@ -164,6 +165,7 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
         self.assertIn(expected_root, run_bot)
         self.assertIn("--public-host ms-1cmonitor", run_bot)
         self.assertIn(expected_root, apply_update)
+        self.assertIn(f"WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS={expected_root}\\data", server_env)
         self.assertIn('"--host",\n        "0.0.0.0"', supervisor)
         self.assertIn('default="ms-1cmonitor"', supervisor)
 

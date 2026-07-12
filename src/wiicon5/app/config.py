@@ -72,7 +72,7 @@ class Settings:
             admin_bind_local_only=bool_from_env(values.get("WIICON5_ADMIN_BIND_LOCAL_ONLY"), default=True),
             admin_allowed_config_roots=path_list_from_env(
                 values.get("WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS"),
-                default=(base, Path.home()),
+                default=(base, Path.home(), install_root / "data"),
             ),
             workbench_allow_raw_query_edit=bool_from_env(
                 values.get("WIICON5_WORKBENCH_ALLOW_RAW_QUERY_EDIT"),

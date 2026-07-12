@@ -62,6 +62,7 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.update_inbox_dir, install_root / "updates" / "inbox")
         self.assertEqual(settings.update_request_file, install_root / "updates" / "apply-request.json")
         self.assertEqual(settings.diagnostics_dir, install_root / "data" / "diagnostics")
+        self.assertIn(install_root / "data", settings.admin_allowed_config_roots)
 
     def test_settings_default_to_automatic_configuration_fingerprint(self) -> None:
         with TemporaryDirectory() as temp_dir:

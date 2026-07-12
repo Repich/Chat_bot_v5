@@ -23,11 +23,16 @@ WIICON5_LLM_API_BASE=http://адрес-внутреннего-шлюза/v1
 WIICON5_LLM_API_KEY=ключ-или-внутренний-токен
 WIICON5_LLM_MODEL=gpt-5.4
 WIICON5_MCP_URL=http://127.0.0.1:6003
+WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS=C:\Monitoring\WiiconChatBot_5\data
 ```
 
 В качестве основной модели можно указать доступную через внутренний шлюз
 `gpt-5.4` или `glm-5.2`. Название должно в точности совпадать с идентификатором,
 который принимает шлюз.
+
+Файловую выгрузку конфигурации для первоначального обучения размещайте внутри
+`C:\Monitoring\WiiconChatBot_5\data`; этот каталог включен в административный
+allowlist Windows-инстанса.
 
 Секреты находятся только в `C:\Monitoring\WiiconChatBot_5\config\.env.wiicon5`
 и не попадают в диагностические ZIP или update-пакеты.
