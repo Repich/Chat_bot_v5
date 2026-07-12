@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -13,8 +14,6 @@ from wiicon5.knowledge.metadata import (
     MetadataObject,
     MetadataProvider,
     confirmed_field_names,
-    field_source,
-    field_trust,
     is_field_confirmed,
     metadata_object_source,
     metadata_object_trust,
@@ -125,7 +124,7 @@ class QuerySynthesisEngine:
         query_reviewer: Optional[OneCQueryReviewer] = None,
         answer_formatter: Optional[LLMAnswerFormatter] = None,
         result_reviewer: Optional[ResultSufficiencyReviewer] = None,
-        max_metadata_objects: int = 12,
+        max_metadata_objects: int = 8,
         max_repair_attempts: int = 2,
         max_successful_steps: int = 3,
         bot_config: Optional[BotInstanceConfig] = None,
@@ -177,6 +176,10 @@ class QuerySynthesisEngine:
             else {"available": False}
         )
         trace["instance_knowledge"] = instance_knowledge
+        prompt_instance_knowledge = compact_instance_knowledge(instance_knowledge)
+        trace["prompt_context_sizes"] = {
+            "instance_knowledge_chars": json_size(prompt_instance_knowledge),
+        }
         reset_metadata_request_log(self.metadata_provider)
         try:
             discovery = self.llm_client.complete_json(
@@ -186,7 +189,7 @@ class QuerySynthesisEngine:
                     "intent": intent.to_dict(),
                     "goal": goal_to_payload(goal),
                     "conversation_context": context.to_packet(),
-                    "instance_knowledge": instance_knowledge,
+                    "instance_knowledge": prompt_instance_knowledge,
                     "gaps": gaps,
                     "schema": {
                         "metadata_search_terms": ["term"],
@@ -211,6 +214,13 @@ class QuerySynthesisEngine:
         trace["metadata_objects"] = [metadata_object_summary(item) for item in metadata_objects]
         onboarding_evidence = self._onboarding_evidence(search_terms, metadata_objects)
         trace["onboarding_evidence"] = onboarding_evidence
+        prompt_metadata_objects = [metadata_object_summary(item) for item in metadata_objects]
+        trace["prompt_context_sizes"].update(
+            {
+                "metadata_objects_chars": json_size(prompt_metadata_objects),
+                "onboarding_evidence_chars": json_size(onboarding_evidence),
+            }
+        )
         if not metadata_objects:
             return self._failed_result(
                 message=message,
@@ -233,6 +243,10 @@ class QuerySynthesisEngine:
         successful_steps: List[Dict[str, Any]] = []
         query_review_guidance = self.query_reviewer.guidance()
         trace["query_review_guidance"] = query_review_guidance
+        prompt_query_review_guidance = compact_query_review_guidance(query_review_guidance)
+        trace["prompt_context_sizes"]["query_review_guidance_chars"] = json_size(
+            prompt_query_review_guidance
+        )
         max_total_attempts = self.max_repair_attempts + self.max_successful_steps + 2
         trace["max_total_attempts"] = max_total_attempts
         for attempt in range(1, max_total_attempts + 1):
@@ -250,7 +264,7 @@ class QuerySynthesisEngine:
                         "conversation_context": context.to_packet(),
                         "metadata_objects": [metadata_object_summary(item) for item in metadata_objects],
                         "onboarding_evidence": onboarding_evidence,
-                        "instance_knowledge": instance_knowledge,
+                        "instance_knowledge": prompt_instance_knowledge,
                         "hypothesis": discovery.get("hypothesis"),
                         "draft_query": discovery.get("draft_query"),
                         "previous_error": previous_error,
@@ -259,7 +273,7 @@ class QuerySynthesisEngine:
                         "forbidden_metadata_sources": list(forbidden_metadata_sources),
                         "previous_successful_steps": compact_successful_steps(successful_steps),
                         "previous_result_insufficiency": previous_result_insufficiency,
-                        "query_review_rules": query_review_guidance,
+                        "query_review_rules": prompt_query_review_guidance,
                         "attempt": attempt,
                         "schema": {"query": "1C query text", "params": {}, "limit": 100, "reasoning": "why this query"},
                     },
@@ -1307,12 +1321,9 @@ def search_terms_from_discovery(
     terms: List[str] = []
     for item in intent.domain_terms:
         add_unique(terms, str(item).strip())
-    for word in message.replace(",", " ").split():
-        if len(word) >= 5:
-            add_unique(terms, word.strip())
     for item in discovery.get("metadata_search_terms", []) or []:
         add_unique(terms, str(item).strip())
-    return expand_metadata_search_terms(terms, term_expansion_policy)[:30]
+    return expand_metadata_search_terms(terms, term_expansion_policy)[:16]
 
 
 def expand_metadata_search_terms(
@@ -1338,36 +1349,79 @@ def metadata_object_summary(item: MetadataObject) -> Dict[str, Any]:
         "field_details": {
             name: {
                 key: value
-                for key, value in details.items()
-                if key
-                in {
-                    "Имя",
-                    "Синоним",
-                    "Тип",
-                    "_category",
-                    "_source",
-                    "_trust",
-                    "_confidence",
-                    "name",
-                    "synonym",
-                    "type",
-                }
+                for key, value in {
+                    "category": details.get("_category"),
+                    "synonym": details.get("synonym") or details.get("Синоним"),
+                    "type": details.get("type") or details.get("Тип"),
+                }.items()
+                if value is not None and value != "" and value != [] and value != {}
             }
             for name, details in item.field_details.items()
             if is_field_confirmed(details)
         },
-        "field_hint_details": {
-            name: {
-                "name": name,
-                "category": details.get("_category"),
-                "source": field_source(details),
-                "trust": field_trust(details),
-                "confidence": details.get("_confidence"),
-            }
-            for name, details in item.field_details.items()
-            if not is_field_confirmed(details)
-        },
     }
+
+
+def compact_instance_knowledge(value: Dict[str, Any], *, max_hits: int = 4, max_text_chars: int = 700) -> Dict[str, Any]:
+    if not value.get("available"):
+        return {"available": False}
+    snapshot = value.get("snapshot") if isinstance(value.get("snapshot"), dict) else {}
+    hits = value.get("hits") if isinstance(value.get("hits"), list) else []
+    compact_hits: List[Dict[str, Any]] = []
+    for raw_hit in hits[:max_hits]:
+        if not isinstance(raw_hit, dict):
+            continue
+        text = str(raw_hit.get("content") or raw_hit.get("snippet") or "").strip()
+        compact_hits.append(
+            {
+                "page_id": raw_hit.get("page_id"),
+                "title": raw_hit.get("title"),
+                "heading": raw_hit.get("heading"),
+                "ancestor_titles": list(raw_hit.get("ancestor_titles") or [])[-4:],
+                "text": truncate_text(text, max_text_chars),
+                "stale": bool(raw_hit.get("stale")),
+            }
+        )
+    return {
+        "available": True,
+        "snapshot_id": snapshot.get("snapshot_id") or snapshot.get("id"),
+        "hits": compact_hits,
+        "evidence_policy": value.get("evidence_policy"),
+    }
+
+
+def compact_query_review_guidance(value: Dict[str, Any]) -> Dict[str, Any]:
+    rules = value.get("rules") if isinstance(value.get("rules"), list) else []
+    evidence = value.get("evidence") if isinstance(value.get("evidence"), dict) else {}
+    raw_hits_value = evidence.get("wiki_hits") or evidence.get("hits")
+    raw_hits = raw_hits_value if isinstance(raw_hits_value, list) else []
+    hits: List[Dict[str, Any]] = []
+    for raw_hit in raw_hits[:3]:
+        if not isinstance(raw_hit, dict):
+            continue
+        hits.append(
+            {
+                "title": raw_hit.get("title"),
+                "path": raw_hit.get("path") or raw_hit.get("source_path"),
+                "snippet": truncate_text(str(raw_hit.get("snippet") or ""), 350),
+            }
+        )
+    return {
+        "rules": [str(item) for item in rules],
+        "evidence_confidence": evidence.get("confidence"),
+        "evidence": hits,
+    }
+
+
+def truncate_text(value: str, max_chars: int) -> str:
+    value = value.strip()
+    if len(value) <= max_chars:
+        return value
+    return value[: max(1, max_chars - 16)].rstrip() + "...<truncated>"
+
+
+def json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
 
 
 def table_parts_summary(item: MetadataObject) -> Dict[str, Any]:

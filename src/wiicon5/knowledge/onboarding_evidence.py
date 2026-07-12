@@ -8,7 +8,7 @@ from wiicon5.knowledge.metadata import MetadataObject
 
 
 class OnboardingEvidenceProvider:
-    def __init__(self, onboarding_dir: Path, *, max_register_usage: int = 12, max_query_patterns: int = 8) -> None:
+    def __init__(self, onboarding_dir: Path, *, max_register_usage: int = 6, max_query_patterns: int = 4) -> None:
         self.onboarding_dir = onboarding_dir
         self.max_register_usage = max_register_usage
         self.max_query_patterns = max_query_patterns
@@ -55,7 +55,7 @@ def matching_register_usage(path: Path, *, terms: List[str], limit: int) -> List
     rows = payload.get("items") if isinstance(payload, dict) else []
     if not isinstance(rows, list):
         return []
-    return top_matches(
+    matches = top_matches(
         [
             {
                 "document": str(row.get("document") or ""),
@@ -69,6 +69,7 @@ def matching_register_usage(path: Path, *, terms: List[str], limit: int) -> List
         fields=["document", "registers", "source_file"],
         limit=limit,
     )
+    return [compact_register_usage(row, terms=terms) for row in matches]
 
 
 def matching_query_patterns(path: Path, *, terms: List[str], limit: int) -> List[Dict[str, Any]]:
@@ -123,7 +124,35 @@ def flatten_field_values(values) -> List[str]:
     return result
 
 
-def compact_query(query: str, *, max_chars: int = 1600) -> str:
+def compact_register_usage(row: Dict[str, Any], *, terms: List[str], max_registers: int = 10) -> Dict[str, Any]:
+    registers = row.get("registers") if isinstance(row.get("registers"), list) else []
+    normalized_terms = [term.lower() for term in terms if len(term.strip()) >= 4]
+    ranked = sorted(
+        [str(item) for item in registers],
+        key=lambda item: (-term_match_score(item, normalized_terms), item),
+    )
+    selected = ranked[:max_registers]
+    return {
+        "document": row.get("document"),
+        "registers": selected,
+        "registers_total": len(registers),
+        "registers_truncated": len(registers) > len(selected),
+        "source_file": row.get("source_file"),
+    }
+
+
+def term_match_score(value: str, normalized_terms: List[str]) -> int:
+    haystack = value.lower()
+    score = 0
+    for term in normalized_terms:
+        if term in haystack:
+            score += 10
+            continue
+        score += sum(2 for word in term.split() if len(word) >= 4 and word in haystack)
+    return score
+
+
+def compact_query(query: str, *, max_chars: int = 1000) -> str:
     compacted = "\n".join(line.rstrip() for line in query.strip().splitlines() if line.strip())
     if len(compacted) <= max_chars:
         return compacted

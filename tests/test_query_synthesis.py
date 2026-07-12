@@ -26,12 +26,15 @@ from wiicon5.query.reference_value_resolver import best_reference_match
 from wiicon5.query_synthesis import FailureSolver, FailureSolverDecision, QuerySynthesisEngine, QuerySynthesisResult
 from wiicon5.query_synthesis.synthesizer import (
     collect_metadata_objects,
+    compact_instance_knowledge,
+    compact_query_review_guidance,
     expand_metadata_search_terms,
     goal_semantic_review_issues,
     repeated_invalid_field_sources,
     postprocess_1c_query,
     rank_metadata_objects,
     search_terms_from_discovery,
+    metadata_object_summary,
     should_expand_metadata,
 )
 from wiicon5.query_synthesis.sufficiency import deterministic_partial_review
@@ -2536,6 +2539,84 @@ class QuerySynthesisTests(unittest.TestCase):
 
         self.assertIn("номенклатура", terms)
         self.assertIn("продажи", terms)
+
+    def test_search_terms_do_not_use_question_words_or_business_identifier_as_metadata_terms(self) -> None:
+        terms = search_terms_from_discovery(
+            {"metadata_search_terms": ["ЗаказТребование", "ПлановаяДатаДоставки"]},
+            IntentResult(
+                intent_type=IntentType.DATA_QUESTION,
+                business_goal="Узнать срок доставки",
+                requires_1c_data=True,
+                domain_terms=["заказ-требование", "доставка"],
+                relevant=True,
+            ),
+            "Когда будет доставлен заказ-требование WXX-5242835-4NSK3000LW?",
+        )
+
+        self.assertNotIn("Когда", terms)
+        self.assertNotIn("будет", terms)
+        self.assertFalse(any("WXX-5242835" in term for term in terms))
+        self.assertLessEqual(len(terms), 16)
+
+    def test_prompt_context_helpers_remove_duplicate_and_large_evidence(self) -> None:
+        fields = [f"Поле{index}" for index in range(80)]
+        metadata = MetadataObject(
+            full_name="Документ.ТестовыйДокумент",
+            synonym="Тестовый документ",
+            fields=fields,
+            field_details={
+                name: {
+                    "Имя": name,
+                    "name": name,
+                    "Синоним": f"Синоним {name}",
+                    "synonym": f"Синоним {name}",
+                    "Тип": "Строка",
+                    "type": "Строка",
+                    "_category": "attribute",
+                    "_source": "mcp",
+                    "_trust": "verified",
+                }
+                for name in fields
+            },
+            raw={"_source": "mcp", "_trust": "verified"},
+        )
+        summary = metadata_object_summary(metadata)
+        first_details = summary["field_details"][fields[0]]
+        self.assertEqual(set(first_details), {"category", "synonym", "type"})
+        self.assertLess(len(json.dumps(summary, ensure_ascii=False)), 25000)
+
+        knowledge = compact_instance_knowledge(
+            {
+                "available": True,
+                "snapshot": {"snapshot_id": "snapshot-1", "large": "x" * 10000},
+                "hits": [
+                    {
+                        "page_id": f"page-{index}",
+                        "title": "Заголовок",
+                        "heading": "Раздел",
+                        "content": "я" * 5000,
+                        "ancestor_titles": ["Корень"],
+                    }
+                    for index in range(10)
+                ],
+                "evidence_policy": "context only",
+            }
+        )
+        self.assertEqual(len(knowledge["hits"]), 4)
+        self.assertLess(len(json.dumps(knowledge, ensure_ascii=False)), 5000)
+
+        guidance = compact_query_review_guidance(
+            {
+                "rules": ["rule"],
+                "evidence": {
+                    "answer_md": "z" * 10000,
+                    "hits": [{"title": "Title", "snippet": "s" * 2000} for _ in range(10)],
+                },
+            }
+        )
+        self.assertNotIn("answer_md", guidance["evidence"])
+        self.assertEqual(len(guidance["evidence"]), 3)
+        self.assertLess(len(json.dumps(guidance, ensure_ascii=False)), 2000)
 
     def test_metadata_search_terms_expand_common_1c_business_vocabulary(self) -> None:
         terms = expand_metadata_search_terms(["номенклатура", "продажи"])

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class LLMProviderError(Exception):
@@ -27,12 +32,16 @@ class OpenAICompatibleLLMClient(LLMClient):
         model: str,
         timeout_seconds: float = 60.0,
         temperature: float = 0.0,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 0.5,
     ) -> None:
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.temperature = temperature
+        self.max_retries = max(0, max_retries)
+        self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
 
     def complete_json(self, *, system_prompt: str, user_payload: Dict[str, Any]) -> Dict[str, Any]:
         payload = {
@@ -65,15 +74,31 @@ class OpenAICompatibleLLMClient(LLMClient):
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                status_code = int(response.status)
-                raw_body = response.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as exc:
-            raw_body = exc.read().decode("utf-8", errors="replace")
-            raise LLMProviderError(f"LLM HTTP {exc.code}: {raw_body[:1000]}") from exc
-        except OSError as exc:
-            raise LLMProviderError(str(exc)) from exc
+        status_code = 0
+        raw_body = ""
+        for attempt in range(self.max_retries + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    status_code = int(response.status)
+                    raw_body = response.read().decode("utf-8", errors="replace")
+                break
+            except urllib.error.HTTPError as exc:
+                raw_body = exc.read().decode("utf-8", errors="replace")
+                if exc.code in {502, 503, 504} and attempt < self.max_retries:
+                    LOGGER.warning(
+                        "Temporary LLM gateway failure status=%s attempt=%s/%s request_id=%s",
+                        exc.code,
+                        attempt + 1,
+                        self.max_retries + 1,
+                        gateway_request_id(raw_body),
+                    )
+                    time.sleep(self.retry_backoff_seconds * (2**attempt))
+                    continue
+                raise LLMProviderError(
+                    f"LLM HTTP {exc.code} after {attempt + 1} attempt(s): {raw_body[:1000]}"
+                ) from exc
+            except OSError as exc:
+                raise LLMProviderError(str(exc)) from exc
         if status_code >= 400:
             raise LLMProviderError(f"LLM HTTP {status_code}: {raw_body[:1000]}")
         try:
@@ -83,6 +108,22 @@ class OpenAICompatibleLLMClient(LLMClient):
         if not isinstance(data, dict):
             raise LLMProviderError("LLM HTTP response JSON root must be an object.")
         return data
+
+
+def gateway_request_id(raw_body: str) -> str:
+    try:
+        payload = json.loads(raw_body)
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    direct = payload.get("request_id")
+    if direct:
+        return str(direct)
+    error = payload.get("error")
+    if isinstance(error, dict) and error.get("request_id"):
+        return str(error["request_id"])
+    return ""
 
 
 class ScriptedLLMClient(LLMClient):
