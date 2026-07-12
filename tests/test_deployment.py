@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from scripts.build_offline_release import write_checksum_manifest
 from wiicon5.deployment.diagnostics import SessionDiagnosticStore
 from wiicon5.deployment.updates import (
     OfflineUpdateManager,
@@ -141,6 +142,43 @@ class OfflineUpdateTests(unittest.TestCase):
             rewrite_zip_entry(package, "payload/app/unlisted.py", b"print('unexpected')")
             with self.assertRaisesRegex(ValueError, "не совпадает"):
                 read_update_package(package, verify_files=True)
+
+
+class WindowsDeploymentScriptTests(unittest.TestCase):
+    def test_windows_install_uses_monitoring_root_and_server_name(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        installer = (project_root / "deployment" / "windows" / "install.ps1").read_text(encoding="utf-8")
+        run_bot = (project_root / "deployment" / "windows" / "run-bot.cmd").read_text(encoding="utf-8")
+        apply_update = (project_root / "deployment" / "windows" / "apply-update.cmd").read_text(encoding="utf-8")
+        supervisor = (project_root / "scripts" / "run_windows_supervisor.py").read_text(encoding="utf-8")
+
+        expected_root = r"C:\Monitoring\WiiconChatBot_5"
+        self.assertIn(f'$InstallRoot = "{expected_root}"', installer)
+        self.assertIn("$NormalizedPackageRoot -ieq $NormalizedInstallRoot", installer)
+        self.assertIn("$LegacyInstallRoot", installer)
+        self.assertIn('$ServerName = "ms-1cmonitor"', installer)
+        self.assertIn('http://${ServerName}:${ServicePort}/', installer)
+        self.assertIn("-LocalPort $ServicePort", installer)
+        self.assertIn(expected_root, run_bot)
+        self.assertIn("--public-host ms-1cmonitor", run_bot)
+        self.assertIn(expected_root, apply_update)
+        self.assertIn('"--host",\n        "0.0.0.0"', supervisor)
+        self.assertIn('default="ms-1cmonitor"', supervisor)
+
+    def test_release_builder_writes_checksums_for_current_packages(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first = root / "full.zip"
+            second = root / "update.zip"
+            target = root / "SHA256SUMS.txt"
+            first.write_bytes(b"full")
+            second.write_bytes(b"update")
+
+            write_checksum_manifest([first, second], target)
+
+            lines = target.read_text(encoding="ascii").splitlines()
+            self.assertEqual(lines[0], f"{hashlib.sha256(b'full').hexdigest()}  full.zip")
+            self.assertEqual(lines[1], f"{hashlib.sha256(b'update').hexdigest()}  update.zip")
 
 
 def write_update_package(path: Path, version: str, files: dict[str, bytes]) -> None:

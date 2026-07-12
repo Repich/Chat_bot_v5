@@ -29,20 +29,31 @@ WIICON5_MCP_URL=http://127.0.0.1:6003
 `gpt-5.4` или `glm-5.2`. Название должно в точности совпадать с идентификатором,
 который принимает шлюз.
 
-Секреты находятся только в `C:\ProgramData\WiiconChatBot5\config\.env.wiicon5`
+Секреты находятся только в `C:\Monitoring\WiiconChatBot_5\config\.env.wiicon5`
 и не попадают в диагностические ZIP или update-пакеты.
 
 ## Установка
 
 1. Перенесите распакованный каталог на Windows-сервер.
 2. Запустите `install.cmd` от имени администратора.
-3. Installer скопирует приложение в `C:\ProgramData\WiiconChatBot5`.
+3. Installer скопирует приложение в `C:\Monitoring\WiiconChatBot_5`.
 4. Будет создана задача Windows Task Scheduler `WiiconChatBot5` с запуском при старте системы.
 5. В Windows Firewall будет открыт входящий TCP-порт `7786`.
-6. После успешного старта интерфейс доступен по `http://<адрес-сервера>:7786/`.
+6. После успешного старта интерфейс доступен по `http://ms-1cmonitor:7786/`.
+
+Сервис слушает `0.0.0.0:7786`, поэтому `ms-1cmonitor` является DNS/Windows-именем
+сервера, а не bind-адресом процесса. Внутренний health-check использует
+`127.0.0.1:7786` и не ограничивает подключения с других компьютеров.
+
+Installer можно запустить и после распаковки пакета непосредственно в
+`C:\Monitoring\WiiconChatBot_5`: перед заменой файлов он создаст временную копию
+установочного payload. Если обнаружена предыдущая установка в
+`C:\ProgramData\WiiconChatBot5`, а новый каталог еще не настроен, конфигурация,
+рабочие данные, журналы, очередь обновлений и административный токен переносятся
+автоматически. Старый каталог после проверки новой установки можно удалить вручную.
 
 Административный токен создается автоматически и сохраняется в
-`C:\ProgramData\WiiconChatBot5\ADMIN_TOKEN.txt`. Его нужно один раз ввести в
+`C:\Monitoring\WiiconChatBot_5\ADMIN_TOKEN.txt`. Его нужно один раз ввести в
 разделе `Администрирование` web-интерфейса.
 
 Установщик не запускает сервис, если вместо рабочего LLM endpoint остался
@@ -52,7 +63,7 @@ WIICON5_MCP_URL=http://127.0.0.1:6003
 ## Каталоги
 
 ```text
-C:\ProgramData\WiiconChatBot5\
+C:\Monitoring\WiiconChatBot_5\
   app\current\                 текущий код
   app\rollback\                предыдущая версия
   runtime\                     автономный Python
@@ -86,12 +97,12 @@ C:\ProgramData\WiiconChatBot5\
 Обычный пакет называется `wiicon5-update-<version>.zip` и не содержит Python или
 полный снимок BWiki, поэтому подходит для частых переносов.
 
-1. Скопируйте ZIP в `C:\ProgramData\WiiconChatBot5\updates\inbox`.
+1. Скопируйте ZIP в `C:\Monitoring\WiiconChatBot_5\updates\inbox`.
 2. В web-интерфейсе откройте `Администрирование`.
 3. Нажмите `Проверить архив`, затем `Установить обновление`.
 
 Вариант без web-интерфейса: запустите
-`C:\ProgramData\WiiconChatBot5\apply-update.cmd`.
+`C:\Monitoring\WiiconChatBot_5\apply-update.cmd`.
 
 Supervisor проверит manifest и SHA-256 всех файлов, остановит рабочий процесс,
 заменит код и запустит сервис. Если `/health` не ответит за 90 секунд, будет
@@ -107,6 +118,7 @@ python3 scripts/build_offline_release.py
 
 Команда создает полный installer и обычный update-пакет в `dist/offline`.
 Windows runtime скачивается один раз и затем берется из локального кэша.
+Контрольные суммы созданных архивов записываются в `SHA256SUMS.txt`.
 
 Если обновление действительно должно дополнить отсутствующие seed-данные:
 

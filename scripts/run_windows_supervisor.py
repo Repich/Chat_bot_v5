@@ -17,12 +17,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Supervise WIICON5 and apply offline updates.")
     parser.add_argument("--install-root", required=True)
     parser.add_argument("--port", type=int, default=7786)
+    parser.add_argument("--public-host", default="ms-1cmonitor")
     args = parser.parse_args()
     install_root = Path(args.install_root).resolve()
     logs_root = install_root / "logs"
     logs_root.mkdir(parents=True, exist_ok=True)
     supervisor_log = logs_root / "supervisor.log"
     request_file = install_root / "updates" / "apply-request.json"
+    log(supervisor_log, f"Web-интерфейс: http://{args.public_host}:{args.port}/")
 
     while True:
         update_result = apply_pending_update(install_root, request_file, supervisor_log)

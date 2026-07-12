@@ -32,6 +32,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     version = (root / "VERSION").read_text(encoding="utf-8").strip()
     app_files = application_files(root)
+    built_packages: list[Path] = []
 
     if args.mode in {"all", "update"}:
         update_path = output_dir / f"wiicon5-update-{version}.zip"
@@ -42,6 +43,7 @@ def main() -> int:
             version,
             include_data_seed=args.include_data_seed_in_update,
         )
+        built_packages.append(update_path)
         print(update_path)
 
     if args.mode in {"all", "installer"}:
@@ -52,7 +54,11 @@ def main() -> int:
         )
         installer_path = output_dir / f"wiicon5-offline-windows-x64-{version}.zip"
         build_installer_archive(root, app_files, runtime_zip, installer_path, version)
+        built_packages.append(installer_path)
         print(installer_path)
+    checksum_path = output_dir / "SHA256SUMS.txt"
+    write_checksum_manifest(built_packages, checksum_path)
+    print(checksum_path)
     return 0
 
 
@@ -195,6 +201,14 @@ def build_manifest(version: str, files: list[dict]) -> dict:
 
 def file_record(path: Path, data: bytes) -> dict:
     return {"path": path.as_posix(), "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def write_checksum_manifest(packages: list[Path], target: Path) -> None:
+    lines = []
+    for package in packages:
+        digest = hashlib.sha256(package.read_bytes()).hexdigest()
+        lines.append(f"{digest}  {package.name}")
+    target.write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
 def zip_tree(root: Path, target: Path) -> None:

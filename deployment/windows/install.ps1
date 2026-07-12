@@ -1,8 +1,20 @@
 $ErrorActionPreference = "Stop"
 
-$SourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$InstallRoot = "C:\ProgramData\WiiconChatBot5"
+$PackageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$SourceRoot = $PackageRoot
+$InstallRoot = "C:\Monitoring\WiiconChatBot_5"
+$LegacyInstallRoot = "C:\ProgramData\WiiconChatBot5"
 $TaskName = "WiiconChatBot5"
+$ServerName = "ms-1cmonitor"
+$ServicePort = 7786
+$StagedSourceRoot = $null
+
+trap {
+    if ($StagedSourceRoot -and (Test-Path $StagedSourceRoot)) {
+        Remove-Item $StagedSourceRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    throw
+}
 
 function Copy-NewFilesOnly([string]$Source, [string]$Destination) {
     if (-not (Test-Path $Source)) { return }
@@ -17,6 +29,29 @@ function Copy-NewFilesOnly([string]$Source, [string]$Destination) {
     }
 }
 
+$NormalizedPackageRoot = [System.IO.Path]::GetFullPath($PackageRoot).TrimEnd('\')
+$NormalizedInstallRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
+if ($NormalizedPackageRoot -ieq $NormalizedInstallRoot) {
+    $StagedSourceRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("WiiconChatBot5-install-" + [System.Guid]::NewGuid().ToString("N"))
+    Write-Host "Установочный пакет запущен из целевого каталога. Создаю временную копию в $StagedSourceRoot"
+    New-Item -ItemType Directory -Path $StagedSourceRoot -Force | Out-Null
+    foreach ($directory in @("app\current", "runtime", "data_seed")) {
+        $sourceDirectory = Join-Path $PackageRoot $directory
+        if (Test-Path $sourceDirectory) {
+            $targetDirectory = Join-Path $StagedSourceRoot $directory
+            New-Item -ItemType Directory -Path (Split-Path -Parent $targetDirectory) -Force | Out-Null
+            Copy-Item $sourceDirectory $targetDirectory -Recurse -Force
+        }
+    }
+    foreach ($file in @("run-bot.cmd", "apply-update.cmd", "server.env", "server.env.example")) {
+        $sourceFile = Join-Path $PackageRoot $file
+        if (Test-Path $sourceFile) {
+            Copy-Item $sourceFile (Join-Path $StagedSourceRoot $file) -Force
+        }
+    }
+    $SourceRoot = $StagedSourceRoot
+}
+
 Write-Host "Установка WIICON ChatBot 5 в $InstallRoot"
 $ExistingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($ExistingTask -and $ExistingTask.State -eq "Running") {
@@ -26,6 +61,22 @@ if ($ExistingTask -and $ExistingTask.State -eq "Running") {
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 foreach ($directory in @("app", "runtime", "data", "config", "logs", "updates\inbox", "updates\applied", "updates\failed")) {
     New-Item -ItemType Directory -Path (Join-Path $InstallRoot $directory) -Force | Out-Null
+}
+
+if ((Test-Path $LegacyInstallRoot) -and (-not (Test-Path (Join-Path $InstallRoot "config\.env.wiicon5")))) {
+    Write-Host "Найдена предыдущая установка в $LegacyInstallRoot. Переношу конфигурацию и рабочие данные."
+    foreach ($directory in @("config", "data", "logs", "updates")) {
+        $legacyPath = Join-Path $LegacyInstallRoot $directory
+        if (Test-Path $legacyPath) {
+            Get-ChildItem -LiteralPath $legacyPath -Force | ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $InstallRoot $directory) -Recurse -Force
+            }
+        }
+    }
+    $legacyToken = Join-Path $LegacyInstallRoot "ADMIN_TOKEN.txt"
+    if (Test-Path $legacyToken) {
+        Copy-Item $legacyToken (Join-Path $InstallRoot "ADMIN_TOKEN.txt") -Force
+    }
 }
 
 if (Test-Path (Join-Path $InstallRoot "app\current")) {
@@ -69,7 +120,7 @@ if ($ConfigReady) {
     $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force | Out-Null
     if (-not (Get-NetFirewallRule -DisplayName "WIICON ChatBot 5" -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule -DisplayName "WIICON ChatBot 5" -Direction Inbound -Protocol TCP -LocalPort 7786 -Action Allow | Out-Null
+        New-NetFirewallRule -DisplayName "WIICON ChatBot 5" -Direction Inbound -Protocol TCP -LocalPort $ServicePort -Action Allow | Out-Null
     }
     Start-ScheduledTask -TaskName $TaskName
     Write-Host "Сервис запущен."
@@ -81,4 +132,8 @@ Write-Host "Установка завершена."
 Write-Host "Конфигурация: $ConfigPath"
 Write-Host "Административный токен: $InstallRoot\ADMIN_TOKEN.txt"
 Write-Host "Каталог входящих обновлений: $InstallRoot\updates\inbox"
-Write-Host "Web-интерфейс: http://АДРЕС-СЕРВЕРА:7786/"
+Write-Host "Web-интерфейс: http://${ServerName}:${ServicePort}/"
+
+if ($StagedSourceRoot -and (Test-Path $StagedSourceRoot)) {
+    Remove-Item $StagedSourceRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
