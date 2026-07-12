@@ -110,7 +110,7 @@ def build_installer_archive(
             archive.extractall(stage / "runtime")
         configure_embedded_python(stage / "runtime")
         for name in ["install.cmd", "install.ps1", "run-bot.cmd", "apply-update.cmd", "server.env.example"]:
-            shutil.copy2(root / "deployment" / "windows" / name, stage / name)
+            write_windows_text_file(root / "deployment" / "windows" / name, stage / name)
         (stage / "PACKAGE_VERSION.txt").write_text(version + "\n", encoding="utf-8")
         zip_tree(stage, target)
 
@@ -209,6 +209,13 @@ def write_checksum_manifest(packages: list[Path], target: Path) -> None:
         digest = hashlib.sha256(package.read_bytes()).hexdigest()
         lines.append(f"{digest}  {package.name}")
     target.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
+def write_windows_text_file(source: Path, target: Path) -> None:
+    text = source.read_text(encoding="utf-8")
+    content = "\r\n".join(text.splitlines()) + "\r\n"
+    encoding = "utf-8-sig" if source.suffix.lower() == ".ps1" else "ascii"
+    target.write_bytes(content.encode(encoding))
 
 
 def zip_tree(root: Path, target: Path) -> None:

@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from scripts.build_offline_release import write_checksum_manifest
+from scripts.build_offline_release import write_checksum_manifest, write_windows_text_file
 from wiicon5.deployment.diagnostics import SessionDiagnosticStore
 from wiicon5.deployment.updates import (
     OfflineUpdateManager,
@@ -157,6 +157,8 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
         self.assertIn("$NormalizedPackageRoot -ieq $NormalizedInstallRoot", installer)
         self.assertIn("$LegacyInstallRoot", installer)
         self.assertIn('$ServerName = "ms-1cmonitor"', installer)
+        self.assertIn("Get-Content $templatePath -Raw -Encoding UTF8", installer)
+        self.assertIn("Get-Content $ConfigPath -Raw -Encoding UTF8", installer)
         self.assertIn('http://${ServerName}:${ServicePort}/', installer)
         self.assertIn("-LocalPort $ServicePort", installer)
         self.assertIn(expected_root, run_bot)
@@ -179,6 +181,26 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
             lines = target.read_text(encoding="ascii").splitlines()
             self.assertEqual(lines[0], f"{hashlib.sha256(b'full').hexdigest()}  full.zip")
             self.assertEqual(lines[1], f"{hashlib.sha256(b'update').hexdigest()}  update.zip")
+
+    def test_windows_payload_uses_powershell_bom_ascii_batch_and_crlf(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        windows_root = project_root / "deployment" / "windows"
+        names = ["install.cmd", "install.ps1", "run-bot.cmd", "apply-update.cmd", "server.env.example"]
+        for name in names:
+            self.assertTrue(all(value < 128 for value in (windows_root / name).read_bytes()), name)
+
+        with TemporaryDirectory() as temp_dir:
+            target_root = Path(temp_dir)
+            for name in names:
+                target = target_root / name
+                write_windows_text_file(windows_root / name, target)
+                data = target.read_bytes()
+                if name.endswith(".ps1"):
+                    self.assertTrue(data.startswith(b"\xef\xbb\xbf"), name)
+                    data = data[3:]
+                else:
+                    self.assertFalse(data.startswith(b"\xef\xbb\xbf"), name)
+                self.assertNotIn(b"\n", data.replace(b"\r\n", b""), name)
 
 
 def write_update_package(path: Path, version: str, files: dict[str, bytes]) -> None:

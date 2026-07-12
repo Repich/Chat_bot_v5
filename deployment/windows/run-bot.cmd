@@ -2,7 +2,7 @@
 setlocal
 set "INSTALL_ROOT=C:\Monitoring\WiiconChatBot_5"
 if not exist "%INSTALL_ROOT%\runtime\python.exe" (
-  echo Не найден runtime: %INSTALL_ROOT%\runtime\python.exe
+  echo Python runtime not found: %INSTALL_ROOT%\runtime\python.exe
   exit /b 1
 )
 cd /d "%INSTALL_ROOT%"

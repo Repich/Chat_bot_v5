@@ -33,7 +33,7 @@ $NormalizedPackageRoot = [System.IO.Path]::GetFullPath($PackageRoot).TrimEnd('\'
 $NormalizedInstallRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 if ($NormalizedPackageRoot -ieq $NormalizedInstallRoot) {
     $StagedSourceRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("WiiconChatBot5-install-" + [System.Guid]::NewGuid().ToString("N"))
-    Write-Host "Установочный пакет запущен из целевого каталога. Создаю временную копию в $StagedSourceRoot"
+    Write-Host "Installer is running from the target directory. Staging payload at $StagedSourceRoot"
     New-Item -ItemType Directory -Path $StagedSourceRoot -Force | Out-Null
     foreach ($directory in @("app\current", "runtime", "data_seed")) {
         $sourceDirectory = Join-Path $PackageRoot $directory
@@ -52,7 +52,7 @@ if ($NormalizedPackageRoot -ieq $NormalizedInstallRoot) {
     $SourceRoot = $StagedSourceRoot
 }
 
-Write-Host "Установка WIICON ChatBot 5 в $InstallRoot"
+Write-Host "Installing WIICON ChatBot 5 into $InstallRoot"
 $ExistingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($ExistingTask -and $ExistingTask.State -eq "Running") {
     Stop-ScheduledTask -TaskName $TaskName
@@ -64,7 +64,7 @@ foreach ($directory in @("app", "runtime", "data", "config", "logs", "updates\in
 }
 
 if ((Test-Path $LegacyInstallRoot) -and (-not (Test-Path (Join-Path $InstallRoot "config\.env.wiicon5")))) {
-    Write-Host "Найдена предыдущая установка в $LegacyInstallRoot. Переношу конфигурацию и рабочие данные."
+    Write-Host "Previous installation found at $LegacyInstallRoot. Migrating configuration and runtime data."
     foreach ($directory in @("config", "data", "logs", "updates")) {
         $legacyPath = Join-Path $LegacyInstallRoot $directory
         if (Test-Path $legacyPath) {
@@ -96,7 +96,7 @@ $ConfigPath = Join-Path $InstallRoot "config\.env.wiicon5"
 $ProvidedConfig = Join-Path $SourceRoot "server.env"
 if ((Test-Path $ProvidedConfig) -or (-not (Test-Path $ConfigPath))) {
     $templatePath = if (Test-Path $ProvidedConfig) { $ProvidedConfig } else { Join-Path $SourceRoot "server.env.example" }
-    $template = Get-Content $templatePath -Raw
+    $template = Get-Content $templatePath -Raw -Encoding UTF8
     $tokenBytes = New-Object byte[] 32
     [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($tokenBytes)
     $token = [Convert]::ToBase64String($tokenBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
@@ -111,7 +111,7 @@ if ((Test-Path $ProvidedConfig) -or (-not (Test-Path $ConfigPath))) {
     [System.IO.File]::WriteAllText((Join-Path $InstallRoot "ADMIN_TOKEN.txt"), $token, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-$ConfigText = Get-Content $ConfigPath -Raw
+$ConfigText = Get-Content $ConfigPath -Raw -Encoding UTF8
 $ConfigReady = ($ConfigText -notmatch "http://internal-llm-gateway/v1") -and ($ConfigText -match "(?m)^WIICON5_LLM_API_KEY=.+$")
 if ($ConfigReady) {
     $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$InstallRoot\run-bot.cmd`""
@@ -123,16 +123,16 @@ if ($ConfigReady) {
         New-NetFirewallRule -DisplayName "WIICON ChatBot 5" -Direction Inbound -Protocol TCP -LocalPort $ServicePort -Action Allow | Out-Null
     }
     Start-ScheduledTask -TaskName $TaskName
-    Write-Host "Сервис запущен."
+    Write-Host "Service started."
 } else {
-    Write-Warning "Параметры LLM не заполнены. Создайте server.env рядом с install.cmd и повторно запустите installer."
+    Write-Warning "LLM settings are incomplete. Create server.env next to install.cmd and run the installer again."
 }
 
-Write-Host "Установка завершена."
-Write-Host "Конфигурация: $ConfigPath"
-Write-Host "Административный токен: $InstallRoot\ADMIN_TOKEN.txt"
-Write-Host "Каталог входящих обновлений: $InstallRoot\updates\inbox"
-Write-Host "Web-интерфейс: http://${ServerName}:${ServicePort}/"
+Write-Host "Installation completed."
+Write-Host "Configuration: $ConfigPath"
+Write-Host "Administrative token: $InstallRoot\ADMIN_TOKEN.txt"
+Write-Host "Update inbox: $InstallRoot\updates\inbox"
+Write-Host "Web interface: http://${ServerName}:${ServicePort}/"
 
 if ($StagedSourceRoot -and (Test-Path $StagedSourceRoot)) {
     Remove-Item $StagedSourceRoot -Recurse -Force -ErrorAction SilentlyContinue
