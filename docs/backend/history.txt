@@ -1,3 +1,11 @@
+5.0.0-alpha.97
+- Добавлена fail-closed граница LLM: все сообщения, MCP/1С данные, документация, метаданные и диагностика классифицируются как confidential по умолчанию.
+- Confidential payload разрешен только endpoint с `trust_zone=internal` и точным hostname из `WIICON5_INTERNAL_LLM_ALLOWED_HOSTS`; внешний provider блокируется до открытия HTTP-соединения.
+- Ошибка внутренней модели не вызывает fallback во внешний контур; runtime Codex failure solver отключен как канал передачи полной диагностики.
+- В `service.log` пишется аудит allow/block с trust zone, моделью, hostname и SHA-256 payload без prompt, значений и персональных данных.
+- `/health`, UI config и компактная плашка web-клиента показывают состояние защиты и готовность внутреннего контура.
+- Добавлены настройки отдельного внутреннего failure solver, эксплуатационная документация и регрессии отсутствия сетевого вызова/утечки в аудит.
+
 5.0.0-alpha.96
 - `router_v4_guardrails_mask_failed` больше не повторяется трижды с идентичным payload: HTTP-клиент немедленно передает ошибку в слой восстановления синтеза.
 - Query synthesis автоматически повторяет запрос с privacy-minimized evidence: без текстов BWiki, query patterns, source paths и дублирующего диалога, но с исходным вопросом и подтвержденными метаданными.

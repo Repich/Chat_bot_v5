@@ -21,14 +21,18 @@
 ```env
 WIICON5_LLM_API_BASE=http://адрес-внутреннего-шлюза/v1
 WIICON5_LLM_API_KEY=ключ-или-внутренний-токен
-WIICON5_LLM_MODEL=gpt-5.4
+WIICON5_LLM_MODEL=glm-5.2
+WIICON5_LLM_TRUST_ZONE=internal
+WIICON5_INTERNAL_LLM_ALLOWED_HOSTS=hostname-внутреннего-шлюза
 WIICON5_MCP_URL=http://127.0.0.1:6003
 WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS=C:\Monitoring\WiiconChatBot_5\data
 ```
 
-В качестве основной модели можно указать доступную через внутренний шлюз
-`gpt-5.4` или `glm-5.2`. Название должно в точности совпадать с идентификатором,
-который принимает шлюз.
+Название модели должно в точности совпадать с идентификатором внутренней GLM,
+который принимает шлюз. В allowlist указывается точный hostname из
+`WIICON5_LLM_API_BASE`, без схемы и пути. Внешний endpoint не получает
+пользовательские сообщения, данные 1С, документацию или диагностику: transport
+блокирует такой вызов до сетевого соединения.
 
 Файловую выгрузку конфигурации для первоначального обучения размещайте внутри
 `C:\Monitoring\WiiconChatBot_5\data`; этот каталог включен в административный

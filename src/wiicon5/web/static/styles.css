@@ -165,6 +165,23 @@ h3 {
   color: #065f46;
 }
 
+.privacy-boundary-banner {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 5px 18px;
+  border-bottom: 1px solid #a7f3d0;
+  background: var(--ok-soft);
+  color: #065f46;
+  font-size: 12px;
+}
+
+.privacy-boundary-banner.blocked {
+  border-color: #fed7aa;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .global-error {
   padding: 10px 18px;
   border-bottom: 1px solid #f0b8b8;

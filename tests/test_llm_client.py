@@ -4,9 +4,15 @@ import io
 import json
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import patch
 
-from wiicon5.llm.client import LLMProviderError, OpenAICompatibleLLMClient
+from wiicon5.llm.client import (
+    DATA_CLASSIFICATION_PUBLIC,
+    LLMDataBoundaryError,
+    LLMProviderError,
+    OpenAICompatibleLLMClient,
+)
 
 
 class FakeResponse:
@@ -42,7 +48,81 @@ class OpenAICompatibleLLMClientTests(unittest.TestCase):
             model="model",
             max_retries=2,
             retry_backoff_seconds=0,
+            trust_zone="internal",
+            internal_allowed_hosts=["example.test"],
         )
+
+    def test_external_provider_blocks_confidential_payload_before_network(self) -> None:
+        client = OpenAICompatibleLLMClient(
+            api_base="https://external.example/v1",
+            api_key="secret",
+            model="model",
+            trust_zone="external",
+        )
+        with self.assertLogs("wiicon5.llm.client", level="WARNING") as audit, patch(
+            "urllib.request.urlopen"
+        ) as urlopen:
+            with self.assertRaises(LLMDataBoundaryError):
+                client.complete_json(
+                    system_prompt="system",
+                    user_payload={"message": "Иванов Иван, +7 999 111-22-33"},
+                )
+
+        urlopen.assert_not_called()
+        combined_audit = "\n".join(audit.output)
+        self.assertIn("decision=block", combined_audit)
+        self.assertIn("payload_sha256=", combined_audit)
+        self.assertNotIn("Иванов", combined_audit)
+        self.assertNotIn("999 111", combined_audit)
+
+    def test_external_provider_allows_only_explicit_public_payload(self) -> None:
+        client = OpenAICompatibleLLMClient(
+            api_base="https://external.example/v1",
+            api_key="secret",
+            model="model",
+            trust_zone="external",
+        )
+        response = FakeResponse(
+            {"choices": [{"message": {"content": json.dumps({"answer": "pong"})}}]}
+        )
+        with patch("urllib.request.urlopen", return_value=response) as urlopen:
+            result = client.complete_json(
+                system_prompt="Return JSON.",
+                user_payload={"message": "ping"},
+                data_classification=DATA_CLASSIFICATION_PUBLIC,
+            )
+
+        self.assertEqual(result["answer"], "pong")
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_internal_provider_requires_explicit_hostname_allowlist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "WIICON5_INTERNAL_LLM_ALLOWED_HOSTS"):
+            OpenAICompatibleLLMClient(
+                api_base="https://glm.internal.example/v1",
+                api_key="secret",
+                model="glm-5.2",
+                trust_zone="internal",
+                internal_allowed_hosts=[],
+            )
+        with self.assertRaisesRegex(ValueError, "not in WIICON5_INTERNAL_LLM_ALLOWED_HOSTS"):
+            OpenAICompatibleLLMClient(
+                api_base="https://glm.internal.example/v1",
+                api_key="secret",
+                model="glm-5.2",
+                trust_zone="internal",
+                internal_allowed_hosts=["another.internal.example"],
+            )
+
+    def test_runtime_source_has_no_explicit_public_llm_calls(self) -> None:
+        source_root = Path(__file__).resolve().parents[1] / "src" / "wiicon5"
+        offenders = []
+        for path in source_root.rglob("*.py"):
+            if path.as_posix().endswith("/llm/client.py"):
+                continue
+            if "DATA_CLASSIFICATION_PUBLIC" in path.read_text(encoding="utf-8"):
+                offenders.append(str(path.relative_to(source_root)))
+
+        self.assertEqual(offenders, [])
 
     def test_retries_temporary_503_then_returns_json(self) -> None:
         success = FakeResponse(

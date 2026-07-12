@@ -6,7 +6,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from wiicon5.app.config import Settings
-from wiicon5.app.factory import build_agent, learned_skill_root, skill_registry_roots
+from wiicon5.app.factory import build_agent, build_failure_solver, learned_skill_root, skill_registry_roots
+from wiicon5.query_synthesis.failure_solver import UnavailableFailureSolver
 from wiicon5.llm.client import ScriptedLLMClient
 from wiicon5.mcp.client import DictMcpClient
 
@@ -29,6 +30,8 @@ class AppFactoryTests(unittest.TestCase):
             )
 
         self.assertEqual(settings.llm_model, "deepseek-chat")
+        self.assertEqual(settings.llm_trust_zone, "external")
+        self.assertEqual(settings.internal_llm_allowed_hosts, ())
         self.assertEqual(settings.config_fingerprint, "cfg_test")
         self.assertEqual(settings.skills_dir, root / "skills")
         self.assertEqual(settings.bindings_dir, root / "skills" / "bindings")
@@ -102,6 +105,8 @@ class AppFactoryTests(unittest.TestCase):
                 "WIICON5_FAILURE_SOLVER_MODEL": "gpt-test",
                 "WIICON5_FAILURE_SOLVER_TIMEOUT_SECONDS": "180",
                 "WIICON5_FAILURE_SOLVER_CODEX_COMMAND": "python3 scripts/codex_failure_solver.py",
+                "WIICON5_FAILURE_SOLVER_TRUST_ZONE": "internal",
+                "WIICON5_FAILURE_SOLVER_INTERNAL_ALLOWED_HOSTS": "glm.internal.example",
             },
             root=PROJECT_ROOT,
         )
@@ -113,6 +118,42 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.failure_solver_model, "gpt-test")
         self.assertEqual(settings.failure_solver_timeout_seconds, 180)
         self.assertEqual(settings.failure_solver_codex_command, "python3 scripts/codex_failure_solver.py")
+        self.assertEqual(settings.failure_solver_trust_zone, "internal")
+        self.assertEqual(settings.failure_solver_internal_allowed_hosts, ("glm.internal.example",))
+
+    def test_codex_failure_solver_is_disabled_by_confidential_data_boundary(self) -> None:
+        settings = Settings.from_env(
+            {
+                "WIICON5_FAILURE_SOLVER_ENABLED": "true",
+                "WIICON5_FAILURE_SOLVER_PROVIDER": "codex_cli",
+                "WIICON5_FAILURE_SOLVER_CODEX_COMMAND": "codex exec",
+            },
+            root=PROJECT_ROOT,
+        )
+
+        solver = build_failure_solver(settings)
+
+        self.assertIsInstance(solver, UnavailableFailureSolver)
+        self.assertIn("confidential-data boundary", solver.reason)
+
+    def test_settings_loads_internal_llm_boundary_configuration(self) -> None:
+        settings = Settings.from_env(
+            {
+                "WIICON5_LLM_API_BASE": "https://glm.internal.example/v1",
+                "WIICON5_LLM_API_KEY": "secret",
+                "WIICON5_LLM_MODEL": "glm-5.2",
+                "WIICON5_LLM_TRUST_ZONE": "internal",
+                "WIICON5_INTERNAL_LLM_ALLOWED_HOSTS": "glm.internal.example; backup.internal.example",
+            },
+            root=PROJECT_ROOT,
+        )
+
+        settings.validate_for_llm()
+        self.assertEqual(settings.llm_trust_zone, "internal")
+        self.assertEqual(
+            settings.internal_llm_allowed_hosts,
+            ("glm.internal.example", "backup.internal.example"),
+        )
 
     def test_settings_loads_auto_learned_skill_options(self) -> None:
         settings = Settings.from_env(

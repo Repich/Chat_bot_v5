@@ -26,7 +26,6 @@ from wiicon5.query.one_c_query_review import OneCQueryReviewer
 from wiicon5.query.semantic_query_builder import SemanticQueryBuilder
 from wiicon5.query_synthesis import QuerySynthesisEngine
 from wiicon5.query_synthesis.failure_solver import (
-    CodexCliFailureSolver,
     FailureSolver,
     LLMFailureSolver,
     UnavailableFailureSolver,
@@ -173,6 +172,8 @@ def build_llm_client(settings: Settings) -> LLMClient:
         api_key=settings.llm_api_key,
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
+        trust_zone=settings.llm_trust_zone,
+        internal_allowed_hosts=list(settings.internal_llm_allowed_hosts),
     )
 
 
@@ -194,14 +195,14 @@ def build_failure_solver(settings: Settings) -> Optional[FailureSolver]:
                 api_key=settings.failure_solver_api_key,
                 model=settings.failure_solver_model,
                 timeout_seconds=settings.failure_solver_timeout_seconds,
+                trust_zone=settings.failure_solver_trust_zone,
+                internal_allowed_hosts=list(settings.failure_solver_internal_allowed_hosts),
             )
         )
     if provider in {"codex", "codex_cli", "cli"}:
-        if not settings.failure_solver_codex_command:
-            return UnavailableFailureSolver("Missing failure solver setting: WIICON5_FAILURE_SOLVER_CODEX_COMMAND")
-        return CodexCliFailureSolver(
-            command=settings.failure_solver_codex_command,
-            timeout_seconds=settings.failure_solver_timeout_seconds,
+        return UnavailableFailureSolver(
+            "Codex CLI failure solver is disabled by the confidential-data boundary because diagnostics may contain "
+            "user messages, 1C data, and instance documentation. Use an approved internal LLM provider instead."
         )
     return UnavailableFailureSolver(f"Unsupported failure solver provider: {settings.failure_solver_provider}")
 

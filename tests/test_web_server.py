@@ -563,6 +563,12 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                         ),
                         preview_service=preview_service,
                     ),
+                    llm_boundary_status={
+                        "enforced": True,
+                        "trust_zone": "internal",
+                        "confidential_runtime_allowed": True,
+                        "external_runtime_blocked": True,
+                    },
                 ),
             )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -933,10 +939,12 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                 server.server_close()
 
         self.assertTrue(health["ok"])
+        self.assertTrue(health["llm_data_boundary"]["confidential_runtime_allowed"])
         self.assertEqual(version["version"], (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip())
         self.assertTrue(ui_config["ok"])
         self.assertEqual(ui_config["config"]["version"], version["version"])
         self.assertFalse(ui_config["config"]["admin"]["token_required"])
+        self.assertTrue(ui_config["config"]["llm_data_boundary"]["external_runtime_blocked"])
         self.assertIn("text/html", chat_page_response.headers["Content-Type"])
         self.assertIn("text/css", static_css_response.headers["Content-Type"])
         self.assertIn("WIICON ChatBot 5", chat_page)
@@ -962,6 +970,8 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("settingsDetails", chat_page)
         self.assertIn("reloadHistoryButton", chat_page)
         self.assertIn("trainingBanner", chat_page)
+        self.assertIn("privacyBoundaryBanner", chat_page)
+        self.assertIn("конфиденциальные запросы направляются только во внутреннюю модель", static_app)
         self.assertIn("documentationPanel", chat_page)
         self.assertIn("docsSelect", chat_page)
         self.assertIn("docsOpenButton", chat_page)

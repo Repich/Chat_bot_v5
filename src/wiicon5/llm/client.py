@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -8,6 +9,7 @@ import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 
 LOGGER = logging.getLogger(__name__)
@@ -17,9 +19,25 @@ class LLMProviderError(Exception):
     pass
 
 
+class LLMDataBoundaryError(LLMProviderError):
+    pass
+
+
+DATA_CLASSIFICATION_CONFIDENTIAL = "confidential"
+DATA_CLASSIFICATION_PUBLIC = "public"
+TRUST_ZONE_EXTERNAL = "external"
+TRUST_ZONE_INTERNAL = "internal"
+
+
 class LLMClient(ABC):
     @abstractmethod
-    def complete_json(self, *, system_prompt: str, user_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: Dict[str, Any],
+        data_classification: str = DATA_CLASSIFICATION_CONFIDENTIAL,
+    ) -> Dict[str, Any]:
         raise NotImplementedError
 
 
@@ -34,6 +52,8 @@ class OpenAICompatibleLLMClient(LLMClient):
         temperature: float = 0.0,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.5,
+        trust_zone: str = TRUST_ZONE_EXTERNAL,
+        internal_allowed_hosts: Optional[List[str]] = None,
     ) -> None:
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
@@ -42,8 +62,29 @@ class OpenAICompatibleLLMClient(LLMClient):
         self.temperature = temperature
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self.trust_zone = normalize_trust_zone(trust_zone)
+        self.endpoint_host = str(urlparse(self.api_base).hostname or "").lower()
+        self.internal_allowed_hosts = tuple(normalize_host(item) for item in (internal_allowed_hosts or []) if item)
+        validate_internal_endpoint(
+            trust_zone=self.trust_zone,
+            endpoint_host=self.endpoint_host,
+            allowed_hosts=self.internal_allowed_hosts,
+        )
 
-    def complete_json(self, *, system_prompt: str, user_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: Dict[str, Any],
+        data_classification: str = DATA_CLASSIFICATION_CONFIDENTIAL,
+    ) -> Dict[str, Any]:
+        enforce_data_boundary(
+            trust_zone=self.trust_zone,
+            data_classification=data_classification,
+            endpoint_host=self.endpoint_host,
+            model=self.model,
+            payload_fingerprint=payload_fingerprint(system_prompt, user_payload),
+        )
         payload = {
             "model": self.model,
             "temperature": self.temperature,
@@ -149,11 +190,83 @@ class ScriptedLLMClient(LLMClient):
         self.responses = list(responses)
         self.calls: List[Dict[str, Any]] = []
 
-    def complete_json(self, *, system_prompt: str, user_payload: Dict[str, Any]) -> Dict[str, Any]:
-        self.calls.append({"system_prompt": system_prompt, "user_payload": user_payload})
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: Dict[str, Any],
+        data_classification: str = DATA_CLASSIFICATION_CONFIDENTIAL,
+    ) -> Dict[str, Any]:
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_payload": user_payload,
+                "data_classification": data_classification,
+            }
+        )
         if not self.responses:
             raise LLMProviderError("No scripted LLM response.")
         return self.responses.pop(0)
+
+
+def normalize_trust_zone(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in {TRUST_ZONE_EXTERNAL, TRUST_ZONE_INTERNAL}:
+        raise ValueError("LLM trust zone must be 'external' or 'internal'.")
+    return normalized
+
+
+def normalize_host(value: str) -> str:
+    normalized = str(value or "").strip().lower().rstrip(".")
+    if "://" in normalized:
+        normalized = str(urlparse(normalized).hostname or "").lower()
+    return normalized
+
+
+def validate_internal_endpoint(*, trust_zone: str, endpoint_host: str, allowed_hosts: tuple[str, ...]) -> None:
+    if trust_zone != TRUST_ZONE_INTERNAL:
+        return
+    if not endpoint_host:
+        raise ValueError("Internal LLM endpoint must have a valid hostname.")
+    if not allowed_hosts:
+        raise ValueError("Internal LLM trust zone requires WIICON5_INTERNAL_LLM_ALLOWED_HOSTS.")
+    if endpoint_host not in allowed_hosts:
+        raise ValueError(
+            f"Internal LLM endpoint host {endpoint_host!r} is not in WIICON5_INTERNAL_LLM_ALLOWED_HOSTS."
+        )
+
+
+def enforce_data_boundary(
+    *,
+    trust_zone: str,
+    data_classification: str,
+    endpoint_host: str,
+    model: str,
+    payload_fingerprint: str,
+) -> None:
+    classification = str(data_classification or "").strip().lower()
+    if classification not in {DATA_CLASSIFICATION_CONFIDENTIAL, DATA_CLASSIFICATION_PUBLIC}:
+        raise LLMDataBoundaryError(f"Unknown LLM data classification: {data_classification!r}.")
+    allowed = classification == DATA_CLASSIFICATION_PUBLIC or trust_zone == TRUST_ZONE_INTERNAL
+    LOGGER.warning(
+        "LLM data boundary decision=%s trust_zone=%s classification=%s host=%s model=%s payload_sha256=%s",
+        "allow" if allowed else "block",
+        trust_zone,
+        classification,
+        endpoint_host,
+        model,
+        payload_fingerprint,
+    )
+    if not allowed:
+        raise LLMDataBoundaryError(
+            "LLM data boundary blocked confidential runtime data for an external provider. "
+            "Configure the internal GLM endpoint with WIICON5_LLM_TRUST_ZONE=internal and an explicit host allowlist."
+        )
+
+
+def payload_fingerprint(system_prompt: str, user_payload: Dict[str, Any]) -> str:
+    raw = system_prompt + "\0" + json.dumps(user_payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def response_content(response: Dict[str, Any]) -> str:

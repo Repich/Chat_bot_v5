@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
+from urllib.parse import urlparse
 
 from wiicon5.bot_instance import BotInstanceConfig, BotInstanceContext
 
@@ -14,6 +15,8 @@ class Settings:
     llm_api_key: str
     llm_model: str
     llm_timeout_seconds: float
+    llm_trust_zone: str
+    internal_llm_allowed_hosts: Tuple[str, ...]
     mcp_url: str
     mcp_timeout_seconds: float
     skills_dir: Path
@@ -34,6 +37,8 @@ class Settings:
     failure_solver_model: str = "gpt-5.4"
     failure_solver_timeout_seconds: float = 120.0
     failure_solver_codex_command: str = ""
+    failure_solver_trust_zone: str = "external"
+    failure_solver_internal_allowed_hosts: Tuple[str, ...] = ()
     auto_learned_skills_enabled: bool = True
     auto_learned_skills_activate: bool = True
     auto_learned_skills_scope: str = "bot"
@@ -59,6 +64,8 @@ class Settings:
             llm_api_key=first_value(values, "WIICON5_LLM_API_KEY", "DEEPSEEK_API_KEY", "WIICON4_LLM_API_KEY"),
             llm_model=first_value(values, "WIICON5_LLM_MODEL", "DEEPSEEK_MODEL", "WIICON4_LLM_MODEL", default="deepseek-chat"),
             llm_timeout_seconds=float(first_value(values, "WIICON5_LLM_TIMEOUT_SECONDS", "WIICON4_LLM_TIMEOUT_SECONDS", default="60")),
+            llm_trust_zone=first_value(values, "WIICON5_LLM_TRUST_ZONE", default="external").strip().lower(),
+            internal_llm_allowed_hosts=host_list_from_env(values.get("WIICON5_INTERNAL_LLM_ALLOWED_HOSTS")),
             mcp_url=first_value(values, "WIICON5_MCP_URL", "WIICON4_MCP_URL", default="http://127.0.0.1:6003"),
             mcp_timeout_seconds=float(first_value(values, "WIICON5_MCP_TIMEOUT_SECONDS", "WIICON4_MCP_TIMEOUT_SECONDS", default="30")),
             skills_dir=path_from_env(values.get("WIICON5_SKILLS_DIR"), base / "skills"),
@@ -104,6 +111,15 @@ class Settings:
                 first_value(values, "WIICON5_FAILURE_SOLVER_TIMEOUT_SECONDS", default="120")
             ),
             failure_solver_codex_command=first_value(values, "WIICON5_FAILURE_SOLVER_CODEX_COMMAND"),
+            failure_solver_trust_zone=first_value(
+                values,
+                "WIICON5_FAILURE_SOLVER_TRUST_ZONE",
+                default="external",
+            ).strip().lower(),
+            failure_solver_internal_allowed_hosts=host_list_from_env(
+                values.get("WIICON5_FAILURE_SOLVER_INTERNAL_ALLOWED_HOSTS")
+                or values.get("WIICON5_INTERNAL_LLM_ALLOWED_HOSTS")
+            ),
             auto_learned_skills_enabled=bool_from_env(
                 values.get("WIICON5_AUTO_LEARNED_SKILLS_ENABLED"),
                 default=True,
@@ -144,8 +160,27 @@ class Settings:
             missing.append("WIICON5_LLM_API_BASE")
         if not self.llm_api_key:
             missing.append("WIICON5_LLM_API_KEY")
+        if self.llm_trust_zone not in {"external", "internal"}:
+            missing.append("WIICON5_LLM_TRUST_ZONE=external|internal")
+        if self.llm_trust_zone == "internal" and not self.internal_llm_allowed_hosts:
+            missing.append("WIICON5_INTERNAL_LLM_ALLOWED_HOSTS")
         if missing:
             raise ValueError("Missing required LLM settings: " + ", ".join(missing))
+
+    def llm_boundary_status(self) -> Dict[str, Any]:
+        endpoint_host = str(urlparse(self.llm_api_base).hostname or "").lower()
+        confidential_allowed = (
+            self.llm_trust_zone == "internal"
+            and bool(endpoint_host)
+            and endpoint_host in self.internal_llm_allowed_hosts
+        )
+        return {
+            "enforced": True,
+            "trust_zone": self.llm_trust_zone,
+            "confidential_runtime_allowed": confidential_allowed,
+            "external_runtime_blocked": True,
+            "codex_failure_solver_blocked": True,
+        }
 
 
 def path_from_env(value: Optional[str], default: Path) -> Path:
@@ -163,6 +198,18 @@ def path_list_from_env(value: Optional[str], *, default: Tuple[Path, ...]) -> Tu
         if normalized:
             paths.append(Path(normalized).expanduser())
     return tuple(paths)
+
+
+def host_list_from_env(value: Optional[str]) -> Tuple[str, ...]:
+    if not value:
+        return ()
+    normalized = value.replace(";", ",")
+    result = []
+    for item in normalized.split(","):
+        host = item.strip().lower().rstrip(".")
+        if host and host not in result:
+            result.append(host)
+    return tuple(result)
 
 
 def bool_from_env(value: Optional[str], *, default: bool) -> bool:

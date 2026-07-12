@@ -3,7 +3,7 @@
 WIICON ChatBot 5 - экспериментальный самообучающийся агент для ответов на
 бизнес-вопросы по данным 1С через MCP-сервер.
 
-Текущая версия: `5.0.0-alpha.96`.
+Текущая версия: `5.0.0-alpha.97`.
 
 Проект не является набором жестко зашитых обработчиков под отдельные вопросы.
 Целевая модель: агент получает вопрос пользователя, учитывает контекст диалога,
@@ -23,6 +23,8 @@ WIICON ChatBot 5 - экспериментальный самообучающий
   cold/warm метрики и изолированный evaluation run.
 - [Эксплуатация](docs/operations.md): запуск, настройки LLM/MCP, тесты, логи,
   трассы и релизный процесс.
+- [Граница передачи данных в LLM](docs/llm_data_boundary.md): fail-closed
+  политика, настройка внутренней GLM и аудит без содержимого payload.
 - [Быстрый старт](docs/quickstart.md): короткие команды для локального запуска.
 - [MCP smoke diagnostic](docs/mcp_smoke.md): проверка metadata discovery и
   binding без обращения к LLM.
@@ -98,20 +100,17 @@ runs/<run_id>/diagnostics/query_synthesis_failure.json
 бота. Если задача требует доработки кода или MCP, агент возвращает пользователю
 путь к диагностике для разработчика.
 
-Через OpenAI-compatible API:
+Failure solver может использовать только утвержденный внутренний
+OpenAI-compatible endpoint:
 
 ```bash
 export WIICON5_FAILURE_SOLVER_ENABLED=true
 export WIICON5_FAILURE_SOLVER_PROVIDER=openai_compatible
-export WIICON5_FAILURE_SOLVER_API_BASE=https://api.openai.com/v1
+export WIICON5_FAILURE_SOLVER_API_BASE=https://glm.internal.example/v1
 export WIICON5_FAILURE_SOLVER_API_KEY=...
-export WIICON5_FAILURE_SOLVER_MODEL=gpt-5.4
+export WIICON5_FAILURE_SOLVER_MODEL=glm-5.2
+export WIICON5_FAILURE_SOLVER_TRUST_ZONE=internal
+export WIICON5_FAILURE_SOLVER_INTERNAL_ALLOWED_HOSTS=glm.internal.example
 ```
 
-Через локальный Codex CLI adapter:
-
-```bash
-export WIICON5_FAILURE_SOLVER_ENABLED=true
-export WIICON5_FAILURE_SOLVER_PROVIDER=codex_cli
-export WIICON5_FAILURE_SOLVER_CODEX_COMMAND="python3 scripts/codex_failure_solver.py"
-```
+`codex_cli` для runtime-диагностики отключен границей конфиденциальных данных.

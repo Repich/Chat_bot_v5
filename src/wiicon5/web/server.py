@@ -68,6 +68,7 @@ def make_handler(
     diagnostics: SessionDiagnosticStore | None = None,
     update_manager: OfflineUpdateManager | None = None,
     bot_config: BotInstanceConfig | None = None,
+    llm_boundary_status: Mapping[str, Any] | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -117,6 +118,7 @@ def make_handler(
     effective_bot_config = bot_config or BotInstanceConfig.from_file(
         effective_onboarding_manager.bot_instance_root / "bot.yaml"
     )
+    effective_llm_boundary_status = dict(llm_boundary_status or {"enforced": True, "trust_zone": "unknown"})
     knowledge_repository = KnowledgeRepository(effective_onboarding_manager.bot_instance_root / "knowledge")
     effective_instance_knowledge = instance_knowledge or InstanceKnowledgeBase(
         knowledge_repository,
@@ -139,13 +141,26 @@ def make_handler(
             if self._reject_admin_if_needed(path):
                 return
             if path == "/health":
-                self._send_json(200, {"ok": True, "service": "wiicon5"})
+                self._send_json(
+                    200,
+                    {"ok": True, "service": "wiicon5", "llm_data_boundary": effective_llm_boundary_status},
+                )
                 return
             if path == "/api/version":
                 self._send_json(200, {"ok": True, "service": "wiicon5", "version": current_version()})
                 return
             if path == "/api/ui/config":
-                self._send_json(200, {"ok": True, "config": ui_config(effective_admin_security, effective_bot_config)})
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "config": ui_config(
+                            effective_admin_security,
+                            effective_bot_config,
+                            effective_llm_boundary_status,
+                        ),
+                    },
+                )
                 return
             if path == "/api/knowledge/status":
                 self._send_json(
@@ -395,7 +410,11 @@ def make_handler(
                         session_id,
                         conversation=[item.to_dict() for item in context.messages],
                         version=current_version(),
-                        public_config=ui_config(effective_admin_security, effective_bot_config),
+                        public_config=ui_config(
+                            effective_admin_security,
+                            effective_bot_config,
+                            effective_llm_boundary_status,
+                        ),
                     )
                     self._send_json(
                         200,
@@ -1369,7 +1388,11 @@ def read_text_file(path: Path) -> str:
         return "История изменений пока не найдена.\n"
 
 
-def ui_config(admin_security: AdminSecurityConfig, bot_config: BotInstanceConfig | None = None) -> Dict[str, Any]:
+def ui_config(
+    admin_security: AdminSecurityConfig,
+    bot_config: BotInstanceConfig | None = None,
+    llm_boundary_status: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
     effective_bot = bot_config or BotInstanceConfig.default()
     return {
         "version": current_version(),
@@ -1381,6 +1404,7 @@ def ui_config(admin_security: AdminSecurityConfig, bot_config: BotInstanceConfig
         },
         "bot": {"id": effective_bot.bot_id, "name": effective_bot.bot_name},
         "knowledge": public_knowledge_config(effective_bot),
+        "llm_data_boundary": dict(llm_boundary_status or {"enforced": True, "trust_zone": "unknown"}),
     }
 
 
@@ -2208,6 +2232,7 @@ def run_http_server(
     diagnostics: SessionDiagnosticStore | None = None,
     update_manager: OfflineUpdateManager | None = None,
     bot_config: BotInstanceConfig | None = None,
+    llm_boundary_status: Mapping[str, Any] | None = None,
 ) -> None:
     server = ThreadingHTTPServer(
         (host, port),
@@ -2223,6 +2248,7 @@ def run_http_server(
             diagnostics=diagnostics,
             update_manager=update_manager,
             bot_config=bot_config,
+            llm_boundary_status=llm_boundary_status,
         ),
     )
     try:

@@ -73,6 +73,7 @@ def main() -> int:
         else None
     )
     print(f"WIICON5 listening on http://{args.host}:{args.port}/chat")
+    print(f"LLM data boundary: {settings.llm_boundary_status()}")
     run_http_server(
         agent,
         host=args.host,
@@ -87,6 +88,7 @@ def main() -> int:
         diagnostics=diagnostics,
         update_manager=update_manager,
         bot_config=settings.bot_instance,
+        llm_boundary_status=settings.llm_boundary_status(),
     )
     return 0
 

@@ -192,6 +192,15 @@
     const version = config.version || "";
     requiredElement("appVersion").textContent = version;
     state.admin.tokenRequired = Boolean(config.admin && config.admin.token_required);
+    const boundary = config.llm_data_boundary || {};
+    const boundaryBanner = optionalElement("privacyBoundaryBanner");
+    if (boundaryBanner) {
+      const allowed = Boolean(boundary.confidential_runtime_allowed);
+      boundaryBanner.classList.toggle("blocked", !allowed);
+      boundaryBanner.textContent = allowed
+        ? "Защита данных активна: конфиденциальные запросы направляются только во внутреннюю модель."
+        : "Защита данных активна: передача конфиденциальных запросов заблокирована до настройки внутренней модели.";
+    }
     const hint = optionalElement("adminTokenHint");
     if (hint) {
       hint.textContent = state.admin.tokenRequired
