@@ -5,6 +5,8 @@ from pathlib import Path
 
 from wiicon5.app.config import Settings
 from wiicon5.app.factory import build_agent, build_instance_knowledge
+from wiicon5.deployment.diagnostics import SessionDiagnosticStore
+from wiicon5.deployment.updates import OfflineUpdateManager
 from wiicon5.instance_knowledge.storage import KnowledgeRepository
 from wiicon5.instance_knowledge.sync import KnowledgeSyncService
 from wiicon5.mcp.client import HttpMcpClient
@@ -51,6 +53,25 @@ def main() -> int:
         timeout_seconds=knowledge.sync_timeout_seconds,
         max_pages=knowledge.max_pages,
     )
+    diagnostics = SessionDiagnosticStore(
+        root=settings.diagnostics_dir,
+        runs_root=settings.runs_dir,
+        project_root=root,
+        bot_root=settings.bot_context.root,
+        service_log_paths=(
+            settings.service_log_path,
+            settings.install_root / "logs" / "supervisor.log",
+        ),
+    )
+    update_manager = (
+        OfflineUpdateManager(
+            inbox=settings.update_inbox_dir,
+            request_file=settings.update_request_file,
+            current_version=(root / "VERSION").read_text(encoding="utf-8").strip(),
+        )
+        if settings.offline_updates_enabled
+        else None
+    )
     print(f"WIICON5 listening on http://{args.host}:{args.port}/chat")
     run_http_server(
         agent,
@@ -63,6 +84,9 @@ def main() -> int:
         admin_security=admin_security,
         instance_knowledge=instance_knowledge,
         knowledge_sync_service=knowledge_sync_service,
+        diagnostics=diagnostics,
+        update_manager=update_manager,
+        bot_config=settings.bot_instance,
     )
     return 0
 

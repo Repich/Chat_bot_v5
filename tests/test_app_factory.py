@@ -41,6 +41,27 @@ class AppFactoryTests(unittest.TestCase):
         self.assertFalse(settings.workbench_allow_raw_query_edit)
         self.assertFalse(settings.failure_solver_enabled)
         self.assertEqual(settings.failure_solver_provider, "openai_compatible")
+        self.assertEqual(settings.diagnostics_dir, root / "bot_instances" / "local" / "diagnostics")
+        self.assertFalse(settings.offline_updates_enabled)
+
+    def test_settings_loads_offline_deployment_paths(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_root = root / "installed"
+            settings = Settings.from_env(
+                {
+                    "WIICON5_INSTALL_ROOT": str(install_root),
+                    "WIICON5_DIAGNOSTICS_DIR": str(install_root / "data" / "diagnostics"),
+                    "WIICON5_SERVICE_LOG": str(install_root / "logs" / "service.log"),
+                },
+                root=root,
+            )
+
+        self.assertTrue(settings.offline_updates_enabled)
+        self.assertEqual(settings.install_root, install_root)
+        self.assertEqual(settings.update_inbox_dir, install_root / "updates" / "inbox")
+        self.assertEqual(settings.update_request_file, install_root / "updates" / "apply-request.json")
+        self.assertEqual(settings.diagnostics_dir, install_root / "data" / "diagnostics")
 
     def test_settings_default_to_automatic_configuration_fingerprint(self) -> None:
         with TemporaryDirectory() as temp_dir:

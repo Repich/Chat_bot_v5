@@ -14,6 +14,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
+from wiicon5.deployment.diagnostics import SessionDiagnosticStore
+from wiicon5.deployment.updates import OfflineUpdateManager
 from wiicon5.intent.decomposer import DecompositionResult
 from wiicon5.intent.models import IntentResult, IntentType
 from wiicon5.knowledge.metadata import MetadataObject, MetadataProvider
@@ -46,6 +48,96 @@ class WebServerTests(unittest.TestCase):
         for button_id in button_ids:
             self.assertIn(button_id, ids)
             self.assertIn(f'optionalBind("{button_id}"', script)
+
+    def test_session_diagnostics_can_be_exported_and_downloaded(self) -> None:
+        question = "Привет"
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bot_root = root / "bot"
+            runs_root = root / "runs"
+            agent = AgentOrchestrator(
+                registry=SkillRegistry.load_from_dir(PROJECT_ROOT / "skills"),
+                decomposer=ScriptedGoalDecomposer(
+                    {
+                        question: DecompositionResult(
+                            intent=IntentResult(
+                                intent_type=IntentType.OUT_OF_SCOPE,
+                                business_goal=question,
+                                requires_1c_data=False,
+                                relevant=False,
+                            )
+                        )
+                    }
+                ),
+                trace_root=runs_root,
+            )
+            onboarding_manager = OnboardingManager(bot_instance_root=bot_root)
+            diagnostics = SessionDiagnosticStore(
+                root=bot_root / "diagnostics",
+                runs_root=runs_root,
+                project_root=PROJECT_ROOT,
+                bot_root=bot_root,
+            )
+            updates = OfflineUpdateManager(
+                inbox=root / "updates" / "inbox",
+                request_file=root / "updates" / "apply-request.json",
+                current_version="5.0.0-test",
+            )
+            server = HTTPServer(
+                ("127.0.0.1", 0),
+                make_handler(
+                    agent,
+                    onboarding_manager=onboarding_manager,
+                    diagnostics=diagnostics,
+                    update_manager=updates,
+                ),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                chat_request = urllib.request.Request(
+                    f"http://{host}:{port}/chat",
+                    data=json.dumps({"message": question, "session_id": "diagnostic-test"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                json.loads(urllib.request.urlopen(chat_request, timeout=5).read().decode("utf-8"))
+                status = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/diagnostics/session?session_id=diagnostic-test",
+                        timeout=5,
+                    ).read().decode("utf-8")
+                )
+                export_request = urllib.request.Request(
+                    f"http://{host}:{port}/api/admin/diagnostics/export",
+                    data=json.dumps({"session_id": "diagnostic-test"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                exported = json.loads(urllib.request.urlopen(export_request, timeout=5).read().decode("utf-8"))
+                bundle_response = urllib.request.urlopen(
+                    f"http://{host}:{port}{exported['download_url']}",
+                    timeout=5,
+                )
+                bundle_content_type = bundle_response.headers.get_content_type()
+                bundle_raw = bundle_response.read()
+                deployment = json.loads(
+                    urllib.request.urlopen(
+                        f"http://{host}:{port}/api/admin/deployment/status",
+                        timeout=5,
+                    ).read().decode("utf-8")
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(status["diagnostics"]["event_count"], 2)
+        self.assertTrue(exported["bundle"]["path"].endswith(".zip"))
+        self.assertEqual(bundle_content_type, "application/zip")
+        self.assertTrue(bundle_raw.startswith(b"PK"))
+        self.assertTrue(deployment["deployment"]["enabled"])
 
     def test_synthesis_candidate_trace_summary_reads_successful_attempt(self) -> None:
         with TemporaryDirectory() as temp_dir:

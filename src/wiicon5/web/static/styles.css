@@ -903,6 +903,18 @@ label {
   white-space: pre-wrap;
 }
 
+.path-output {
+  overflow-wrap: anywhere;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .doc-content {
   max-width: 980px;
   line-height: 1.55;

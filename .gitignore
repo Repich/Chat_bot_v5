@@ -12,6 +12,7 @@ logs/
 runs/
 bot_instances/*/onboarding/
 bot_instances/*/runs/
+bot_instances/*/diagnostics/
 bot_instances/*/workbench/drafts/
 bot_instances/*/workbench/candidates/
 bot_instances/*/workbench/approvals/

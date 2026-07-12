@@ -297,9 +297,56 @@
     try {
       const data = await api.fetchJson(`/api/conversation?session_id=${encodeURIComponent(sessionId)}`);
       renderConversation(data.messages || []);
+      await loadDiagnosticsStatus();
     } catch (error) {
       appendMessage("error", error.message || String(error));
     }
+  }
+
+  async function loadDiagnosticsStatus() {
+    const output = optionalElement("diagnosticsPath");
+    if (!output) {
+      return;
+    }
+    try {
+      const sessionId = currentSessionId();
+      const data = await api.fetchAdmin(`/api/admin/diagnostics/session?session_id=${encodeURIComponent(sessionId)}`);
+      const diagnostics = data.diagnostics || {};
+      output.textContent = diagnostics.latest_bundle || diagnostics.event_log_path || "Журнал сессии еще не создан.";
+    } catch (error) {
+      output.textContent = state.admin.tokenRequired && !state.admin.token
+        ? "Для диагностики сохраните административный токен."
+        : `Диагностика недоступна: ${error.message || error}`;
+    }
+  }
+
+  async function exportDiagnostics(button) {
+    const sessionId = currentSessionId();
+    return runAction(
+      button,
+      "Сбор диагностики",
+      () => api.fetchAdmin("/api/admin/diagnostics/export", { method: "POST", body: { session_id: sessionId } }),
+      async (data) => {
+        const bundle = data.bundle || {};
+        requiredElement("diagnosticsPath").textContent = bundle.path || "Диагностический пакет создан.";
+        if (data.download_url) {
+          const blob = await api.fetchAdminBlob(data.download_url);
+          downloadBlob(blob, bundle.file_name || `diagnostics-${sessionId}.zip`);
+        }
+        return data;
+      },
+    );
+  }
+
+  function downloadBlob(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   }
 
   function renderConversation(messages) {
@@ -583,6 +630,37 @@
     });
   }
 
+  async function loadDeploymentStatus(button) {
+    return runAction(button, "Проверка обновления", () => api.fetchAdmin("/api/admin/deployment/status"), (data) => {
+      const deployment = data.deployment || {};
+      const output = requiredElement("deploymentStatus");
+      if (!deployment.enabled) {
+        output.textContent = `Offline-обновления отключены. Текущая версия: ${deployment.current_version || "неизвестна"}.`;
+        requiredElement("applyUpdateButton").disabled = true;
+        return data;
+      }
+      const latest = deployment.latest;
+      output.textContent = latest
+        ? `Текущая версия: ${deployment.current_version}. Найден пакет ${latest.version}: ${latest.path}`
+        : `Текущая версия: ${deployment.current_version}. В каталоге ${deployment.inbox} нет обновлений.`;
+      requiredElement("applyUpdateButton").disabled = !latest;
+      return data;
+    });
+  }
+
+  async function applyLatestUpdate(button) {
+    return runAction(
+      button,
+      "Установка обновления",
+      () => api.fetchAdmin("/api/admin/deployment/apply-latest", { method: "POST", body: {} }),
+      (data) => {
+        requiredElement("deploymentStatus").textContent = data.message || "Обновление поставлено в очередь.";
+        showInfo("сервис перезапускается");
+        return data;
+      },
+    );
+  }
+
   async function startOnboarding(button) {
     const configDump = requiredElement("configDumpInput").value.trim();
     if (!configDump) {
@@ -745,6 +823,7 @@
       loadSessions();
     });
     optionalBind("reloadHistoryButton", "click", loadConversation);
+    optionalBind("exportDiagnosticsButton", "click", (event) => exportDiagnostics(event.currentTarget));
 
     optionalBind("skillCatalogButton", "click", (event) => window.WiiconWorkbench.loadSkillCatalog(event.currentTarget));
     optionalBind("skillDetailsButton", "click", (event) => window.WiiconWorkbench.loadSkillDetails(event.currentTarget));
@@ -799,6 +878,8 @@
     optionalBind("learningReportButton", "click", (event) => loadLearningReport(event.currentTarget));
     optionalBind("saveAdminTokenButton", "click", saveAdminToken);
     optionalBind("clearAdminTokenButton", "click", clearAdminToken);
+    optionalBind("deploymentStatusButton", "click", (event) => loadDeploymentStatus(event.currentTarget));
+    optionalBind("applyUpdateButton", "click", (event) => applyLatestUpdate(event.currentTarget));
   }
 
   async function initApp() {
@@ -813,6 +894,7 @@
     await loadConversation();
     await loadDocumentationIndex();
     await loadOnboardingStatus();
+    await loadDeploymentStatus();
     setView("chat");
   }
 

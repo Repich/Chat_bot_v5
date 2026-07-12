@@ -38,6 +38,12 @@ class Settings:
     auto_learned_skills_activate: bool = True
     auto_learned_skills_scope: str = "bot"
     auto_learned_skills_failure_threshold: int = 3
+    diagnostics_dir: Path = Path("diagnostics")
+    service_log_path: Path = Path("logs/service.log")
+    install_root: Path = Path(".")
+    offline_updates_enabled: bool = False
+    update_inbox_dir: Path = Path("updates/inbox")
+    update_request_file: Path = Path("updates/apply-request.json")
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None, root: Optional[Path] = None) -> "Settings":
@@ -47,6 +53,7 @@ class Settings:
         bot_root = path_from_env(values.get("WIICON5_BOT_ROOT"), base / "bot_instances" / bot_id)
         bot_config_path = path_from_env(values.get("WIICON5_BOT_CONFIG"), bot_root / "bot.yaml")
         bot_instance = BotInstanceConfig.from_file(bot_config_path)
+        install_root = path_from_env(values.get("WIICON5_INSTALL_ROOT"), base)
         return cls(
             llm_api_base=first_value(values, "WIICON5_LLM_API_BASE", "DEEPSEEK_API_BASE", "WIICON4_LLM_API_BASE"),
             llm_api_key=first_value(values, "WIICON5_LLM_API_KEY", "DEEPSEEK_API_KEY", "WIICON4_LLM_API_KEY"),
@@ -113,6 +120,21 @@ class Settings:
             or "bot",
             auto_learned_skills_failure_threshold=int(
                 first_value(values, "WIICON5_AUTO_LEARNED_SKILLS_FAILURE_THRESHOLD", default="3")
+            ),
+            diagnostics_dir=path_from_env(values.get("WIICON5_DIAGNOSTICS_DIR"), bot_root / "diagnostics"),
+            service_log_path=path_from_env(values.get("WIICON5_SERVICE_LOG"), base / "logs" / "service.log"),
+            install_root=install_root,
+            offline_updates_enabled=bool_from_env(
+                values.get("WIICON5_OFFLINE_UPDATES_ENABLED"),
+                default=bool(values.get("WIICON5_INSTALL_ROOT")),
+            ),
+            update_inbox_dir=path_from_env(
+                values.get("WIICON5_UPDATE_INBOX"),
+                install_root / "updates" / "inbox",
+            ),
+            update_request_file=path_from_env(
+                values.get("WIICON5_UPDATE_REQUEST_FILE"),
+                install_root / "updates" / "apply-request.json",
             ),
         )
 

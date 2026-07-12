@@ -428,6 +428,24 @@ Sufficiency layer отклоняет полностью одинаковые с�
 Legacy learned skills без контракта v2 перемещаются в `learned/quarantine` и
 никогда не загружаются registry.
 
+## Автономное Windows-развертывание
+
+Offline-развертывание разделяет систему на три слоя:
+
+- `app/current`: версионируемый код, prompts, базовые навыки и `bot.yaml`;
+- `runtime`: закрепленный Windows Python embedded runtime;
+- `data`: локальный снимок BWiki, learned-навыки, bindings, traces и диагностика.
+
+Supervisor является родительским процессом HTTP-сервиса. Он следит за
+`updates/apply-request.json`, останавливает дочерний процесс, проверяет manifest
+и SHA-256 update-пакета, атомарно заменяет `app/current` и запускает health-check.
+До подтверждения `/health` предыдущий каталог остается в `app/rollback`.
+
+`SessionDiagnosticStore` связывает отдельные run traces через `session_id` и
+ведет постоянный `events.jsonl`. Экспорт создает переносимый ZIP с диалогом,
+trace и системными логами. Конфигурационные `.env` и секреты не читаются и не
+добавляются в пакет.
+
 ## Принципы
 
 - Предпочитать метаданные предположениям.

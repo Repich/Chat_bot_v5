@@ -97,6 +97,23 @@
     return fetchJson(url, request);
   }
 
+  async function fetchAdminBlob(url, options) {
+    const request = Object.assign({}, options || {});
+    request.headers = adminHeaders(request.headers);
+    const response = await fetch(url, request);
+    if (!response.ok) {
+      const text = await response.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch (error) {
+        data = { message: text };
+      }
+      throw new ApiError(backendErrorMessage(data, response), { status: response.status, url, payload: data });
+    }
+    return response.blob();
+  }
+
   async function fetchText(url, options) {
     const response = await fetch(url, options || {});
     const text = await response.text();
@@ -112,6 +129,7 @@
     adminHeaders,
     fetchJson,
     fetchAdmin,
+    fetchAdminBlob,
     fetchText,
   };
 })();

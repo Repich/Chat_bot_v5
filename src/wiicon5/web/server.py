@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Type
 from urllib.parse import parse_qs, unquote, urlparse
+from uuid import uuid4
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.bot_instance import BotInstanceConfig
 from wiicon5.conversation.context import ResolvedEntity
+from wiicon5.deployment.diagnostics import SessionDiagnosticStore
+from wiicon5.deployment.updates import OfflineUpdateManager
 from wiicon5.execution.artifacts import Artifact
 from wiicon5.models import SkillContract, SkillStatus, ValidationIssue
 from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
@@ -61,6 +65,9 @@ def make_handler(
     skill_lifecycle: SkillLifecycleService | None = None,
     instance_knowledge: InstanceKnowledgeBase | None = None,
     knowledge_sync_service: KnowledgeSyncService | None = None,
+    diagnostics: SessionDiagnosticStore | None = None,
+    update_manager: OfflineUpdateManager | None = None,
+    bot_config: BotInstanceConfig | None = None,
 ) -> Type[BaseHTTPRequestHandler]:
     effective_onboarding_manager = onboarding_manager or OnboardingManager(
         bot_instance_root=PROJECT_ROOT / "bot_instances" / "local"
@@ -107,7 +114,9 @@ def make_handler(
         bot_instance_root=effective_onboarding_manager.bot_instance_root,
         audit_log=effective_draft_store.audit,
     )
-    effective_bot_config = BotInstanceConfig.from_file(effective_onboarding_manager.bot_instance_root / "bot.yaml")
+    effective_bot_config = bot_config or BotInstanceConfig.from_file(
+        effective_onboarding_manager.bot_instance_root / "bot.yaml"
+    )
     knowledge_repository = KnowledgeRepository(effective_onboarding_manager.bot_instance_root / "knowledge")
     effective_instance_knowledge = instance_knowledge or InstanceKnowledgeBase(
         knowledge_repository,
@@ -202,6 +211,31 @@ def make_handler(
                         "sessions": [conversation_summary(context) for context in agent.memory.list_contexts()],
                     },
                 )
+                return
+            if path == "/api/admin/diagnostics/session":
+                if diagnostics is None:
+                    self._send_json(503, {"ok": False, "error": "diagnostics_disabled"})
+                    return
+                session_id = first_query_value(query, "session_id") or "default"
+                self._send_json(200, {"ok": True, "diagnostics": diagnostics.status(session_id)})
+                return
+            if path == "/api/admin/diagnostics/download":
+                if diagnostics is None:
+                    self._send_json(503, {"ok": False, "error": "diagnostics_disabled"})
+                    return
+                bundle_path = diagnostics.resolve_bundle(first_query_value(query, "file"))
+                if bundle_path is None:
+                    self._send_json(404, {"ok": False, "error": "diagnostic_bundle_not_found"})
+                    return
+                self._send_download(bundle_path)
+                return
+            if path == "/api/admin/deployment/status":
+                deployment = (
+                    update_manager.status()
+                    if update_manager is not None
+                    else {"enabled": False, "current_version": current_version()}
+                )
+                self._send_json(200, {"ok": True, "deployment": deployment})
                 return
             if path == "/api/admin/onboarding/status":
                 self._send_json(200, {"ok": True, "status": effective_onboarding_manager.status().to_dict()})
@@ -349,6 +383,50 @@ def make_handler(
             parsed = urlparse(self.path)
             if self._reject_admin_if_needed(parsed.path):
                 return
+            if parsed.path == "/api/admin/diagnostics/export":
+                if diagnostics is None:
+                    self._send_json(503, {"ok": False, "error": "diagnostics_disabled"})
+                    return
+                try:
+                    payload = self._read_json()
+                    session_id = str(payload.get("session_id") or "default")
+                    context = agent.memory.get_or_create(session_id)
+                    bundle = diagnostics.export(
+                        session_id,
+                        conversation=[item.to_dict() for item in context.messages],
+                        version=current_version(),
+                        public_config=ui_config(effective_admin_security, effective_bot_config),
+                    )
+                    self._send_json(
+                        200,
+                        {
+                            "ok": True,
+                            "bundle": bundle.to_dict(),
+                            "download_url": f"/api/admin/diagnostics/download?file={bundle.path.name}",
+                        },
+                    )
+                except Exception as exc:
+                    self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            if parsed.path == "/api/admin/deployment/apply-latest":
+                if update_manager is None:
+                    self._send_json(503, {"ok": False, "error": "offline_updates_disabled"})
+                    return
+                try:
+                    package = update_manager.request_latest()
+                    self._send_json(
+                        202,
+                        {
+                            "ok": True,
+                            "update": package.to_dict(),
+                            "message": "Обновление поставлено в очередь. Supervisor перезапустит сервис автоматически.",
+                        },
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json(404, {"ok": False, "error": str(exc)})
+                except ValueError as exc:
+                    self._send_json(409, {"ok": False, "error": str(exc)})
+                return
             if parsed.path == "/api/admin/onboarding/run":
                 try:
                     payload = self._read_json()
@@ -460,11 +538,34 @@ def make_handler(
                     self._send_json(400, {"ok": False, "error": "message is required"})
                     return
                 session_id = str(payload.get("session_id") or "default")
+                request_id = uuid4().hex
+                if diagnostics is not None:
+                    diagnostics.append(
+                        session_id,
+                        "request.started",
+                        {
+                            "request_id": request_id,
+                            "message": message,
+                            "has_product_ref": bool(payload.get("product_ref")),
+                            "client_host": str(self.client_address[0]) if self.client_address else "",
+                        },
+                    )
                 seed_context_from_payload(agent, session_id, payload)
                 context = agent.memory.get_or_create(session_id)
                 message_offset = len(context.messages)
                 result = agent.handle(message, session_id=session_id)
                 new_messages = context.messages[message_offset:]
+                if diagnostics is not None:
+                    diagnostics.append(
+                        session_id,
+                        "request.completed",
+                        {
+                            "request_id": request_id,
+                            "trace_path": result.trace_path,
+                            "result": result.to_dict(),
+                            "messages": [item.to_dict() for item in new_messages],
+                        },
+                    )
                 self._send_json(
                     200,
                     {
@@ -474,6 +575,17 @@ def make_handler(
                     },
                 )
             except Exception as exc:  # Keep HTTP layer diagnostic rather than crashing the server.
+                if diagnostics is not None:
+                    diagnostics.append(
+                        locals().get("session_id", "default"),
+                        "request.failed",
+                        {
+                            "request_id": locals().get("request_id", ""),
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                            "traceback": traceback.format_exc(),
+                        },
+                    )
                 self._send_json(500, {"ok": False, "error": str(exc)})
 
         def do_PATCH(self) -> None:  # noqa: N802
@@ -1179,6 +1291,20 @@ def make_handler(
             content_type = static_content_type(path)
             self.send_response(status_code)
             self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _send_download(self, path: Path) -> None:
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                self._send_json(404, {"ok": False, "error": "file_not_found"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
@@ -2079,6 +2205,9 @@ def run_http_server(
     admin_security: AdminSecurityConfig | None = None,
     instance_knowledge: InstanceKnowledgeBase | None = None,
     knowledge_sync_service: KnowledgeSyncService | None = None,
+    diagnostics: SessionDiagnosticStore | None = None,
+    update_manager: OfflineUpdateManager | None = None,
+    bot_config: BotInstanceConfig | None = None,
 ) -> None:
     server = ThreadingHTTPServer(
         (host, port),
@@ -2091,6 +2220,9 @@ def run_http_server(
             admin_security=admin_security,
             instance_knowledge=instance_knowledge,
             knowledge_sync_service=knowledge_sync_service,
+            diagnostics=diagnostics,
+            update_manager=update_manager,
+            bot_config=bot_config,
         ),
     )
     try:
