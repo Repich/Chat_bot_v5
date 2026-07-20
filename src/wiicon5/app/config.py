@@ -17,6 +17,7 @@ class Settings:
     llm_timeout_seconds: float
     llm_trust_zone: str
     internal_llm_allowed_hosts: Tuple[str, ...]
+    allow_external_confidential_llm: bool
     mcp_url: str
     mcp_timeout_seconds: float
     skills_dir: Path
@@ -66,6 +67,10 @@ class Settings:
             llm_timeout_seconds=float(first_value(values, "WIICON5_LLM_TIMEOUT_SECONDS", "WIICON4_LLM_TIMEOUT_SECONDS", default="60")),
             llm_trust_zone=first_value(values, "WIICON5_LLM_TRUST_ZONE", default="external").strip().lower(),
             internal_llm_allowed_hosts=host_list_from_env(values.get("WIICON5_INTERNAL_LLM_ALLOWED_HOSTS")),
+            allow_external_confidential_llm=bool_from_env(
+                values.get("WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM"),
+                default=False,
+            ),
             mcp_url=first_value(values, "WIICON5_MCP_URL", "WIICON4_MCP_URL", default="http://127.0.0.1:6003"),
             mcp_timeout_seconds=float(first_value(values, "WIICON5_MCP_TIMEOUT_SECONDS", "WIICON4_MCP_TIMEOUT_SECONDS", default="30")),
             skills_dir=path_from_env(values.get("WIICON5_SKILLS_DIR"), base / "skills"),
@@ -170,15 +175,27 @@ class Settings:
     def llm_boundary_status(self) -> Dict[str, Any]:
         endpoint_host = str(urlparse(self.llm_api_base).hostname or "").lower()
         confidential_allowed = (
-            self.llm_trust_zone == "internal"
-            and bool(endpoint_host)
-            and endpoint_host in self.internal_llm_allowed_hosts
+            (
+                self.llm_trust_zone == "internal"
+                and bool(endpoint_host)
+                and endpoint_host in self.internal_llm_allowed_hosts
+            )
+            or (
+                self.llm_trust_zone == "external"
+                and self.allow_external_confidential_llm
+            )
+        )
+        external_confidential_enabled = (
+            self.llm_trust_zone == "external"
+            and self.allow_external_confidential_llm
         )
         return {
             "enforced": True,
             "trust_zone": self.llm_trust_zone,
             "confidential_runtime_allowed": confidential_allowed,
-            "external_runtime_blocked": True,
+            "external_runtime_blocked": not external_confidential_enabled,
+            "external_confidential_enabled": external_confidential_enabled,
+            "personal_data_external_protection_guaranteed": not external_confidential_enabled,
             "codex_failure_solver_blocked": True,
         }
 

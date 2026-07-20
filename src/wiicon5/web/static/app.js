@@ -196,10 +196,19 @@
     const boundaryBanner = optionalElement("privacyBoundaryBanner");
     if (boundaryBanner) {
       const allowed = Boolean(boundary.confidential_runtime_allowed);
+      const externalEnabled = Boolean(boundary.external_confidential_enabled);
       boundaryBanner.classList.toggle("blocked", !allowed);
-      boundaryBanner.textContent = allowed
-        ? "Защита данных активна: конфиденциальные запросы направляются только во внутреннюю модель."
-        : "Защита данных активна: передача конфиденциальных запросов заблокирована до настройки внутренней модели.";
+      boundaryBanner.classList.toggle("external", externalEnabled);
+      if (externalEnabled) {
+        boundaryBanner.textContent =
+          "Внешняя модель включена: сообщения, данные 1С, метаданные и документация могут передаваться внешнему провайдеру.";
+      } else if (allowed) {
+        boundaryBanner.textContent =
+          "Защита данных активна: конфиденциальные запросы направляются только во внутреннюю модель.";
+      } else {
+        boundaryBanner.textContent =
+          "Защита данных активна: передача конфиденциальных запросов заблокирована до настройки внутренней модели или явного разрешения внешней.";
+      }
     }
     const hint = optionalElement("adminTokenHint");
     if (hint) {

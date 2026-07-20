@@ -11,13 +11,20 @@
 Основные переменные:
 
 ```env
-WIICON5_LLM_API_BASE=https://api.deepseek.com
+WIICON5_LLM_API_BASE=https://openai-compatible.example/v1
 WIICON5_LLM_API_KEY=...
-WIICON5_LLM_MODEL=deepseek-chat
+WIICON5_LLM_MODEL=gpt-5.4
+WIICON5_LLM_TRUST_ZONE=external
+WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=true
 WIICON5_MCP_URL=http://127.0.0.1:6003
 WIICON5_BOT_ID=local
 WIICON5_CONFIG_FINGERPRINT=local
 ```
+
+Внешний режим явно разрешает передачу провайдеру рабочего контекста, включая
+сообщения и данные 1С. Для защищенного режима используйте `trust_zone=internal`,
+`WIICON5_INTERNAL_LLM_ALLOWED_HOSTS=<hostname>` и оставьте внешний флаг `false`.
+Подробности: `docs/llm_data_boundary.md`.
 
 Для локальной миграции также принимаются старые имена:
 

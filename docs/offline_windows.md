@@ -34,6 +34,22 @@ WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS=C:\Monitoring\WiiconChatBot_5\data
 пользовательские сообщения, данные 1С, документацию или диагностику: transport
 блокирует такой вызов до сетевого соединения.
 
+Если внутренняя модель недоступна по производительности, можно явно переключить
+основной endpoint на внешнюю ChatGPT-модель:
+
+```env
+WIICON5_LLM_API_BASE=https://openai-compatible.example/v1
+WIICON5_LLM_API_KEY=ключ-внешнего-провайдера
+WIICON5_LLM_MODEL=gpt-5.4
+WIICON5_LLM_TRUST_ZONE=external
+WIICON5_INTERNAL_LLM_ALLOWED_HOSTS=
+WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=true
+```
+
+В этом режиме сообщения, данные 1С, метаданные и документация могут передаваться
+внешнему провайдеру. Красная плашка в web-интерфейсе показывает, что гарантия
+непередачи персональных данных во внешний контур отключена.
+
 Файловую выгрузку конфигурации для первоначального обучения размещайте внутри
 `C:\Monitoring\WiiconChatBot_5\data`; этот каталог включен в административный
 allowlist Windows-инстанса.

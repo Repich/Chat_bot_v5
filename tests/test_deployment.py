@@ -172,6 +172,7 @@ class WindowsDeploymentScriptTests(unittest.TestCase):
         self.assertIn(f"WIICON5_ADMIN_ALLOWED_CONFIG_ROOTS={expected_root}\\data", server_env)
         self.assertIn("WIICON5_LLM_TRUST_ZONE=external", server_env)
         self.assertIn("WIICON5_INTERNAL_LLM_ALLOWED_HOSTS=", server_env)
+        self.assertIn("WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=false", server_env)
         self.assertIn("WIICON5_FAILURE_SOLVER_TRUST_ZONE=external", server_env)
         self.assertIn('"--host",\n        "0.0.0.0"', supervisor)
         self.assertIn('default="ms-1cmonitor"', supervisor)

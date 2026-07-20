@@ -174,6 +174,7 @@ def build_llm_client(settings: Settings) -> LLMClient:
         timeout_seconds=settings.llm_timeout_seconds,
         trust_zone=settings.llm_trust_zone,
         internal_allowed_hosts=list(settings.internal_llm_allowed_hosts),
+        allow_external_confidential_data=settings.allow_external_confidential_llm,
     )
 
 
@@ -197,6 +198,7 @@ def build_failure_solver(settings: Settings) -> Optional[FailureSolver]:
                 timeout_seconds=settings.failure_solver_timeout_seconds,
                 trust_zone=settings.failure_solver_trust_zone,
                 internal_allowed_hosts=list(settings.failure_solver_internal_allowed_hosts),
+                allow_external_confidential_data=settings.allow_external_confidential_llm,
             )
         )
     if provider in {"codex", "codex_cli", "cli"}:

@@ -568,6 +568,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
                         "trust_zone": "internal",
                         "confidential_runtime_allowed": True,
                         "external_runtime_blocked": True,
+                        "external_confidential_enabled": False,
                     },
                 ),
             )
@@ -972,6 +973,7 @@ if (html.indexOf('СРЕДА ВЫПОЛНЕНИЯ') >= 0) {
         self.assertIn("trainingBanner", chat_page)
         self.assertIn("privacyBoundaryBanner", chat_page)
         self.assertIn("конфиденциальные запросы направляются только во внутреннюю модель", static_app)
+        self.assertIn("Внешняя модель включена", static_app)
         self.assertIn("documentationPanel", chat_page)
         self.assertIn("docsSelect", chat_page)
         self.assertIn("docsOpenButton", chat_page)

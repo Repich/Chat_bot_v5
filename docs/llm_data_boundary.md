@@ -1,6 +1,6 @@
 # Граница передачи данных в LLM
 
-## Инвариант
+## Режимы работы
 
 Все runtime-данные агента классифицируются как `confidential` по умолчанию:
 
@@ -10,13 +10,18 @@
 - документация экземпляра и BWiki;
 - навыки, трассировки, диагностика и результаты проверок.
 
-Такие данные разрешено передавать только LLM endpoint, который одновременно:
+По умолчанию такие данные разрешено передавать только LLM endpoint, который одновременно:
 
 1. явно помечен `WIICON5_LLM_TRUST_ZONE=internal`;
 2. имеет hostname из `WIICON5_INTERNAL_LLM_ALLOWED_HOSTS`.
 
 При несовпадении transport отклоняет вызов до открытия HTTP-соединения. Ошибка
-внутренней модели не вызывает fallback во внешнюю модель.
+внутренней модели не вызывает автоматический fallback во внешнюю модель.
+
+Администратор может осознанно включить внешний OpenAI-compatible endpoint. В
+этом режиме рабочий контекст передается внешнему провайдеру, поэтому прежняя
+гарантия непередачи персональных данных во внешнюю модель не действует. Режим
+требует отдельного флага, отражается красной плашкой в UI и фиксируется аудитом.
 
 ## Почему нет распознавания персональных данных
 
@@ -42,11 +47,33 @@ WIICON5_INTERNAL_LLM_ALLOWED_HOSTS=glm.internal.example
 любой LLM-вызов с рабочими данными будет заблокирован. Это позволяет открыть UI,
 увидеть состояние защиты и исправить конфигурацию без утечки данных.
 
+## Настройка внешней ChatGPT-модели
+
+```env
+WIICON5_LLM_API_BASE=https://openai-compatible.example/v1
+WIICON5_LLM_API_KEY=...
+WIICON5_LLM_MODEL=gpt-5.4
+WIICON5_LLM_TRUST_ZONE=external
+WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=true
+```
+
+Флаг означает явное согласие администратора на отправку внешнему провайдеру:
+
+- сообщений и истории пользователей;
+- данных и ответов 1С/MCP;
+- метаданных и документации экземпляра;
+- содержимого запросов и контекста восстановления ошибок.
+
+Это не автоматический fallback: агент использует только endpoint, указанный в
+`WIICON5_LLM_API_BASE`. Чтобы вернуться к внутренней модели, нужно заменить
+endpoint/model, установить `trust_zone=internal`, заполнить hostname allowlist и
+выключить внешний флаг.
+
 ## Failure solver
 
-`codex_cli` запрещен для runtime-диагностики, поскольку она содержит сообщения,
-данные 1С и документацию. OpenAI-compatible failure solver разрешен только как
-явно настроенный внутренний endpoint с отдельным trust zone и allowlist:
+`codex_cli` запрещен для runtime-диагностики, поскольку его сетевой транспорт не
+контролируется приложением. OpenAI-compatible failure solver можно настроить как
+внутренний endpoint с отдельным trust zone и allowlist:
 
 ```env
 WIICON5_FAILURE_SOLVER_ENABLED=true
@@ -57,6 +84,10 @@ WIICON5_FAILURE_SOLVER_MODEL=glm-5.2
 WIICON5_FAILURE_SOLVER_TRUST_ZONE=internal
 WIICON5_FAILURE_SOLVER_INTERNAL_ALLOWED_HOSTS=glm.internal.example
 ```
+
+Внешний OpenAI-compatible failure solver разрешается общим явным флагом
+`WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=true` и также получает полный рабочий
+контекст восстановления.
 
 ## Аудит
 
@@ -72,7 +103,9 @@ WIICON5_FAILURE_SOLVER_INTERNAL_ALLOWED_HOSTS=glm.internal.example
 
 ## Граница гарантии
 
-Приложение гарантирует отсутствие сетевого LLM-вызова с `confidential` payload
-в endpoint, помеченный как `external`. Администратор инфраструктуры отвечает за
-то, что hostname, внесенный в internal allowlist, действительно принадлежит
-утвержденному внутреннему контуру и защищен на сетевом и TLS-уровне.
+При `WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=false` приложение гарантирует
+отсутствие сетевого LLM-вызова с `confidential` payload в endpoint, помеченный
+как `external`. При значении `true` эта гарантия явно отключена. Администратор
+инфраструктуры отвечает за выбор режима, условия обработки данных провайдером и
+за то, что hostname во внутреннем allowlist действительно принадлежит
+утвержденному контуру и защищен на сетевом и TLS-уровне.

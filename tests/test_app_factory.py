@@ -32,6 +32,7 @@ class AppFactoryTests(unittest.TestCase):
         self.assertEqual(settings.llm_model, "deepseek-chat")
         self.assertEqual(settings.llm_trust_zone, "external")
         self.assertEqual(settings.internal_llm_allowed_hosts, ())
+        self.assertFalse(settings.allow_external_confidential_llm)
         self.assertEqual(settings.config_fingerprint, "cfg_test")
         self.assertEqual(settings.skills_dir, root / "skills")
         self.assertEqual(settings.bindings_dir, root / "skills" / "bindings")
@@ -154,6 +155,32 @@ class AppFactoryTests(unittest.TestCase):
             settings.internal_llm_allowed_hosts,
             ("glm.internal.example", "backup.internal.example"),
         )
+
+    def test_settings_requires_explicit_opt_in_for_external_confidential_llm(self) -> None:
+        blocked = Settings.from_env(
+            {
+                "WIICON5_LLM_API_BASE": "https://api.openai.example/v1",
+                "WIICON5_LLM_API_KEY": "secret",
+                "WIICON5_LLM_TRUST_ZONE": "external",
+            },
+            root=PROJECT_ROOT,
+        )
+        enabled = Settings.from_env(
+            {
+                "WIICON5_LLM_API_BASE": "https://api.openai.example/v1",
+                "WIICON5_LLM_API_KEY": "secret",
+                "WIICON5_LLM_TRUST_ZONE": "external",
+                "WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM": "true",
+            },
+            root=PROJECT_ROOT,
+        )
+
+        self.assertFalse(blocked.llm_boundary_status()["confidential_runtime_allowed"])
+        self.assertTrue(blocked.llm_boundary_status()["external_runtime_blocked"])
+        self.assertTrue(enabled.allow_external_confidential_llm)
+        self.assertTrue(enabled.llm_boundary_status()["confidential_runtime_allowed"])
+        self.assertTrue(enabled.llm_boundary_status()["external_confidential_enabled"])
+        self.assertFalse(enabled.llm_boundary_status()["personal_data_external_protection_guaranteed"])
 
     def test_settings_loads_auto_learned_skill_options(self) -> None:
         settings = Settings.from_env(

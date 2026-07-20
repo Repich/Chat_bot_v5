@@ -54,6 +54,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         retry_backoff_seconds: float = 0.5,
         trust_zone: str = TRUST_ZONE_EXTERNAL,
         internal_allowed_hosts: Optional[List[str]] = None,
+        allow_external_confidential_data: bool = False,
     ) -> None:
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
@@ -65,6 +66,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         self.trust_zone = normalize_trust_zone(trust_zone)
         self.endpoint_host = str(urlparse(self.api_base).hostname or "").lower()
         self.internal_allowed_hosts = tuple(normalize_host(item) for item in (internal_allowed_hosts or []) if item)
+        self.allow_external_confidential_data = bool(allow_external_confidential_data)
         validate_internal_endpoint(
             trust_zone=self.trust_zone,
             endpoint_host=self.endpoint_host,
@@ -84,6 +86,7 @@ class OpenAICompatibleLLMClient(LLMClient):
             endpoint_host=self.endpoint_host,
             model=self.model,
             payload_fingerprint=payload_fingerprint(system_prompt, user_payload),
+            allow_external_confidential_data=self.allow_external_confidential_data,
         )
         payload = {
             "model": self.model,
@@ -243,16 +246,28 @@ def enforce_data_boundary(
     endpoint_host: str,
     model: str,
     payload_fingerprint: str,
+    allow_external_confidential_data: bool = False,
 ) -> None:
     classification = str(data_classification or "").strip().lower()
     if classification not in {DATA_CLASSIFICATION_CONFIDENTIAL, DATA_CLASSIFICATION_PUBLIC}:
         raise LLMDataBoundaryError(f"Unknown LLM data classification: {data_classification!r}.")
-    allowed = classification == DATA_CLASSIFICATION_PUBLIC or trust_zone == TRUST_ZONE_INTERNAL
+    external_confidential_opt_in = (
+        classification == DATA_CLASSIFICATION_CONFIDENTIAL
+        and trust_zone == TRUST_ZONE_EXTERNAL
+        and allow_external_confidential_data
+    )
+    allowed = (
+        classification == DATA_CLASSIFICATION_PUBLIC
+        or trust_zone == TRUST_ZONE_INTERNAL
+        or external_confidential_opt_in
+    )
     LOGGER.warning(
-        "LLM data boundary decision=%s trust_zone=%s classification=%s host=%s model=%s payload_sha256=%s",
+        "LLM data boundary decision=%s trust_zone=%s classification=%s external_confidential_opt_in=%s "
+        "host=%s model=%s payload_sha256=%s",
         "allow" if allowed else "block",
         trust_zone,
         classification,
+        external_confidential_opt_in,
         endpoint_host,
         model,
         payload_fingerprint,
@@ -260,7 +275,8 @@ def enforce_data_boundary(
     if not allowed:
         raise LLMDataBoundaryError(
             "LLM data boundary blocked confidential runtime data for an external provider. "
-            "Configure the internal GLM endpoint with WIICON5_LLM_TRUST_ZONE=internal and an explicit host allowlist."
+            "Configure the internal GLM endpoint with WIICON5_LLM_TRUST_ZONE=internal and an explicit host allowlist, "
+            "or explicitly accept external processing with WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=true."
         )
 
 

@@ -1,3 +1,9 @@
+5.0.0-alpha.98
+- Возвращен явно включаемый режим внешней ChatGPT/OpenAI-compatible модели для основного runtime и API failure solver через `WIICON5_ALLOW_EXTERNAL_CONFIDENTIAL_LLM=true`.
+- Fail-closed остается значением по умолчанию: без opt-in confidential payload блокируется до HTTP-вызова; внутренний режим с hostname allowlist работает без изменений.
+- Статус границы данных сообщает, разрешена ли внешняя обработка и действует ли гарантия непередачи персональных данных; audit фиксирует opt-in без содержимого prompt.
+- Обновлены Windows-шаблон и эксплуатационная документация с явным описанием категорий данных, передаваемых внешнему провайдеру.
+
 5.0.0-alpha.97
 - Добавлена fail-closed граница LLM: все сообщения, MCP/1С данные, документация, метаданные и диагностика классифицируются как confidential по умолчанию.
 - Confidential payload разрешен только endpoint с `trust_zone=internal` и точным hostname из `WIICON5_INTERNAL_LLM_ALLOWED_HOSTS`; внешний provider блокируется до открытия HTTP-соединения.

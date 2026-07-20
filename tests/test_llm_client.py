@@ -95,6 +95,34 @@ class OpenAICompatibleLLMClientTests(unittest.TestCase):
         self.assertEqual(result["answer"], "pong")
         self.assertEqual(urlopen.call_count, 1)
 
+    def test_external_provider_allows_confidential_payload_only_after_explicit_opt_in(self) -> None:
+        client = OpenAICompatibleLLMClient(
+            api_base="https://api.openai.example/v1",
+            api_key="secret",
+            model="gpt-test",
+            trust_zone="external",
+            allow_external_confidential_data=True,
+        )
+        response = FakeResponse(
+            {"choices": [{"message": {"content": json.dumps({"answer": "ok"})}}]}
+        )
+        with self.assertLogs("wiicon5.llm.client", level="WARNING") as audit, patch(
+            "urllib.request.urlopen",
+            return_value=response,
+        ) as urlopen:
+            result = client.complete_json(
+                system_prompt="system",
+                user_payload={"message": "Иванов Иван, +7 999 111-22-33"},
+            )
+
+        self.assertEqual(result["answer"], "ok")
+        self.assertEqual(urlopen.call_count, 1)
+        combined_audit = "\n".join(audit.output)
+        self.assertIn("decision=allow", combined_audit)
+        self.assertIn("external_confidential_opt_in=True", combined_audit)
+        self.assertNotIn("Иванов", combined_audit)
+        self.assertNotIn("999 111", combined_audit)
+
     def test_internal_provider_requires_explicit_hostname_allowlist(self) -> None:
         with self.assertRaisesRegex(ValueError, "WIICON5_INTERNAL_LLM_ALLOWED_HOSTS"):
             OpenAICompatibleLLMClient(
