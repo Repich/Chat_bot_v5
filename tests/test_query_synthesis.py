@@ -140,6 +140,47 @@ class QuerySynthesisTests(unittest.TestCase):
         self.assertEqual(fallback_payload["draft_query"], "")
         self.assertTrue(result.trace["masking_recovery"]["attempts"][0]["ok"])
 
+    def test_discovery_recovers_from_gateway_mask_failure_before_metadata_search(self) -> None:
+        llm = ExceptionScriptedLLMClient(
+            [
+                LLMProviderError(
+                    'LLM HTTP 503: {"error":{"code":"router_v4_guardrails_mask_failed"},'
+                    '"request_id":"mask-discovery"}'
+                ),
+                discovery_response(["денежные средства", "касса"]),
+                query_response(
+                    """
+                    ВЫБРАТЬ
+                        Остатки.Касса КАК Касса,
+                        Остатки.СуммаОстаток КАК Остаток
+                    ИЗ
+                        РегистрНакопления.ДенежныеСредства.Остатки() КАК Остатки
+                    """
+                ),
+            ]
+        )
+        engine = QuerySynthesisEngine(
+            llm_client=llm,
+            metadata_provider=FakeMetadataProvider(),
+            mcp_client=DictMcpClient({"success": True, "data": [{"Касса": "Основная", "Остаток": 100}]}),
+            onboarding_evidence_provider=FakeOnboardingEvidenceProvider(),
+        )
+
+        result = engine.run(
+            message="Покажи остаток денежных средств в кассе",
+            intent=data_intent("Покажи остаток денежных средств"),
+            goal=None,
+            context=ConversationContext(session_id="s1"),
+            gaps=[],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(llm.calls), 3)
+        recovery_payload = llm.calls[1]["user_payload"]
+        self.assertFalse(recovery_payload["instance_knowledge"]["available"])
+        self.assertTrue(recovery_payload["conversation_context"]["values_omitted"])
+        self.assertTrue(result.trace["discovery_masking_recovery"]["ok"])
+
     def test_synthesis_continues_after_partial_document_reference_result(self) -> None:
         document_ref = document_object_ref(
             guid="bf22af7c-fbc6-11ee-90c8-90004ef3f886",

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
+from typing import Any, Dict, List
 
 from wiicon5.agent.orchestrator import AgentOrchestrator
 from wiicon5.conversation.context import ConversationContext
 from wiicon5.intent.llm_decomposer import LLMGoalDecomposer, available_artifact_types, skill_catalog
 from wiicon5.intent.models import IntentType
-from wiicon5.llm.client import LLMProviderError, ScriptedLLMClient, extract_json_object
+from wiicon5.execution.artifacts import Artifact
+from wiicon5.llm.client import LLMClient, LLMProviderError, ScriptedLLMClient, extract_json_object
 from wiicon5.skills.registry import SkillRegistry
 
 
@@ -113,6 +116,34 @@ class LLMDecomposerTests(unittest.TestCase):
         self.assertEqual(result.intent.intent_type, IntentType.UNKNOWN)
         self.assertFalse(result.intent.relevant)
         self.assertIn("LLM unavailable", result.intent.reasoning)
+
+    def test_llm_decomposer_recovers_from_gateway_mask_failure_with_compact_payload(self) -> None:
+        registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
+        llm = ExceptionSequenceLLMClient(
+            [
+                LLMProviderError(
+                    'LLM HTTP 503: {"error":{"code":"router_v4_guardrails_mask_failed"},'
+                    '"request_id":"mask-decomposition"}'
+                ),
+                stock_decomposition_response(),
+            ]
+        )
+        decomposer = LLMGoalDecomposer(llm_client=llm, registry=registry)
+        context = ConversationContext(session_id="private-session")
+        context.append_message("user", "Покажи прошлый товар")
+        context.add_artifact(Artifact(name="query_result", type="QueryResult", value={"private": "secret-value"}))
+
+        result = decomposer.decompose("Покажи остатки товара", context)
+
+        self.assertEqual(result.intent.intent_type, IntentType.DATA_QUESTION)
+        self.assertEqual(len(llm.calls), 2)
+        recovery_payload = llm.calls[1]["user_payload"]
+        self.assertFalse(recovery_payload["instance_knowledge"]["available"])
+        self.assertTrue(recovery_payload["conversation_context"]["values_omitted"])
+        self.assertNotIn("secret-value", json.dumps(recovery_payload, ensure_ascii=False))
+        self.assertNotIn("session_id", recovery_payload["conversation_context"])
+        self.assertNotIn("capabilities", recovery_payload["available_skills"][0])
+        self.assertTrue(decomposer.last_masking_recovery["ok"])
 
     def test_llm_decomposer_completes_missing_data_artifact_from_skill_catalog(self) -> None:
         registry = SkillRegistry.load_from_dir(PROJECT_ROOT / "skills")
@@ -237,6 +268,19 @@ class FailingLLMClient(ScriptedLLMClient):
 
     def complete_json(self, *, system_prompt, user_payload):  # type: ignore[no-untyped-def]
         raise LLMProviderError("HTTP 503")
+
+
+class ExceptionSequenceLLMClient(LLMClient):
+    def __init__(self, responses: List[object]) -> None:
+        self.responses = list(responses)
+        self.calls: List[Dict[str, Any]] = []
+
+    def complete_json(self, *, system_prompt: str, user_payload: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
+        self.calls.append({"system_prompt": system_prompt, "user_payload": user_payload})
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response  # type: ignore[return-value]
 
 
 def stock_decomposition_response():

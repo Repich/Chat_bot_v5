@@ -21,6 +21,7 @@ from wiicon5.knowledge.metadata import (
 from wiicon5.knowledge.onboarding_evidence import OnboardingEvidenceProvider
 from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
 from wiicon5.llm.client import LLMClient, LLMProviderError
+from wiicon5.llm.guardrail_recovery import compact_conversation_packet, is_guardrail_masking_error
 from wiicon5.mcp.client import McpClient
 from wiicon5.mcp.contracts import McpQueryRequest, normalize_mcp_rows
 from wiicon5.planner.goal import GoalDecomposition
@@ -181,25 +182,53 @@ class QuerySynthesisEngine:
             "instance_knowledge_chars": json_size(prompt_instance_knowledge),
         }
         reset_metadata_request_log(self.metadata_provider)
+        discovery_payload = {
+            "message": message,
+            "intent": intent.to_dict(),
+            "goal": goal_to_payload(goal),
+            "conversation_context": context.to_packet(),
+            "instance_knowledge": prompt_instance_knowledge,
+            "gaps": gaps,
+            "schema": {
+                "metadata_search_terms": ["term"],
+                "hypothesis": "short hypothesis",
+                "draft_query": "optional 1C query hypothesis",
+            },
+        }
         try:
             discovery = self.llm_client.complete_json(
                 system_prompt=self.prompt_catalog.discovery_prompt(self.bot_config),
-                user_payload={
-                    "message": message,
-                    "intent": intent.to_dict(),
-                    "goal": goal_to_payload(goal),
-                    "conversation_context": context.to_packet(),
-                    "instance_knowledge": prompt_instance_knowledge,
-                    "gaps": gaps,
-                    "schema": {
-                        "metadata_search_terms": ["term"],
-                        "hypothesis": "short hypothesis",
-                        "draft_query": "optional 1C query hypothesis",
-                    },
-                },
+                user_payload=discovery_payload,
             )
         except LLMProviderError as exc:
-            return QuerySynthesisResult(ok=False, error=f"LLM discovery failed: {exc}", trace=trace)
+            if not is_guardrail_masking_error(exc):
+                return QuerySynthesisResult(ok=False, error=f"LLM discovery failed: {exc}", trace=trace)
+            recovery_payload = discovery_masking_recovery_payload(
+                discovery_payload,
+                current_message=message,
+            )
+            trace["discovery_masking_recovery"] = {
+                "activated": True,
+                "initial_error": str(exc),
+                "instance_knowledge_omitted": True,
+                "conversation_values_omitted": True,
+                "payload_chars": json_size(recovery_payload),
+            }
+            try:
+                discovery = self.llm_client.complete_json(
+                    system_prompt=self.prompt_catalog.discovery_prompt(self.bot_config),
+                    user_payload=recovery_payload,
+                )
+                trace["discovery_masking_recovery"]["ok"] = True
+            except LLMProviderError as recovery_exc:
+                trace["discovery_masking_recovery"].update(
+                    {"ok": False, "recovery_error": str(recovery_exc)}
+                )
+                return QuerySynthesisResult(
+                    ok=False,
+                    error=f"LLM discovery failed after masking recovery: {recovery_exc}",
+                    trace=trace,
+                )
 
         trace["discovery_response"] = discovery
         search_terms = search_terms_from_discovery(discovery, intent, message, self.term_expansion_policy)
@@ -1486,6 +1515,32 @@ def masking_recovery_payload(
     return compact
 
 
+def discovery_masking_recovery_payload(
+    payload: Dict[str, Any],
+    *,
+    current_message: str,
+) -> Dict[str, Any]:
+    return {
+        "message": current_message,
+        "intent": payload.get("intent") or {},
+        "goal": payload.get("goal") or {},
+        "conversation_context": compact_conversation_packet(
+            payload.get("conversation_context"),
+            current_message=current_message,
+        ),
+        "instance_knowledge": {
+            "available": False,
+            "omitted_reason": "gateway_masking_recovery",
+        },
+        "gaps": list(payload.get("gaps") or [])[:8],
+        "schema": payload.get("schema") or {},
+        "recovery_instruction": (
+            "This is a compact retry after gateway masking failed. Return broad metadata search terms; "
+            "do not invent configuration object or field names."
+        ),
+    }
+
+
 def metadata_object_prompt_summary(
     item: MetadataObject,
     *,
@@ -1595,10 +1650,6 @@ def compact_onboarding_for_masking(value: Any) -> Dict[str, Any]:
         "register_usage": register_usage,
         "query_patterns_omitted": True,
     }
-
-
-def is_guardrail_masking_error(value: str) -> bool:
-    return "router_v4_guardrails_mask_failed" in value
 
 
 def truncate_text(value: str, max_chars: int) -> str:

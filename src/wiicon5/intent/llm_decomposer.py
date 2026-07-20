@@ -8,6 +8,11 @@ from wiicon5.intent.decomposer import DecompositionResult, GoalDecomposer
 from wiicon5.intent.models import ContextDependency, IntentResult, IntentType
 from wiicon5.instance_knowledge.index import InstanceKnowledgeBase
 from wiicon5.llm.client import LLMClient, LLMProviderError
+from wiicon5.llm.guardrail_recovery import (
+    compact_conversation_packet,
+    compact_skill_catalog,
+    is_guardrail_masking_error,
+)
 from wiicon5.models import ArtifactRequirement, SemanticFilter
 from wiicon5.planner.aggregate_intent import AGGREGATE_TABLE_TYPE, repair_document_list_aggregate_goal
 from wiicon5.planner.domain_compatibility import meaningful_words, words_match
@@ -34,8 +39,10 @@ class LLMGoalDecomposer(GoalDecomposer):
         self.prompt_catalog = prompt_catalog or PromptCatalog()
         self.instance_knowledge = instance_knowledge
         self.last_knowledge_evidence: Dict[str, Any] = {"available": False}
+        self.last_masking_recovery: Dict[str, Any] = {"activated": False}
 
     def decompose(self, message: str, context: ConversationContext) -> DecompositionResult:
+        self.last_masking_recovery = {"activated": False}
         self.last_knowledge_evidence = (
             self.instance_knowledge.evidence_pack(message, top_k=self.bot_config.knowledge.search_top_k, max_chars=8000)
             if self.instance_knowledge is not None
@@ -55,11 +62,55 @@ class LLMGoalDecomposer(GoalDecomposer):
                 user_payload=payload,
             )
         except LLMProviderError as exc:
-            return DecompositionResult(intent=unknown_intent(message, f"LLM unavailable: {exc}"))
+            if not is_guardrail_masking_error(exc):
+                return DecompositionResult(intent=unknown_intent(message, f"LLM unavailable: {exc}"))
+            recovery_payload = decomposition_masking_recovery_payload(payload, current_message=message)
+            self.last_masking_recovery = {
+                "activated": True,
+                "stage": "decomposition",
+                "initial_error": str(exc),
+                "instance_knowledge_omitted": True,
+                "conversation_values_omitted": True,
+                "available_skills": len(recovery_payload["available_skills"]),
+            }
+            try:
+                response = self.llm_client.complete_json(
+                    system_prompt=self.prompt_catalog.decomposition_prompt(self.bot_config),
+                    user_payload=recovery_payload,
+                )
+                self.last_masking_recovery["ok"] = True
+            except LLMProviderError as recovery_exc:
+                self.last_masking_recovery.update({"ok": False, "recovery_error": str(recovery_exc)})
+                return DecompositionResult(intent=unknown_intent(message, f"LLM unavailable: {recovery_exc}"))
         return parse_decomposition_response(message, response, self.registry)
 
 
 DECOMPOSITION_PROMPT = PromptCatalog().decomposition_prompt(BotInstanceConfig.default())
+
+
+def decomposition_masking_recovery_payload(
+    payload: Dict[str, Any],
+    *,
+    current_message: str,
+) -> Dict[str, Any]:
+    return {
+        "message": current_message,
+        "conversation_context": compact_conversation_packet(
+            payload.get("conversation_context"),
+            current_message=current_message,
+        ),
+        "instance_knowledge": {
+            "available": False,
+            "omitted_reason": "gateway_masking_recovery",
+        },
+        "available_artifact_types": list(payload.get("available_artifact_types") or []),
+        "available_skills": compact_skill_catalog(payload.get("available_skills")),
+        "schema": payload.get("schema") or decomposition_schema(),
+        "recovery_instruction": (
+            "This is a compact retry after gateway masking failed. Do not infer omitted context values; "
+            "declare a dialog dependency or clarification when they are required."
+        ),
+    }
 
 
 def decomposition_schema() -> Dict[str, Any]:

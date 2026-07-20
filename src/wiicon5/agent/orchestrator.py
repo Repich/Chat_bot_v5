@@ -156,6 +156,9 @@ class AgentOrchestrator:
         decomposition_knowledge = getattr(self.decomposer, "last_knowledge_evidence", None)
         if isinstance(decomposition_knowledge, dict):
             run_trace.write_json("knowledge/decomposition_evidence.json", decomposition_knowledge)
+        decomposition_masking_recovery = getattr(self.decomposer, "last_masking_recovery", None)
+        if isinstance(decomposition_masking_recovery, dict) and decomposition_masking_recovery.get("activated"):
+            run_trace.write_json("intent/masking_recovery.json", decomposition_masking_recovery)
 
         if is_llm_unavailable_intent(decomposition.intent):
             result = AgentRunResult(
